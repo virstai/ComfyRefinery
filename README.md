@@ -18,8 +18,8 @@ configurable chains of steps (generate → upscale → video → …) that accum
 ## Install
 
 ```bash
-git clone https://github.com/virstai/image_iterator.git
-cd image_iterator
+git clone https://github.com/virstai/ComfyRefinery.git
+cd ComfyRefinery
 npm install
 npm run ui:build
 ```
