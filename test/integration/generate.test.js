@@ -38,8 +38,9 @@ before(async () => {
   fs.writeFileSync(path.join(tmpDir, 'config.json'), JSON.stringify({
     ollamaUrl:             `http://127.0.0.1:${ollamaPort}`,
     comfyuiUrl:            `http://127.0.0.1:${comfyPort}`,
-    ollamaModel:           'test-model',
-    activeModel:           'test-sd15',
+    llmModel:              'test-model',
+    llmProvider:           'ollama',
+    activeWorkflow:        'test-wf-sd15',
     maxIterations:         3,
     humanReview:           false,
     acceptanceGracePeriod: 0,  // disabled by default so tests don't wait
@@ -47,6 +48,12 @@ before(async () => {
       'test-sd15': {
         id: 'test-sd15', label: 'Test SD1.5', architecture: 'sd15',
         checkpoint: 'test.safetensors',
+      },
+    },
+    workflows: {
+      'test-wf-sd15': {
+        id: 'test-wf-sd15', label: 'Test Workflow SD1.5',
+        steps: [{ type: 'generate', modelId: 'test-sd15', params: {}, review: {} }],
       },
     },
   }));
@@ -81,7 +88,7 @@ test('POST /api/generate streams all expected events and accepts on first iterat
   const events = await collectSSE(`${base()}/api/generate`, { prompt: 'a happy cat' });
   const types  = new Set(events.map(e => e.event));
 
-  for (const expected of ['session', 'phase', 'prompt', 'progress', 'image', 'review', 'done']) {
+  for (const expected of ['session', 'step', 'phase', 'prompt', 'progress', 'image', 'review', 'done']) {
     assert.ok(types.has(expected), `missing ${expected} event`);
   }
 
@@ -125,12 +132,12 @@ test('runs up to maxIterations when every iteration is rejected', async () => {
 
 // ── POST /api/generate/run ────────────────────────────────────────────────────
 
-test('POST /api/generate/run accepts humanReview=false and modelId overrides', async () => {
+test('POST /api/generate/run accepts humanReview=false and workflowId overrides', async () => {
   reviewVerdict = 'ACCEPT';
   const events = await collectSSE(`${base()}/api/generate/run`, {
     prompt:      'a sunset over the ocean',
     humanReview: false,
-    modelId:     'test-sd15',
+    workflowId:  'test-wf-sd15',
     overrides:   { width: 768, height: 512 },
   });
 
@@ -151,11 +158,11 @@ test('POST /api/generate/run returns 400 for missing prompt', async () => {
   assert.equal(body.error, 'prompt is required');
 });
 
-test('POST /api/generate/run returns 400 for unknown modelId', async () => {
+test('POST /api/generate/run returns 400 for unknown workflowId', async () => {
   const res = await fetch(`${base()}/api/generate/run`, {
     method:  'POST',
     headers: { 'Content-Type': 'application/json' },
-    body:    JSON.stringify({ prompt: 'test', modelId: 'ghost-model' }),
+    body:    JSON.stringify({ prompt: 'test', workflowId: 'ghost-workflow' }),
   });
   assert.equal(res.status, 400);
 });
@@ -192,7 +199,7 @@ test('refuse-accepted marks the accepted iteration as REFUSED on a completed ses
   assert.equal(refuseRes.status, 204);
 
   const session = await (await fetch(`${base()}/api/generate/sessions/${sessionId}`)).json();
-  const last = session.iterations.at(-1);
+  const last = session.steps[0].iterations.at(-1);
   assert.equal(last.verdict, 'REFUSED', 'latest iteration should be marked REFUSED');
 });
 
@@ -252,8 +259,8 @@ test('session is persisted to disk and retrievable via GET /sessions/:id', async
   assert.equal(data.id,     sessionId);
   assert.equal(data.prompt, 'a forest path');
   assert.equal(data.status, 'complete');
-  assert.ok(data.iterations.length > 0);
-  assert.ok(data.iterations[0].prompt, 'iteration should have a generated prompt');
+  assert.ok(data.steps[0].iterations.length > 0);
+  assert.ok(data.steps[0].iterations[0].prompt, 'iteration should have a generated prompt');
 });
 
 test('GET /api/generate/sessions lists persisted sessions with summary fields', async () => {
@@ -283,14 +290,14 @@ test('DELETE /api/generate/sessions/:id removes the session', async () => {
   assert.equal(get.status, 404);
 });
 
-// ── POST /api/sessions/skills/:modelId/refresh ────────────────────────────────
+// ── POST /api/sessions/skills/:workflowId/refresh ────────────────────────────────
 
-test('POST /api/sessions/skills/test-sd15/refresh returns updated skill data', async () => {
-  // Run a session first so outcome data exists for the model
+test('POST /api/sessions/skills/test-wf-sd15/refresh returns updated skill data', async () => {
+  // Run a session first so outcome data exists for the workflow
   reviewVerdict = 'ACCEPT';
   await collectSSE(`${base()}/api/generate`, { prompt: 'skill refresh seed' });
 
-  const res = await fetch(`${base()}/api/sessions/skills/test-sd15/refresh`, {
+  const res = await fetch(`${base()}/api/sessions/skills/test-wf-sd15/refresh`, {
     method:  'POST',
     headers: { 'Content-Type': 'application/json' },
     body:    JSON.stringify({}),
@@ -301,8 +308,8 @@ test('POST /api/sessions/skills/test-sd15/refresh returns updated skill data', a
   assert.ok(data.skillUpdatedAt, 'should have a skillUpdatedAt timestamp');
 });
 
-test('POST /api/sessions/skills/test-sd15/refresh with correction note updates skill', async () => {
-  const res = await fetch(`${base()}/api/sessions/skills/test-sd15/refresh`, {
+test('POST /api/sessions/skills/test-wf-sd15/refresh with correction note updates skill', async () => {
+  const res = await fetch(`${base()}/api/sessions/skills/test-wf-sd15/refresh`, {
     method:  'POST',
     headers: { 'Content-Type': 'application/json' },
     body:    JSON.stringify({ note: 'Always use danbooru tags, never natural language.' }),
@@ -312,8 +319,8 @@ test('POST /api/sessions/skills/test-sd15/refresh with correction note updates s
   assert.ok(data.skill, 'should return updated skill data after correction note');
 });
 
-test('POST /api/sessions/skills/unknown-model/refresh returns 404', async () => {
-  const res = await fetch(`${base()}/api/sessions/skills/unknown-model/refresh`, {
+test('POST /api/sessions/skills/unknown-workflow/refresh returns 404', async () => {
+  const res = await fetch(`${base()}/api/sessions/skills/unknown-workflow/refresh`, {
     method:  'POST',
     headers: { 'Content-Type': 'application/json' },
     body:    JSON.stringify({}),

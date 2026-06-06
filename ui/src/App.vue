@@ -1,71 +1,87 @@
 <template>
   <div id="app">
-    <AppHeader
-      :config="configState.config"
-      :arch-meta="configState.archMeta"
-      :active-panel="activePanel"
-      @open-panel="openPanel"
-      @set-active-model="setActiveModel"
-    />
-
-    <SettingsPanel
-      v-if="activePanel === 'settings'"
-      :config="configState.config"
-      :assets="configState.assets"
-      @saved="onSettingsSaved"
-      @close="activePanel = null"
-    />
-
-    <ModelsPanel
-      v-if="activePanel === 'models'"
-      :config="configState.config"
-      :assets="configState.assets"
-      :arch-meta="configState.archMeta"
-      @changed="onConfigChanged"
-      @close="activePanel = null"
-    />
-
-    <HistoryPanel
-      v-if="activePanel === 'history'"
-      @load-session="onLoadSession"
-      @close="activePanel = null"
-    />
-
-    <GenerateSection
+    <Sidebar
+      :active-view="activeView"
+      :active-workflow="configState.config.activeWorkflow"
+      :workflows="configState.config.workflows ?? {}"
       :running="genState.running"
-      :session-id="genState.sessionId"
-      :loaded-desc="genState.loadedDesc"
-      :config="configState.config"
-      @generate="onGenerate"
-      @continue="onContinue"
-      @clear="clearSession"
-      @open-models="openPanel('models')"
-      @open-settings="openPanel('settings')"
+      :active-step-index="genState.activeStepIndex"
+      :total-steps="genState.totalSteps"
+      :active-step-label="genState.activeStepLabel"
+      :active-step-pct="genState.activeStepPct"
+      @navigate="activeView = $event"
+      @set-active-workflow="setActiveWorkflow"
+      @stop="killGeneration"
     />
 
-    <RunSection
-      v-if="genState.iterations.length || genState.status"
-      :iterations="genState.iterations"
-      :status="genState.status"
-      :iter-badge="genState.iterBadge"
-      :session-id="genState.sessionId"
-    />
+    <div class="main-area">
+      <template v-if="activeView === 'generate'">
+        <GenerateSection
+          :running="genState.running"
+          :session-id="genState.sessionId"
+          :loaded-desc="genState.loadedDesc"
+          :config="configState.config"
+          @generate="onGenerate"
+          @continue="onContinue"
+          @clear="clearSession"
+          @open-workflows="activeView = 'workflows'"
+          @open-settings="activeView = 'settings'"
+        />
+        <RunSection
+          v-if="genState.steps.length || genState.status"
+          :steps="genState.steps"
+          :status="genState.status"
+          :iter-badge="genState.iterBadge"
+          :session-id="genState.sessionId"
+          :running="genState.running"
+        />
+      </template>
+
+      <WorkflowsPanel
+        v-else-if="activeView === 'workflows'"
+        :config="configState.config"
+        :assets="configState.assets"
+        :arch-meta="configState.archMeta"
+        @changed="onConfigChanged"
+      />
+
+      <ModelsPanel
+        v-else-if="activeView === 'models'"
+        :config="configState.config"
+        :assets="configState.assets"
+        :arch-meta="configState.archMeta"
+        @changed="onConfigChanged"
+      />
+
+      <HistoryPanel
+        v-else-if="activeView === 'history'"
+        @load-session="onLoadSession"
+      />
+
+      <SettingsPanel
+        v-else-if="activeView === 'settings'"
+        :config="configState.config"
+        :assets="configState.assets"
+        @saved="onSettingsSaved"
+      />
+    </div>
   </div>
 </template>
 
 <script setup>
 import { ref, onMounted } from 'vue';
-import AppHeader      from './components/AppHeader.vue';
-import SettingsPanel  from './components/SettingsPanel.vue';
-import ModelsPanel    from './components/ModelsPanel.vue';
-import HistoryPanel   from './components/HistoryPanel.vue';
+import Sidebar         from './components/Sidebar.vue';
 import GenerateSection from './components/GenerateSection.vue';
-import RunSection     from './components/RunSection.vue';
+import RunSection      from './components/RunSection.vue';
+import WorkflowsPanel  from './components/WorkflowsPanel.vue';
+import ModelsPanel     from './components/ModelsPanel.vue';
+import HistoryPanel    from './components/HistoryPanel.vue';
+import SettingsPanel   from './components/SettingsPanel.vue';
 
-import { configState, loadConfig, loadAssets, setActiveModel as storeSetActiveModel } from './stores/config.js';
-import { genState, startGeneration, continueSession, loadSession, clearSession, connectToBroadcast } from './stores/generate.js';
+import { configState, loadConfig, loadAssets, setActiveWorkflow as storeSetActiveWorkflow } from './stores/config.js';
+import { genState, startGeneration, continueSession, loadSession, clearSession, killGeneration, connectToBroadcast } from './stores/generate.js';
 
-const activePanel = ref(null);
+const activeView = ref('generate');
 
 onMounted(async () => {
   connectToBroadcast();
@@ -77,35 +93,31 @@ onMounted(async () => {
   }
 });
 
-function openPanel(name) {
-  activePanel.value = activePanel.value === name ? null : name;
-}
-
-async function setActiveModel(id) {
-  await storeSetActiveModel(id);
+async function setActiveWorkflow(id) {
+  await storeSetActiveWorkflow(id);
 }
 
 async function onSettingsSaved() {
-  activePanel.value = null;
+  activeView.value = 'generate';
   await loadAssets();
 }
 
 async function onConfigChanged() {
-  // no-op — store already refreshed config
+  // store already refreshed config via store functions
 }
 
-async function onGenerate(prompt) {
-  activePanel.value = null;
-  await startGeneration(prompt);
+async function onGenerate(prompt, references) {
+  activeView.value = 'generate';
+  await startGeneration(prompt, references);
 }
 
-async function onContinue(sessionId) {
-  activePanel.value = null;
-  await continueSession(sessionId);
+async function onContinue(sessionId, references) {
+  activeView.value = 'generate';
+  await continueSession(sessionId, references);
 }
 
 async function onLoadSession(sessionId) {
-  activePanel.value = null;
+  activeView.value = 'generate';
   await loadSession(sessionId);
 }
 </script>

@@ -101,6 +101,16 @@ function findModelId(cfg, sdModelCheckpoint) {
   return null;
 }
 
+// Find the first workflow whose first generate step uses this model.
+function findWorkflowForModel(cfg, modelId) {
+  if (!modelId) return null;
+  for (const [id, workflow] of Object.entries(cfg.workflows || {})) {
+    const firstGen = (workflow.steps ?? []).find(s => s.type === 'generate');
+    if (firstGen?.modelId === modelId) return id;
+  }
+  return null;
+}
+
 // Read an SSE fetch response stream, calling onEvent for each parsed event.
 // Returns a Promise that resolves when the stream ends.
 async function consumeSSE(response, onEvent) {
@@ -134,8 +144,7 @@ async function fetchBase64(host, imageUrl) {
 
 async function handleGenerationRequest(req, res) {
   const cfg = config.load();
-  if (!cfg.ollamaModel) return res.status(400).json({ error: 'No Ollama model configured.' });
-  if (!cfg.activeModel) return res.status(400).json({ error: 'No active model selected.' });
+  if (!cfg.llmModel) return res.status(400).json({ error: 'No LLM model configured.' });
 
   const {
     prompt           = '',
@@ -154,16 +163,28 @@ async function handleGenerationRequest(req, res) {
 
   if (!prompt.trim()) return res.status(400).json({ error: 'prompt is required' });
 
-  // Resolve model — override_settings.sd_model_checkpoint takes precedence over active model.
-  // If the value is set but unrecognised (e.g. clients that echo back the backend name like
-  // "automatic1111"), fall back to the active model rather than returning a hard 400.
+  // Resolve model from checkpoint override (for A1111 compat response data only).
+  // Falls back to the model used by the active workflow's first generate step.
   let modelId;
   if (override_settings.sd_model_checkpoint) {
-    modelId = findModelId(cfg, override_settings.sd_model_checkpoint) ?? cfg.activeModel;
-  } else {
-    modelId = cfg.activeModel;
+    modelId = findModelId(cfg, override_settings.sd_model_checkpoint);
   }
-  if (!cfg.models?.[modelId]) return res.status(400).json({ error: 'No active model configured' });
+
+  // Resolve workflow — prefer one that uses the specified model, else use active workflow.
+  const workflowId = (modelId && findWorkflowForModel(cfg, modelId)) || cfg.activeWorkflow;
+  if (!workflowId || !cfg.workflows?.[workflowId]) {
+    return res.status(400).json({ error: 'No active workflow configured.' });
+  }
+
+  // If no explicit model was resolved, derive from the workflow's first generate step.
+  if (!modelId) {
+    const firstGen = (cfg.workflows[workflowId].steps ?? []).find(s => s.type === 'generate');
+    modelId = firstGen?.modelId ?? null;
+  }
+
+  if (modelId && !cfg.models?.[modelId]) {
+    return res.status(400).json({ error: `Model "${modelId}" not found in config.` });
+  }
 
   // Translate A1111 params to our overrides object.
   const overrides = {};
@@ -213,7 +234,7 @@ async function handleGenerationRequest(req, res) {
       const runRes = await fetch(`http://${host}/api/generate/run`, {
         method:  'POST',
         headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({ prompt, overrides: iterOverrides, modelId }),
+        body:    JSON.stringify({ prompt, overrides: iterOverrides, workflowId }),
         signal: ac.signal,
       });
 
@@ -322,10 +343,13 @@ router.get('/sd-models', (req, res) => {
 
 router.get('/options', (req, res) => {
   const cfg      = config.load();
-  const id       = cfg.activeModel;
-  const model    = id ? cfg.models[id] : null;
+  const wfId     = cfg.activeWorkflow;
+  const workflow = wfId ? cfg.workflows?.[wfId] : null;
+  const firstGen = (workflow?.steps ?? []).find(s => s.type === 'generate');
+  const modelId  = firstGen?.modelId ?? null;
+  const model    = modelId ? cfg.models?.[modelId] : null;
   res.json({
-    sd_model_checkpoint: model ? `${model.label} [${id}]` : '',
+    sd_model_checkpoint: model ? `${model.label} [${modelId}]` : '',
     sd_model_hash:       '',
   });
 });
@@ -334,9 +358,12 @@ router.post('/options', (req, res) => {
   const { sd_model_checkpoint } = req.body;
   if (sd_model_checkpoint) {
     const cfg = config.load();
-    const id  = findModelId(cfg, sd_model_checkpoint);
-    if (!id) return res.status(400).json({ error: `Model "${sd_model_checkpoint}" not found` });
-    config.save({ activeModel: id });
+    const modelId = findModelId(cfg, sd_model_checkpoint);
+    if (!modelId) return res.status(400).json({ error: `Model "${sd_model_checkpoint}" not found` });
+    // Switch to the first workflow that uses this model
+    const workflowId = findWorkflowForModel(cfg, modelId);
+    if (!workflowId) return res.status(400).json({ error: `No workflow found for model "${sd_model_checkpoint}"` });
+    config.save({ activeWorkflow: workflowId });
   }
   res.json({});
 });

@@ -3,7 +3,7 @@ import { api } from '../api.js';
 
 export const configState = reactive({
   config:   {},
-  assets:   { ollama: [], comfyui: { checkpoints: [], vaes: [], clips: [], unets: [] } },
+  assets:   { llm: [], comfyui: { checkpoints: [], vaes: [], clips: [], unets: [], upscaleModels: [] } },
   archMeta: {},
 });
 
@@ -26,6 +26,24 @@ export async function loadAssets() {
   return configState.assets;
 }
 
+export async function saveWorkflow(id, data) {
+  if (id) {
+    await api('PUT', `/api/sessions/workflows/${id}`, data);
+  } else {
+    await api('POST', '/api/sessions/workflows', data);
+  }
+  configState.config = await api('GET', '/api/sessions/config');
+}
+
+export async function deleteWorkflow(id) {
+  await api('DELETE', `/api/sessions/workflows/${id}`);
+  configState.config = await api('GET', '/api/sessions/config');
+}
+
+export async function setActiveWorkflow(id) {
+  configState.config = await api('PATCH', '/api/sessions/config', { activeWorkflow: id || null });
+}
+
 export async function saveModel(id, data) {
   if (id) {
     await api('PUT', `/api/sessions/models/${id}`, data);
@@ -40,18 +58,14 @@ export async function deleteModel(id) {
   configState.config = await api('GET', '/api/sessions/config');
 }
 
-export async function setActiveModel(id) {
-  configState.config = await api('PATCH', '/api/sessions/config', { activeModel: id || null });
+export async function loadSkill(workflowId) {
+  return api('GET', `/api/sessions/skills/${encodeURIComponent(workflowId)}`);
 }
 
-export async function loadSkill(modelId) {
-  return api('GET', `/api/sessions/skills/${encodeURIComponent(modelId)}`);
+export async function saveNotes(workflowId, notes) {
+  return api('PATCH', `/api/sessions/skills/${encodeURIComponent(workflowId)}/notes`, { notes });
 }
 
-export async function saveNotes(modelId, notes) {
-  return api('PATCH', `/api/sessions/skills/${encodeURIComponent(modelId)}/notes`, { notes });
-}
-
-export async function refreshSkill(modelId, note = '') {
-  return api('POST', `/api/sessions/skills/${encodeURIComponent(modelId)}/refresh`, { note });
+export async function refreshSkill(workflowId, note = '') {
+  return api('POST', `/api/sessions/skills/${encodeURIComponent(workflowId)}/refresh`, { note });
 }

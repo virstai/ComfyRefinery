@@ -24,7 +24,9 @@ before(async () => {
       const parsed = JSON.parse(body);
       lastReceivedMessages = parsed.messages;
       res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ message: { role: 'assistant', content: skillResponse }, done: true }));
+      res.end(JSON.stringify({
+        choices: [{ index: 0, message: { role: 'assistant', content: skillResponse }, finish_reason: 'stop' }],
+      }));
     });
   });
 
@@ -33,7 +35,8 @@ before(async () => {
 
   fs.writeFileSync(path.join(tmpDir, 'config.json'), JSON.stringify({
     ollamaUrl:   process.env.OLLAMA_URL,
-    ollamaModel: 'test-model',
+    llmModel:    'test-model',
+    llmProvider: 'ollama',
   }));
 });
 
@@ -52,7 +55,7 @@ function seedModel(id, accepts, rejects) {
   const dir = process.env.SKILLS_DIR;
   fs.mkdirSync(dir, { recursive: true });
   fs.writeFileSync(path.join(dir, `${id}.json`), JSON.stringify({
-    modelId: id, modelLabel: id, architecture: 'sd15',
+    workflowId: id, workflowLabel: id, architecture: 'sd15',
     skill: null, skillUpdatedAt: null,
     outcomes: { accepts, rejects },
     notes: [],
@@ -61,27 +64,27 @@ function seedModel(id, accepts, rejects) {
 
 test('skips silently when skill file does not exist', async () => {
   lastReceivedMessages = null;
-  await refreshSkill('ghost-model', 'Ghost', 'sd15', 'test-model');
+  await refreshSkill('ghost-model', 'Ghost', 'sd15');
   assert.equal(lastReceivedMessages, null, 'should not have called ollama');
 });
 
 test('skips when outcomes are zero and no correction note', async () => {
   seedModel('zero-outcomes', 0, 0);
   lastReceivedMessages = null;
-  await refreshSkill('zero-outcomes', 'Zero', 'sd15', 'test-model');
+  await refreshSkill('zero-outcomes', 'Zero', 'sd15');
   assert.equal(lastReceivedMessages, null, 'should not have called ollama');
 });
 
 test('runs when a correction note is provided even with zero outcomes', async () => {
   seedModel('note-only', 0, 0);
   lastReceivedMessages = null;
-  await refreshSkill('note-only', 'NoteOnly', 'sd15', 'test-model', 'Always use danbooru tags.');
+  await refreshSkill('note-only', 'NoteOnly', 'sd15', 'Always use danbooru tags.');
   assert.ok(lastReceivedMessages, 'should have called ollama');
 });
 
 test('correction note appears in the user message with priority wording', async () => {
   seedModel('with-note', 3, 1);
-  await refreshSkill('with-note', 'WithNote', 'sd15', 'test-model', 'Never use natural language.');
+  await refreshSkill('with-note', 'WithNote', 'sd15', 'Never use natural language.');
   const userMsg = lastReceivedMessages.find(m => m.role === 'user');
   assert.ok(userMsg.content.includes('Never use natural language.'), 'note text should be in message');
   assert.ok(userMsg.content.includes('takes priority'), 'should mark the note as taking priority');
@@ -89,7 +92,7 @@ test('correction note appears in the user message with priority wording', async 
 
 test('no correction note section when note is empty', async () => {
   seedModel('no-note', 2, 1);
-  await refreshSkill('no-note', 'NoNote', 'sd15', 'test-model');
+  await refreshSkill('no-note', 'NoNote', 'sd15');
   const userMsg = lastReceivedMessages.find(m => m.role === 'user');
   assert.ok(!userMsg.content.includes('takes priority'), 'should not have correction note section');
 });
@@ -97,7 +100,7 @@ test('no correction note section when note is empty', async () => {
 test('updates skill text from SKILL section of response', async () => {
   seedModel('skill-parse', 5, 2);
   skillResponse = 'SKILL\nThis is the updated skill text.';
-  await refreshSkill('skill-parse', 'SkillParse', 'sd15', 'test-model');
+  await refreshSkill('skill-parse', 'SkillParse', 'sd15');
   const data = skills.get('skill-parse');
   assert.equal(data.skill, 'This is the updated skill text.');
   assert.ok(data.skillUpdatedAt, 'should set skillUpdatedAt');
@@ -107,7 +110,7 @@ test('updates skill text from SKILL section of response', async () => {
 test('parses ENFORCE lines into auto notes (disabled by default)', async () => {
   seedModel('enforce-parse', 3, 1);
   skillResponse = 'SKILL\nSome skill.\n\nENFORCE\nAlways use danbooru tags.\nAvoid natural language.';
-  await refreshSkill('enforce-parse', 'EnforceParse', 'sd15', 'test-model');
+  await refreshSkill('enforce-parse', 'EnforceParse', 'sd15');
   const data = skills.get('enforce-parse');
   const enforceNotes = data.notes.filter(n => n.type === 'enforce' && n.auto);
   assert.equal(enforceNotes.length, 2);
@@ -117,15 +120,42 @@ test('parses ENFORCE lines into auto notes (disabled by default)', async () => {
   skillResponse = 'SKILL\nUse short descriptive tags.\n\nENFORCE\nAlways adapt to model style.\n\nBLACKLIST\nbad-word, another-word';
 });
 
-test('parses BLACKLIST into a single auto blacklist note', async () => {
+test('parses BLACKLIST into one auto note per word', async () => {
   seedModel('blacklist-parse', 2, 1);
   skillResponse = 'SKILL\nSome skill.\n\nBLACKLIST\nfoo, bar, baz';
-  await refreshSkill('blacklist-parse', 'BlacklistParse', 'sd15', 'test-model');
+  await refreshSkill('blacklist-parse', 'BlacklistParse', 'sd15');
   const data = skills.get('blacklist-parse');
-  const bl = data.notes.find(n => n.type === 'blacklist' && n.auto);
-  assert.ok(bl, 'should have a blacklist note');
-  assert.deepEqual(bl.words, ['foo', 'bar', 'baz']);
-  assert.equal(bl.enabled, false, 'auto blacklist should default to disabled');
+  const blNotes = data.notes.filter(n => n.type === 'blacklist' && n.auto);
+  assert.equal(blNotes.length, 3, 'should have one note per word');
+  assert.deepEqual(blNotes.map(n => n.words[0]).sort(), ['bar', 'baz', 'foo']);
+  assert.ok(blNotes.every(n => n.enabled === false), 'auto blacklist words should default to disabled');
+  skillResponse = 'SKILL\nUse short descriptive tags.\n\nENFORCE\nAlways adapt to model style.\n\nBLACKLIST\nbad-word, another-word';
+});
+
+test('preserves per-word enabled state across blacklist refreshes', async () => {
+  seedModel('blacklist-preserve', 3, 1);
+  skillResponse = 'SKILL\nSome skill.\n\nBLACKLIST\nfoo, bar';
+  await refreshSkill('blacklist-preserve', 'BlacklistPreserve', 'sd15');
+
+  // Enable 'foo' but leave 'bar' disabled
+  const data = skills.get('blacklist-preserve');
+  const fooNote = data.notes.find(n => n.type === 'blacklist' && n.words?.[0] === 'foo');
+  fooNote.enabled = true;
+  skills.saveNotes('blacklist-preserve', data.notes);
+
+  // Re-refresh with same words plus a new one
+  skillResponse = 'SKILL\nSome skill.\n\nBLACKLIST\nfoo, bar, baz';
+  await refreshSkill('blacklist-preserve', 'BlacklistPreserve', 'sd15');
+  const updated = skills.get('blacklist-preserve');
+  const blNotes = updated.notes.filter(n => n.type === 'blacklist');
+  const foo = blNotes.find(n => n.words?.[0] === 'foo');
+  const bar = blNotes.find(n => n.words?.[0] === 'bar');
+  const baz = blNotes.find(n => n.words?.[0] === 'baz');
+  assert.ok(foo, 'foo should still exist');
+  assert.equal(foo.enabled, true, 'foo enabled state should be preserved');
+  assert.ok(bar, 'bar should still exist');
+  assert.equal(bar.enabled, false, 'bar should still be disabled');
+  assert.ok(baz, 'new word baz should be added');
   skillResponse = 'SKILL\nUse short descriptive tags.\n\nENFORCE\nAlways adapt to model style.\n\nBLACKLIST\nbad-word, another-word';
 });
 
@@ -133,7 +163,7 @@ test('preserves enabled state of existing auto notes across refreshes', async ()
   seedModel('preserve-enabled', 4, 1);
   // First refresh — creates auto enforce note (disabled)
   skillResponse = 'SKILL\nSome skill.\n\nENFORCE\nDo something specific.';
-  await refreshSkill('preserve-enabled', 'PreserveEnabled', 'sd15', 'test-model');
+  await refreshSkill('preserve-enabled', 'PreserveEnabled', 'sd15');
 
   // Manually enable the auto note
   const data = skills.get('preserve-enabled');
@@ -142,7 +172,7 @@ test('preserves enabled state of existing auto notes across refreshes', async ()
   skills.saveNotes('preserve-enabled', data.notes);
 
   // Second refresh with same ENFORCE line — should keep enabled: true
-  await refreshSkill('preserve-enabled', 'PreserveEnabled', 'sd15', 'test-model');
+  await refreshSkill('preserve-enabled', 'PreserveEnabled', 'sd15');
   const updated = skills.get('preserve-enabled');
   const updatedNote = updated.notes.find(n => n.type === 'enforce' && n.auto && n.text === 'Do something specific.');
   assert.ok(updatedNote, 'auto note should still exist');
@@ -159,7 +189,7 @@ test('user-created notes are not overwritten by refresh', async () => {
   skills.saveNotes('user-notes', data.notes);
 
   skillResponse = 'SKILL\nSome skill.\n\nENFORCE\nAuto-generated rule.';
-  await refreshSkill('user-notes', 'UserNotes', 'sd15', 'test-model');
+  await refreshSkill('user-notes', 'UserNotes', 'sd15');
 
   const updated = skills.get('user-notes');
   const userNote = updated.notes.find(n => n.id === userId);

@@ -1,19 +1,26 @@
 <template>
-  <aside class="panel">
+  <div style="flex:1;overflow-y:auto;padding:20px 24px">
     <div class="panel-header">
       <h2>Global Settings</h2>
-      <button class="close-btn" @click="$emit('close')">&#x2715;</button>
     </div>
 
     <div class="row">
-      <label>Ollama URL     <input type="url"    v-model="form.ollamaUrl"  placeholder="http://host:11434"></label>
-      <label>ComfyUI URL    <input type="url"    v-model="form.comfyuiUrl" placeholder="http://host:8188"></label>
+      <label>LLM base URL <span class="hint">(e.g. http://host:11434/v1 for Ollama)</span>
+        <input type="url" v-model="form.llmBaseUrl" placeholder="http://host:11434/v1">
+      </label>
+      <label>ComfyUI URL
+        <input type="url" v-model="form.comfyuiUrl" placeholder="http://host:8188">
+      </label>
     </div>
 
-    <label>Ollama model (prompt building &amp; review)
-      <select v-model="form.ollamaModel">
+    <label>API key <span class="hint">(leave blank for Ollama / local providers)</span>
+      <input type="password" v-model="form.llmApiKey" placeholder="sk-…  or leave blank">
+    </label>
+
+    <label>LLM model (prompt building &amp; review)
+      <select v-model="form.llmModel">
         <option value="">— select —</option>
-        <option v-for="m in assets.ollama" :key="m" :value="m">{{ m }}</option>
+        <option v-for="m in assets.llm" :key="m" :value="m">{{ m }}</option>
       </select>
     </label>
 
@@ -29,14 +36,16 @@
       <label class="checkbox-label" style="align-self:flex-end;padding-bottom:12px">
         <input type="checkbox" v-model="form.humanReview"> Human review after each iteration
       </label>
+      <label class="checkbox-label" style="align-self:flex-end;padding-bottom:12px">
+        <input type="checkbox" v-model="form.bypassGracePeriod"> Bypass grace period
+      </label>
     </div>
 
     <div class="panel-actions">
       <button class="primary"   @click="save">Save</button>
-      <button class="secondary" @click="$emit('close')">Cancel</button>
       <button class="secondary" @click="reloadAssets">Reload asset lists</button>
     </div>
-  </aside>
+  </div>
 </template>
 
 <script setup>
@@ -45,36 +54,42 @@ import { saveConfig, loadAssets } from '../stores/config.js';
 
 const props = defineProps({
   config: { type: Object, default: () => ({}) },
-  assets: { type: Object, default: () => ({ ollama: [] }) },
+  assets: { type: Object, default: () => ({ llm: [] }) },
 });
-const emit = defineEmits(['saved', 'close']);
+const emit = defineEmits(['saved']);
 
 const form = reactive({
-  ollamaUrl:              '',
-  comfyuiUrl:             '',
-  ollamaModel:            '',
-  maxIterations:          '',
-  acceptanceGracePeriod:  '',
-  humanReview:            false,
+  llmBaseUrl:            '',
+  llmApiKey:             '',
+  comfyuiUrl:            '',
+  llmModel:              '',
+  maxIterations:         '',
+  acceptanceGracePeriod: '',
+  humanReview:           false,
+  bypassGracePeriod:     false,
 });
 
 watch(() => props.config, cfg => {
-  form.ollamaUrl             = cfg.ollamaUrl             ?? '';
+  form.llmBaseUrl            = cfg.llmBaseUrl            ?? '';
+  form.llmApiKey             = cfg.llmApiKey             ?? '';
   form.comfyuiUrl            = cfg.comfyuiUrl            ?? '';
-  form.ollamaModel           = cfg.ollamaModel           ?? '';
+  form.llmModel              = cfg.llmModel              ?? '';
   form.maxIterations         = cfg.maxIterations         ?? '';
   form.acceptanceGracePeriod = cfg.acceptanceGracePeriod ?? '';
   form.humanReview           = !!cfg.humanReview;
+  form.bypassGracePeriod     = !!cfg.bypassGracePeriod;
 }, { immediate: true });
 
 async function save() {
   await saveConfig({
-    ollamaUrl:             form.ollamaUrl             || null,
+    llmBaseUrl:            form.llmBaseUrl            || null,
+    llmApiKey:             form.llmApiKey             || '',
     comfyuiUrl:            form.comfyuiUrl            || null,
-    ollamaModel:           form.ollamaModel           || null,
+    llmModel:              form.llmModel              || null,
     maxIterations:         form.maxIterations         || null,
     acceptanceGracePeriod: form.acceptanceGracePeriod !== '' ? Number(form.acceptanceGracePeriod) : null,
     humanReview:           form.humanReview,
+    bypassGracePeriod:     form.bypassGracePeriod,
   });
   emit('saved');
 }

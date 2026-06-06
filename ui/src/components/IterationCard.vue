@@ -7,6 +7,7 @@
       'iter-thumb--reject':           iteration.verdict === 'REJECT',
       'iter-thumb--refused':          iteration.verdict === 'REFUSED',
       'iter-thumb--pending':          iteration.humanPending || iteration.acceptedPending,
+      'iter-thumb--selected':         selected,
     }"
     @click="$emit('open')"
   >
@@ -31,7 +32,10 @@
 <script setup>
 import { computed } from 'vue';
 
-const props = defineProps({ iteration: { type: Object, required: true } });
+const props = defineProps({
+  iteration: { type: Object, required: true },
+  selected:  { type: Boolean, default: false },
+});
 defineEmits(['open']);
 
 const isRunning   = computed(() => !props.iteration.verdict && !!props.iteration.status);

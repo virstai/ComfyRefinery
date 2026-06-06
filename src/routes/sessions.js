@@ -4,7 +4,7 @@ const express = require('express');
 const router  = express.Router();
 const config    = require('../services/config');
 const comfyui   = require('../services/comfyui');
-const ollama    = require('../services/ollama');
+const llm       = require('../services/llm');
 const skills    = require('../services/skills');
 const { refreshSkill } = require('../services/skillRefresher');
 const { architectures, archMeta, getDefaults } = require('../workflows');
@@ -12,23 +12,56 @@ const { architectures, archMeta, getDefaults } = require('../workflows');
 // GET /api/sessions/config
 router.get('/config', (req, res) => res.json(config.load()));
 
-// PATCH /api/sessions/config — update global settings (urls, ollamaModel, activeModel, maxIterations)
+// PATCH /api/sessions/config — update global settings
 router.patch('/config', (req, res) => {
   try {
-    // Strip model configs from here — use the /models endpoints instead
-    const { models: _ignored, ...updates } = req.body;
+    const { models: _m, workflows: _w, ...updates } = req.body;
     res.json(config.save(updates));
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
-// ── Model registry ─────────────────────────────────────────────────────────
+// ── Workflow registry ──────────────────────────────────────────────────────────
+
+// GET /api/sessions/workflows
+router.get('/workflows', (req, res) => {
+  const { workflows, activeWorkflow } = config.load();
+  res.json({ workflows, activeWorkflow });
+});
+
+// PUT /api/sessions/workflows/:id — create or replace a workflow config
+router.put('/workflows/:id', (req, res) => {
+  try {
+    const saved = config.saveWorkflow(req.params.id, req.body);
+    res.json(saved);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// POST /api/sessions/workflows — create a new workflow (id derived from label)
+router.post('/workflows', (req, res) => {
+  try {
+    const saved = config.saveWorkflow(null, req.body);
+    res.status(201).json(saved);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// DELETE /api/sessions/workflows/:id
+router.delete('/workflows/:id', (req, res) => {
+  config.deleteWorkflow(req.params.id);
+  res.status(204).end();
+});
+
+// ── Model registry ─────────────────────────────────────────────────────────────
 
 // GET /api/sessions/models/list — all configured models
 router.get('/models/list', (req, res) => {
-  const { models, activeModel } = config.load();
-  res.json({ models, activeModel });
+  const { models } = config.load();
+  res.json({ models });
 });
 
 // PUT /api/sessions/models/:id — create or replace a model config
@@ -57,38 +90,44 @@ router.delete('/models/:id', (req, res) => {
   res.status(204).end();
 });
 
-// GET /api/sessions/skills/:modelId
-router.get('/skills/:modelId', (req, res) => {
-  res.json(skills.get(req.params.modelId) ?? {});
+// ── Skill registry ─────────────────────────────────────────────────────────────
+
+// GET /api/sessions/skills/:workflowId
+router.get('/skills/:workflowId', (req, res) => {
+  res.json(skills.get(req.params.workflowId) ?? {});
 });
 
-// POST /api/sessions/skills/:modelId/refresh — manually trigger a skill refresh with an optional correction note
-router.post('/skills/:modelId/refresh', async (req, res) => {
+// POST /api/sessions/skills/:workflowId/refresh
+router.post('/skills/:workflowId/refresh', async (req, res) => {
   const { note = '' } = req.body;
   const cfg = config.load();
-  const modelConfig = cfg.models?.[req.params.modelId];
-  if (!modelConfig) return res.status(404).json({ error: 'Model not found' });
-  if (!cfg.ollamaModel) return res.status(400).json({ error: 'No Ollama model configured' });
+  const workflow = cfg.workflows?.[req.params.workflowId];
+  if (!workflow) return res.status(404).json({ error: 'Workflow not found' });
+  if (!cfg.llmModel) return res.status(400).json({ error: 'No LLM model configured' });
+
+  const firstGenStep = (workflow.steps ?? []).find(s => s.type === 'generate');
+  const modelConfig  = cfg.models?.[firstGenStep?.modelId];
+  const arch = modelConfig?.architecture ?? 'unknown';
 
   try {
-    await refreshSkill(req.params.modelId, modelConfig.label, modelConfig.architecture, cfg.ollamaModel, note.trim());
-    res.json(skills.get(req.params.modelId) ?? {});
+    await refreshSkill(req.params.workflowId, workflow.label, arch, note.trim());
+    res.json(skills.get(req.params.workflowId) ?? {});
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
-// PATCH /api/sessions/skills/:modelId/notes
-router.patch('/skills/:modelId/notes', (req, res) => {
+// PATCH /api/sessions/skills/:workflowId/notes
+router.patch('/skills/:workflowId/notes', (req, res) => {
   try {
-    skills.saveNotes(req.params.modelId, req.body.notes ?? []);
-    res.json(skills.get(req.params.modelId) ?? {});
+    skills.saveNotes(req.params.workflowId, req.body.notes ?? []);
+    res.json(skills.get(req.params.workflowId) ?? {});
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
-// ── Architecture metadata ──────────────────────────────────────────────────
+// ── Architecture metadata ──────────────────────────────────────────────────────
 
 // GET /api/sessions/architectures
 router.get('/architectures', (req, res) => {
@@ -99,22 +138,23 @@ router.get('/architectures', (req, res) => {
   res.json(result);
 });
 
-// ── Available assets from ComfyUI + Ollama ────────────────────────────────
+// ── Available assets from ComfyUI + Ollama ────────────────────────────────────
 
 // GET /api/sessions/assets — checkpoints, vaes, clips, unets + ollama models
 router.get('/assets', async (req, res) => {
-  const [comfyAssets, ollamaModels] = await Promise.allSettled([
+  const cfg = config.load();
+  const [comfyAssets, llmModels] = await Promise.allSettled([
     comfyui.getAssets(),
-    ollama.listModels(),
+    llm.listModels(cfg),
   ]);
 
-  const comfy  = comfyAssets.status  === 'fulfilled' ? comfyAssets.value  : { checkpoints: [], vaes: [], clips: [], unets: [], errors: [comfyAssets.reason.message] };
-  const oModels = ollamaModels.status === 'fulfilled' ? ollamaModels.value : [];
+  const comfy  = comfyAssets.status === 'fulfilled' ? comfyAssets.value : { checkpoints: [], vaes: [], clips: [], unets: [], upscaleModels: [], ipAdapterModels: [], clipVisionModels: [], reduxModels: [], errors: [comfyAssets.reason.message] };
+  const models = llmModels.status === 'fulfilled' ? llmModels.value : [];
 
   res.json({
-    ollama:  oModels.map(m => m.name),
+    llm:     models,
     comfyui: comfy,
-    errors:  [...(comfy.errors || []), ...(ollamaModels.status === 'rejected' ? [ollamaModels.reason.message] : [])],
+    errors:  [...(comfy.errors || []), ...(llmModels.status === 'rejected' ? [llmModels.reason.message] : [])],
   });
 });
 

@@ -1,24 +1,24 @@
 'use strict';
 
-const express      = require('express');
-const router       = express.Router();
+const express          = require('express');
+const router           = express.Router();
 const { EventEmitter } = require('events');
-const { v4: uuidv4 } = require('uuid');
+const { v4: uuidv4 }  = require('uuid');
 const config  = require('../services/config');
-const ollama  = require('../services/ollama');
+const llm     = require('../services/llm');
 const comfyui = require('../services/comfyui');
 const skills  = require('../services/skills');
 const db      = require('../services/db');
-const { refreshSkill, LOCAL_PREAMBLE: _PREAMBLE } = require('../services/skillRefresher');
-const { buildWorkflow, getDefaults } = require('../workflows');
-const { parsePromptResponse, parseReview } = require('../lib/parsers');
+const { refreshSkill } = require('../services/skillRefresher');
+const steps   = require('../steps');
+const { parseReview } = require('../lib/parsers');
 
-const sessions            = new Map(); // active sessions (in-memory cache)
-const pendingReviews      = new Map(); // sessionId -> { resolve, reject }
-const pendingAcceptances  = new Map(); // sessionId -> { resolve, timer }
+const sessions           = new Map(); // active sessions (in-memory cache)
+const pendingReviews     = new Map(); // `${sessionId}:${stepIndex}` → { resolve, reject }
+const pendingAcceptances = new Map(); // `${sessionId}:${stepIndex}` → { resolve, timer }
+const activeKills        = new Map(); // sessionId → kill function
 
-// Broadcast channel — any SSE client subscribed to GET /events receives every
-// event emitted during any generation run (regardless of who triggered it).
+// Broadcast channel — all SSE clients subscribed to GET /events receive every event.
 const genEmitter = new EventEmitter();
 genEmitter.setMaxListeners(100);
 
@@ -27,201 +27,408 @@ function emit(res, event, data) {
   genEmitter.emit('gen', event, data);
 }
 
-function waitForHumanReview(sessionId) {
+function waitForHumanReview(key) {
   return new Promise((resolve, reject) => {
-    pendingReviews.set(sessionId, { resolve, reject });
+    pendingReviews.set(key, { resolve, reject });
   });
 }
 
-// Resolves true if refused within the grace period, false if the timer expired.
-function waitForAcceptanceGrace(sessionId, seconds) {
+function waitForAcceptanceGrace(key, seconds) {
   return new Promise(resolve => {
     const timer = setTimeout(() => {
-      pendingAcceptances.delete(sessionId);
+      pendingAcceptances.delete(key);
       resolve(false);
     }, seconds * 1000);
-    pendingAcceptances.set(sessionId, { resolve, timer });
+    pendingAcceptances.set(key, { resolve, timer });
   });
 }
 
-// ── Core generation loop ──────────────────────────────────────────────────────
+// ── Step execution ────────────────────────────────────────────────────────────────
 
-async function runLoop(session, cfg, modelConfig, overrides, res) {
-  const arch         = modelConfig.architecture;
-  const archDefaults = getDefaults(arch);
-  const genParams    = { ...archDefaults, ...modelConfig, ...overrides };
-  const maxNewIter   = overrides.maxIterations ?? cfg.maxIterations ?? 4;
-  const skillSummary = skills.getSummary(cfg.activeModel);
-  const tag          = session.id.slice(0, 8);
+async function _runIterativeLoop(stepType, stepDef, stepIndex, session, ctx, cfg, res, isKilled = () => false) {
+  const stepData = session.steps[stepIndex];
+  const tag      = session.id.slice(0, 8);
 
-  console.log(`[${tag}] loop start — model=${modelConfig.label} arch=${arch} maxNew=${maxNewIter} existingIter=${session.iterations.length}`);
-  if (skillSummary) console.log(`[${tag}] skill context loaded`);
+  // Per-step review settings, falling back to global config
+  const review      = stepDef.review ?? {};
+  const maxNewIter  = review.maxIterations ?? cfg.maxIterations ?? 4;
+  const humanReview = review.humanReview   ?? cfg.humanReview   ?? false;
+  const gracePeriod = cfg.bypassGracePeriod ? 0
+    : review.gracePeriod !== undefined ? review.gracePeriod : (cfg.acceptanceGracePeriod ?? 0);
+  const pendingKey  = `${session.id}:${stepIndex}`;
 
-  res.on('close', () => {
-    const pending = pendingReviews.get(session.id);
-    if (pending) { pendingReviews.delete(session.id); pending.reject(new Error('Client disconnected')); }
-    const pendingAcc = pendingAcceptances.get(session.id);
-    if (pendingAcc) { clearTimeout(pendingAcc.timer); pendingAcceptances.delete(session.id); pendingAcc.resolve(false); }
+  emit(res, 'step', { index: stepIndex, type: stepDef.type, label: stepData.label, total: session.steps.length });
+  console.log(`[${tag}] step ${stepIndex} (${stepDef.type}: ${stepData.label}) maxIter=${maxNewIter}`);
+
+  let accepted     = false;
+  let continueLoop = true;
+
+  while (continueLoop) {
+    continueLoop = false;
+
+    for (let i = 0; i < maxNewIter && !accepted; i++) {
+      if (isKilled()) throw new Error('Generation stopped by user');
+      const iterNum = stepData.iterations.length + 1;
+
+      // ── Phase 1: prepare ──────────────────────────────────────────
+      emit(res, 'phase', { step: stepIndex, phase: 'prompt_building', iteration: iterNum });
+      console.log(`[${tag}] step ${stepIndex} iter ${iterNum}: preparing…`);
+
+      const prepResult = await stepType.prepare(stepDef, ctx, stepData.iterations, token => {
+        emit(res, 'token', { step: stepIndex, iteration: iterNum, phase: 'prompt', token });
+        process.stdout.write(token);
+      });
+      process.stdout.write('\n');
+
+      if (isKilled()) throw new Error('Generation stopped by user');
+
+      if (prepResult.prompt !== undefined) {
+        const preview = prepResult.prompt;
+        console.log(`[${tag}] step ${stepIndex} iter ${iterNum}: prompt="${preview.slice(0, 80)}${preview.length > 80 ? '…' : ''}"`);
+        emit(res, 'prompt', { step: stepIndex, iteration: iterNum, prompt: prepResult.prompt });
+      }
+
+      // ── Phase 2: generate ─────────────────────────────────────────
+      emit(res, 'phase', { step: stepIndex, phase: 'generating', iteration: iterNum });
+      console.log(`[${tag}] step ${stepIndex} iter ${iterNum}: queuing ComfyUI job…`);
+
+      const workflow = stepType.buildComfyWorkflow(stepDef, prepResult, ctx);
+      const { images } = await comfyui.generate(
+        workflow,
+        pct => {
+          emit(res, 'progress', { step: stepIndex, iteration: iterNum, pct });
+          process.stdout.write(`\r[${tag}] step ${stepIndex} iter ${iterNum}: generating ${pct}%   `);
+        },
+        previewUrl => emit(res, 'preview', { step: stepIndex, iteration: iterNum, url: previewUrl }),
+      );
+      process.stdout.write('\n');
+
+      if (isKilled()) throw new Error('Generation stopped by user');
+      if (!images.length) throw new Error('ComfyUI returned no images');
+      const image    = images[0];
+      const imageUrl = `/api/image?filename=${encodeURIComponent(image.filename)}&subfolder=${encodeURIComponent(image.subfolder ?? '')}&type=${encodeURIComponent(image.type ?? 'output')}`;
+      console.log(`[${tag}] step ${stepIndex} iter ${iterNum}: image ready — ${image.filename}`);
+      emit(res, 'image', { step: stepIndex, iteration: iterNum, url: imageUrl });
+
+      // Fetch image as base64 for vision review
+      const imgFetchUrl = `${cfg.comfyuiUrl}/view?filename=${encodeURIComponent(image.filename)}&subfolder=${encodeURIComponent(image.subfolder ?? '')}&type=${encodeURIComponent(image.type ?? 'output')}`;
+      const imgRes = await fetch(imgFetchUrl);
+      if (!imgRes.ok) throw new Error(`Failed to fetch image for review: ${imgRes.status}`);
+      const imageBase64 = Buffer.from(await imgRes.arrayBuffer()).toString('base64');
+
+      // ── Phase 3: review ───────────────────────────────────────────
+      emit(res, 'phase', { step: stepIndex, phase: 'reviewing', iteration: iterNum });
+      console.log(`[${tag}] step ${stepIndex} iter ${iterNum}: reviewing…`);
+
+      const reviewMsgs = stepType.reviewMessages(stepDef, prepResult, ctx, imageBase64, stepData.iterations);
+      const reviewRaw  = await llm.chatStream(cfg, reviewMsgs, token => {
+        emit(res, 'token', { step: stepIndex, iteration: iterNum, phase: 'review', token });
+        process.stdout.write(token);
+      }, { signal: ctx.signal });
+      process.stdout.write('\n');
+
+      if (isKilled()) throw new Error('Generation stopped by user');
+      const { verdict, diagnosis } = parseReview(reviewRaw);
+      console.log(`[${tag}] step ${stepIndex} iter ${iterNum}: verdict=${verdict} — ${diagnosis}`);
+      emit(res, 'review', { step: stepIndex, iteration: iterNum, verdict, diagnosis });
+
+      const iteration = { prompt: prepResult.prompt, imageUrl, verdict, diagnosis };
+      stepData.iterations.push(iteration);
+      accepted = verdict === 'ACCEPT';
+
+      // ── Phase 4: human review ─────────────────────────────────────
+      if (humanReview) {
+        emit(res, 'human_review', { step: stepIndex, iteration: iterNum, aiVerdict: verdict, aiDiagnosis: diagnosis });
+        console.log(`[${tag}] step ${stepIndex} iter ${iterNum}: awaiting human review…`);
+        const decision = await waitForHumanReview(pendingKey);
+        if (decision.feedback) iteration.humanFeedback = decision.feedback;
+        accepted = decision.accept;
+        console.log(`[${tag}] step ${stepIndex} iter ${iterNum}: human ${decision.accept ? 'ACCEPTED' : 'REJECTED'}`);
+        emit(res, 'human_verdict', { step: stepIndex, iteration: iterNum, accepted: decision.accept, feedback: decision.feedback });
+      }
+
+      // ── Phase 5: acceptance grace period ──────────────────────────
+      if (accepted && gracePeriod > 0) {
+        emit(res, 'accepted_pending', { step: stepIndex, iteration: iterNum, gracePeriod, humanReview });
+        console.log(`[${tag}] step ${stepIndex} iter ${iterNum}: grace period ${gracePeriod}s…`);
+        const refused = await waitForAcceptanceGrace(pendingKey, gracePeriod);
+        if (refused) {
+          accepted = false;
+          iteration.verdict = 'REFUSED';
+          emit(res, 'acceptance_refused', { step: stepIndex, iteration: iterNum });
+          console.log(`[${tag}] step ${stepIndex} iter ${iterNum}: acceptance refused — continuing`);
+        }
+      }
+
+      if (stepDef.type === 'generate') {
+        skills.record(session.workflowId, session.workflowLabel, ctx.modelConfig?.architecture, accepted ? 'ACCEPT' : 'REJECT');
+      }
+      db.saveSession(session);
+    }
+
+    // Grace period at max iterations — let user refuse and keep iterating
+    if (!accepted && gracePeriod > 0 && stepData.iterations.length > 0) {
+      const lastIterNum = stepData.iterations.length;
+      emit(res, 'accepted_pending', { step: stepIndex, iteration: lastIterNum, gracePeriod, humanReview, maxIterations: true });
+      console.log(`[${tag}] step ${stepIndex}: max iterations — grace period ${gracePeriod}s`);
+      const refused = await waitForAcceptanceGrace(pendingKey, gracePeriod);
+      if (refused) {
+        stepData.iterations[lastIterNum - 1].verdict = 'REFUSED';
+        emit(res, 'acceptance_refused', { step: stepIndex, iteration: lastIterNum });
+        console.log(`[${tag}] step ${stepIndex}: grace period refused — continuing`);
+        continueLoop = true;
+      }
+    }
+  }
+
+  const lastIter = stepData.iterations[stepData.iterations.length - 1];
+  stepData.outputImageUrl = lastIter?.imageUrl ?? null;
+  return { accepted, outputImageUrl: stepData.outputImageUrl };
+}
+
+async function runGenerateStep(stepDef, stepIndex, session, ctx, cfg, res, isKilled = () => false) {
+  const modelConfig = cfg.models?.[stepDef.modelId];
+  if (!modelConfig) throw new Error(`Model "${stepDef.modelId}" not found in config`);
+  ctx = { ...ctx, modelConfig, skillId: session.workflowId };
+
+  if (ctx.inputImage) {
+    try {
+      const url       = new URL(ctx.inputImage, 'http://localhost');
+      const filename  = url.searchParams.get('filename') ?? 'image.png';
+      const subfolder = url.searchParams.get('subfolder') ?? '';
+      const type      = url.searchParams.get('type') ?? 'output';
+      const fetchUrl  = `${cfg.comfyuiUrl}/view?filename=${encodeURIComponent(filename)}&subfolder=${encodeURIComponent(subfolder)}&type=${encodeURIComponent(type)}`;
+      const imgRes    = await fetch(fetchUrl);
+      if (imgRes.ok) {
+        const buffer = Buffer.from(await imgRes.arrayBuffer());
+        ctx = { ...ctx, chainedInputRef: await comfyui.uploadImage(buffer, filename) };
+      }
+    } catch { /* chaining is best-effort */ }
+  }
+
+  const stepType = steps.get(stepDef.type);
+  return _runIterativeLoop(stepType, stepDef, stepIndex, session, ctx, cfg, res, isKilled);
+}
+
+async function runUpscaleStep(stepDef, stepIndex, session, ctx, cfg, res, isKilled = () => false) {
+  const stepType = steps.get(stepDef.type);
+  return _runIterativeLoop(stepType, stepDef, stepIndex, session, ctx, cfg, res, isKilled);
+}
+
+async function runVideoStep(stepDef, stepIndex, session, ctx, cfg, res, isKilled = () => false) {
+  const stepType  = steps.get('video');
+  const stepData  = session.steps[stepIndex];
+  const tag       = session.id.slice(0, 8);
+
+  const modelConfig = cfg.models?.[stepDef.modelId];
+  if (!modelConfig) throw new Error(`Video model "${stepDef.modelId}" not found in config`);
+  ctx = { ...ctx, modelConfig };
+
+  emit(res, 'step', { index: stepIndex, type: 'video', label: stepData.label, total: session.steps.length });
+  console.log(`[${tag}] step ${stepIndex} (video: ${stepData.label})`);
+
+  if (isKilled()) throw new Error('Generation stopped by user');
+
+  emit(res, 'phase', { step: stepIndex, phase: 'generating', iteration: 1 });
+  console.log(`[${tag}] step ${stepIndex}: preparing video…`);
+
+  const prepResult = await stepType.prepare(stepDef, ctx);
+
+  if (isKilled()) throw new Error('Generation stopped by user');
+
+  console.log(`[${tag}] step ${stepIndex}: queuing video ComfyUI job…`);
+  const workflow = stepType.buildComfyWorkflow(stepDef, prepResult, ctx);
+
+  const { videos } = await comfyui.generateVideo(
+    workflow,
+    pct => {
+      emit(res, 'progress', { step: stepIndex, pct });
+      process.stdout.write(`\r[${tag}] step ${stepIndex}: generating ${pct}%   `);
+    },
+  );
+  process.stdout.write('\n');
+
+  if (isKilled()) throw new Error('Generation stopped by user');
+  if (!videos.length) throw new Error('ComfyUI returned no video output');
+
+  const vid      = videos[0];
+  const videoUrl = `/api/video?filename=${encodeURIComponent(vid.filename)}&subfolder=${encodeURIComponent(vid.subfolder ?? '')}&type=${encodeURIComponent(vid.type ?? 'output')}`;
+  console.log(`[${tag}] step ${stepIndex}: video ready — ${vid.filename}`);
+
+  emit(res, 'video', { step: stepIndex, url: videoUrl });
+  stepData.outputVideoUrl = videoUrl;
+  db.saveSession(session);
+
+  return { accepted: true, outputVideoUrl: videoUrl };
+}
+
+// ── Pipeline execution ────────────────────────────────────────────────────────────
+
+async function runPipeline(session, pipelineDef, cfg, res) {
+  const tag = session.id.slice(0, 8);
+  const abortController = new AbortController();
+  const ctx = { userPrompt: session.prompt, references: session.references ?? [], cfg, signal: abortController.signal };
+
+  let killed = false;
+
+  activeKills.set(session.id, async () => {
+    killed = true;
+    abortController.abort();
+    await comfyui.interrupt();
+    for (const [key, p] of pendingReviews) {
+      if (key.startsWith(`${session.id}:`)) { pendingReviews.delete(key); p.reject(new Error('Stopped')); }
+    }
+    for (const [key, p] of pendingAcceptances) {
+      if (key.startsWith(`${session.id}:`)) { clearTimeout(p.timer); pendingAcceptances.delete(key); p.resolve(false); }
+    }
   });
 
+  res.on('close', () => {
+    for (const [key, p] of pendingReviews) {
+      if (key.startsWith(`${session.id}:`)) { pendingReviews.delete(key); p.reject(new Error('Client disconnected')); }
+    }
+    for (const [key, p] of pendingAcceptances) {
+      if (key.startsWith(`${session.id}:`)) { clearTimeout(p.timer); pendingAcceptances.delete(key); p.resolve(false); }
+    }
+  });
+
+  let currentStep = 0;
   try {
-    let accepted    = false;
-    let continueLoop = true;
+    let overallAccepted = false;
 
-    while (continueLoop) {
-      continueLoop = false;
+    for (let si = 0; si < pipelineDef.length; si++) {
+      currentStep = si;
+      const stepDef = pipelineDef[si];
 
-      for (let i = 0; i < maxNewIter && !accepted; i++) {
-        const iterNum = session.iterations.length + 1; // global iteration number
-
-        // ── Phase 1: build prompt ──────────────────────────────────────────
-        emit(res, 'phase', { phase: 'prompt_building', iteration: iterNum });
-        console.log(`[${tag}] iter ${iterNum}: building prompt…`);
-
-        const messages = session.iterations.length === 0
-          ? buildInitialMessages(session.prompt, arch, archDefaults, skillSummary)
-          : buildRefinementMessages(session.prompt, session.iterations, arch, skillSummary);
-
-        const raw = await ollama.chatStream(cfg.ollamaModel, messages, token => {
-          emit(res, 'token', { iteration: iterNum, phase: 'prompt', token });
-          process.stdout.write(token);
-        });
-        process.stdout.write('\n');
-
-        const prompt = parsePromptResponse(raw);
-        console.log(`[${tag}] iter ${iterNum}: prompt="${prompt.slice(0, 80)}${prompt.length > 80 ? '…' : ''}"`);
-        emit(res, 'prompt', { iteration: iterNum, prompt });
-
-        // ── Phase 2: generate image ────────────────────────────────────────
-        emit(res, 'phase', { phase: 'generating', iteration: iterNum });
-        console.log(`[${tag}] iter ${iterNum}: queuing ComfyUI job…`);
-
-        const { workflow } = buildWorkflow(modelConfig, { ...genParams, positivePrompt: prompt });
-        const { images } = await comfyui.generate(workflow, pct => {
-          emit(res, 'progress', { iteration: iterNum, pct });
-          process.stdout.write(`\r[${tag}] iter ${iterNum}: generating ${pct}%   `);
-        });
-        process.stdout.write('\n');
-
-        if (!images.length) throw new Error('ComfyUI returned no images');
-        const image    = images[0];
-        const imageUrl = `/api/image?filename=${encodeURIComponent(image.filename)}&subfolder=${encodeURIComponent(image.subfolder ?? '')}&type=${encodeURIComponent(image.type ?? 'output')}`;
-        console.log(`[${tag}] iter ${iterNum}: image ready — ${image.filename}`);
-        emit(res, 'image', { iteration: iterNum, url: imageUrl });
-
-        // Fetch image as base64 for vision review
-        const imgFetchUrl = `${cfg.comfyuiUrl}/view?filename=${encodeURIComponent(image.filename)}&subfolder=${encodeURIComponent(image.subfolder ?? '')}&type=${encodeURIComponent(image.type ?? 'output')}`;
-        const imgRes = await fetch(imgFetchUrl);
-        if (!imgRes.ok) throw new Error(`Failed to fetch image for review: ${imgRes.status}`);
-        const imageBase64 = Buffer.from(await imgRes.arrayBuffer()).toString('base64');
-
-        // ── Phase 3: AI review ─────────────────────────────────────────────
-        emit(res, 'phase', { phase: 'reviewing', iteration: iterNum });
-        console.log(`[${tag}] iter ${iterNum}: reviewing…`);
-
-        const reviewMessages = buildReviewMessages(session.prompt, prompt, arch, session.iterations, imageBase64, skillSummary);
-        const review = await ollama.chatStream(cfg.ollamaModel, reviewMessages, token => {
-          emit(res, 'token', { iteration: iterNum, phase: 'review', token });
-          process.stdout.write(token);
-        });
-        process.stdout.write('\n');
-
-        const { verdict, diagnosis } = parseReview(review);
-        console.log(`[${tag}] iter ${iterNum}: verdict=${verdict} — ${diagnosis}`);
-        emit(res, 'review', { iteration: iterNum, verdict, diagnosis });
-
-        const iteration = { prompt, imageUrl, verdict, diagnosis };
-        session.iterations.push(iteration);
-        accepted = verdict === 'ACCEPT';
-
-        // ── Phase 4: human review (if enabled) ────────────────────────────
-        if (cfg.humanReview) {
-          emit(res, 'human_review', { iteration: iterNum, aiVerdict: verdict, aiDiagnosis: diagnosis });
-          console.log(`[${tag}] iter ${iterNum}: awaiting human review…`);
-
-          const decision = await waitForHumanReview(session.id);
-          if (decision.feedback) iteration.humanFeedback = decision.feedback;
-
-          accepted = decision.accept;
-          console.log(`[${tag}] iter ${iterNum}: human ${decision.accept ? 'ACCEPTED' : 'REJECTED'} — ${decision.feedback || 'no feedback'}`);
-          emit(res, 'human_verdict', { iteration: iterNum, accepted: decision.accept, feedback: decision.feedback });
-        }
-
-        // ── Phase 5: acceptance grace period ──────────────────────────────
-        if (accepted && cfg.acceptanceGracePeriod > 0) {
-          emit(res, 'accepted_pending', { iteration: iterNum, gracePeriod: cfg.acceptanceGracePeriod });
-          console.log(`[${tag}] iter ${iterNum}: grace period ${cfg.acceptanceGracePeriod}s…`);
-          const refused = await waitForAcceptanceGrace(session.id, cfg.acceptanceGracePeriod);
-          if (refused) {
-            accepted = false;
-            iteration.verdict = 'REFUSED';
-            emit(res, 'acceptance_refused', { iteration: iterNum });
-            console.log(`[${tag}] iter ${iterNum}: acceptance refused — continuing`);
-          }
-        }
-
-        skills.record(cfg.activeModel, modelConfig.label, arch, accepted ? 'ACCEPT' : 'REJECT');
-        db.saveSession(session);
+      let result;
+      if (stepDef.type === 'video') {
+        result = await runVideoStep(stepDef, si, session, { ...ctx }, cfg, res, () => killed);
+      } else if (stepDef.type === 'generate') {
+        result = await runGenerateStep(stepDef, si, session, { ...ctx }, cfg, res, () => killed);
+      } else {
+        result = await runUpscaleStep(stepDef, si, session, { ...ctx }, cfg, res, () => killed);
       }
 
-      // ── Grace period at max iterations ──────────────────────────────────
-      // When the loop ends without an accepted image, pause so the user can
-      // see the last result in the UI and refuse to keep iterating.
-      if (!accepted && cfg.acceptanceGracePeriod > 0 && session.iterations.length > 0) {
-        const lastIterNum = session.iterations.length;
-        emit(res, 'accepted_pending', { iteration: lastIterNum, gracePeriod: cfg.acceptanceGracePeriod, maxIterations: true });
-        console.log(`[${tag}] max iterations — grace period ${cfg.acceptanceGracePeriod}s`);
-        const refused = await waitForAcceptanceGrace(session.id, cfg.acceptanceGracePeriod);
-        if (refused) {
-          session.iterations[lastIterNum - 1].verdict = 'REFUSED';
-          emit(res, 'acceptance_refused', { iteration: lastIterNum });
-          console.log(`[${tag}] grace period refused — continuing`);
-          continueLoop = true;
-        }
+      const { accepted, outputImageUrl, outputVideoUrl } = result;
+      overallAccepted = accepted;
+
+      if (outputImageUrl) {
+        ctx.inputImage = outputImageUrl;
+        emit(res, 'step_complete', { step: si, imageUrl: outputImageUrl, accepted });
+      } else if (outputVideoUrl) {
+        emit(res, 'step_complete', { step: si, videoUrl: outputVideoUrl, accepted });
       }
-    } // end while (continueLoop)
+
+      // Don't run subsequent steps on a rejected output
+      if (!accepted && si < pipelineDef.length - 1) break;
+    }
 
     session.status = 'complete';
-    console.log(`[${tag}] done — ${accepted ? 'ACCEPTED' : 'max iterations reached'} (${session.iterations.length} total)`);
-    const lastIter = session.iterations[session.iterations.length - 1];
-    emit(res, 'done', { iterations: session.iterations.length, accepted, imageUrl: lastIter?.imageUrl ?? null, sessionId: session.id, prompt: session.prompt });
+    console.log(`[${tag}] done — ${overallAccepted ? 'ACCEPTED' : 'max iterations reached'}`);
+    const lastStep = session.steps[session.steps.length - 1];
+    emit(res, 'done', {
+      accepted:   overallAccepted,
+      imageUrl:   lastStep?.outputImageUrl ?? null,
+      videoUrl:   lastStep?.outputVideoUrl ?? null,
+      sessionId:  session.id,
+      prompt:     session.prompt,
+      iterations: session.steps.reduce((sum, st) => sum + st.iterations.length, 0),
+    });
   } catch (err) {
-    session.status = 'error';
-    console.error(`[${tag}] error: ${err.message}`);
-    emit(res, 'error', { message: err.message });
+    if (killed) {
+      // Clear partial data from the interrupted step so session reflects only finished work
+      if (session.steps[currentStep]) {
+        session.steps[currentStep].iterations    = [];
+        session.steps[currentStep].outputImageUrl = null;
+        session.steps[currentStep].outputVideoUrl = null;
+      }
+      session.status = 'stopped';
+      console.log(`[${tag}] stopped by user at step ${currentStep}`);
+      emit(res, 'stopped', { step: currentStep });
+    } else {
+      session.status = 'error';
+      console.error(`[${tag}] error: ${err.message}`);
+      emit(res, 'error', { message: err.message });
+    }
   } finally {
+    activeKills.delete(session.id);
     db.saveSession(session);
     res.end();
-    if (session.iterations.length > 0) {
-      refreshSkill(cfg.activeModel, modelConfig.label, arch, cfg.ollamaModel)
-        .catch(err => console.error(`[${tag}] skill refresh failed: ${err.message}`));
+    // Refresh skill for this workflow using the first generate step's model arch
+    if (session.workflowId) {
+      const workflow = cfg.workflows?.[session.workflowId];
+      if (workflow) {
+        const firstGenStep = pipelineDef.find(s => s.type === 'generate');
+        const modelConfig  = firstGenStep ? cfg.models?.[firstGenStep.modelId] : null;
+        if (modelConfig) {
+          refreshSkill(session.workflowId, workflow.label, modelConfig.architecture)
+            .catch(err => console.error(`[${tag}] skill refresh failed: ${err.message}`));
+        }
+      }
     }
   }
 }
 
-// ── Routes ────────────────────────────────────────────────────────────────────
+// ── Route helpers ─────────────────────────────────────────────────────────────────
 
-// POST /api/generate — start a new session
+// Split request overrides into generation params and per-step review config.
+function splitOverrides(overrides = {}) {
+  const { maxIterations, humanReview, acceptanceGracePeriod, ...genParams } = overrides;
+  const review = {};
+  if (maxIterations         !== undefined) review.maxIterations = maxIterations;
+  if (humanReview           !== undefined) review.humanReview   = !!humanReview;
+  if (acceptanceGracePeriod !== undefined) review.gracePeriod   = Number(acceptanceGracePeriod);
+  return { genParams, review };
+}
+
+// Build pipelineDef from a workflow's steps, merging in per-request overrides.
+function buildPipelineFromWorkflow(workflow, genParams, review) {
+  return workflow.steps.map(stepDef => {
+    const merged = { ...stepDef };
+    if (Object.keys(genParams).length) merged.params = { ...(stepDef.params ?? {}), ...genParams };
+    if (Object.keys(review).length)    merged.review = { ...(stepDef.review ?? {}), ...review };
+    return merged;
+  });
+}
+
+function buildSessionSteps(pipelineDef, cfg) {
+  return pipelineDef.map(stepDef => ({
+    type:           stepDef.type,
+    label:          steps.get(stepDef.type).label(stepDef, cfg),
+    modelId:        stepDef.modelId ?? null,
+    iterations:     [],
+    outputImageUrl: null,
+    outputVideoUrl: null,
+  }));
+}
+
+// ── Routes ────────────────────────────────────────────────────────────────────────
+
+// POST /api/generate — start a new session using the active workflow
 router.post('/', async (req, res) => {
   const cfg = config.load();
 
-  let modelConfig;
-  try { modelConfig = config.activeModel(); }
+  let workflow;
+  try { workflow = config.activeWorkflow(); }
   catch (err) { return res.status(400).json({ error: err.message }); }
 
-  if (!cfg.ollamaModel) return res.status(400).json({ error: 'No Ollama model configured. Set it in Settings first.' });
+  if (!cfg.llmModel) return res.status(400).json({ error: 'No LLM model configured. Set it in Settings first.' });
 
-  const { prompt, overrides = {} } = req.body;
+  const { prompt, references, overrides = {} } = req.body;
   if (!prompt?.trim()) return res.status(400).json({ error: 'prompt is required' });
 
+  const { genParams, review } = splitOverrides(overrides);
+  const pipelineDef = buildPipelineFromWorkflow(workflow, genParams, review);
+
   const session = {
-    id:          uuidv4(),
-    prompt:      prompt.trim(),
-    modelId:     cfg.activeModel,
-    modelLabel:  modelConfig.label,
-    iterations:  [],
-    status:      'running',
-    createdAt:   new Date().toISOString(),
+    id:            uuidv4(),
+    prompt:        prompt.trim(),
+    workflowId:    workflow.id,
+    workflowLabel: workflow.label,
+    references:    Array.isArray(references) ? references : [],
+    steps:         buildSessionSteps(pipelineDef, cfg),
+    status:        'running',
+    createdAt:     new Date().toISOString(),
   };
   sessions.set(session.id, session);
   db.saveSession(session);
@@ -230,37 +437,43 @@ router.post('/', async (req, res) => {
   res.flushHeaders();
   emit(res, 'session', { id: session.id, prompt: session.prompt });
 
-  await runLoop(session, cfg, modelConfig, overrides, res);
+  await runPipeline(session, pipelineDef, cfg, res);
 });
 
 // POST /api/generate/continue/:id — resume an existing session
 router.post('/continue/:id', async (req, res) => {
   const cfg = config.load();
 
-  let modelConfig;
-  try { modelConfig = config.activeModel(); }
-  catch (err) { return res.status(400).json({ error: err.message }); }
-
-  if (!cfg.ollamaModel) return res.status(400).json({ error: 'No Ollama model configured.' });
+  if (!cfg.llmModel) return res.status(400).json({ error: 'No LLM model configured.' });
 
   const session = sessions.get(req.params.id) ?? db.loadSession(req.params.id);
   if (!session) return res.status(404).json({ error: 'Session not found' });
+  if (!session.steps?.length) return res.status(400).json({ error: 'Session has no steps.' });
+
+  const workflow = cfg.workflows?.[session.workflowId];
+  if (!workflow) return res.status(400).json({ error: `Workflow "${session.workflowId}" not found.` });
 
   session.status = 'running';
   sessions.set(session.id, session);
 
   const { overrides = {} } = req.body;
+  const { genParams, review } = splitOverrides(overrides);
+  const pipelineDef = buildPipelineFromWorkflow(workflow, genParams, review);
 
   res.set({ 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', 'Connection': 'keep-alive', 'X-Session-Id': session.id });
   res.flushHeaders();
   emit(res, 'session', { id: session.id, resume: true });
 
-  // Replay existing iterations so the client can reconstruct the UI
-  for (let i = 0; i < session.iterations.length; i++) {
-    emit(res, 'history', { ...session.iterations[i], iteration: i + 1 });
+  // Replay all steps' history so the client can reconstruct the UI
+  for (let si = 0; si < session.steps.length; si++) {
+    const st = session.steps[si];
+    emit(res, 'step', { index: si, type: st.type, label: st.label, total: session.steps.length });
+    for (let i = 0; i < st.iterations.length; i++) {
+      emit(res, 'history', { step: si, ...st.iterations[i], iteration: i + 1 });
+    }
   }
 
-  await runLoop(session, cfg, modelConfig, overrides, res);
+  await runPipeline(session, pipelineDef, cfg, res);
 });
 
 // GET /api/generate/sessions — list all persisted sessions
@@ -268,11 +481,11 @@ router.get('/sessions', (req, res) => {
   res.json(db.listSessions().map(s => ({
     id:             s.id,
     prompt:         s.prompt,
-    modelLabel:     s.modelLabel,
+    workflowLabel:  s.workflowLabel,
     status:         s.status,
     createdAt:      s.createdAt,
     updatedAt:      s.updatedAt,
-    iterationCount: (s.iterations ?? []).length,
+    iterationCount: (s.steps ?? []).reduce((sum, st) => sum + (st.iterations ?? []).length, 0),
   })));
 });
 
@@ -287,47 +500,47 @@ router.get('/sessions/:id', (req, res) => {
 router.delete('/sessions/:id', (req, res) => {
   const { id } = req.params;
   sessions.delete(id);
-  const pending = pendingReviews.get(id);
-  if (pending) { pendingReviews.delete(id); pending.reject(new Error('Session deleted')); }
+  for (const [key, p] of pendingReviews) {
+    if (key.startsWith(`${id}:`)) { pendingReviews.delete(key); p.reject(new Error('Session deleted')); }
+  }
   db.deleteSession(id);
   res.status(204).end();
 });
 
-// POST /api/generate/run — middleware-style endpoint with per-request overrides
-// Body: { prompt, overrides, humanReview?, acceptanceGracePeriod?, modelId? }
-// humanReview: true|false overrides the global config; omit to use global default
-// acceptanceGracePeriod: seconds (0 = disabled) overrides the global config; omit to use global default
-// modelId: override which model to use; omit to use the active model
-// Responds with an SSE stream identical to POST /api/generate; the `done` event includes imageUrl
+// POST /api/generate/run — full per-request control (also used by sdapi shim)
 router.post('/run', async (req, res) => {
   const cfg = config.load();
 
-  const { prompt, overrides = {}, humanReview, acceptanceGracePeriod, modelId } = req.body;
+  const { prompt, references, overrides = {}, humanReview, acceptanceGracePeriod, workflowId } = req.body;
   if (!prompt?.trim()) return res.status(400).json({ error: 'prompt is required' });
 
-  let modelConfig;
-  if (modelId) {
-    modelConfig = cfg.models?.[modelId];
-    if (!modelConfig) return res.status(400).json({ error: `Model "${modelId}" not found` });
+  let workflow;
+  if (workflowId) {
+    workflow = cfg.workflows?.[workflowId];
+    if (!workflow) return res.status(400).json({ error: `Workflow "${workflowId}" not found` });
   } else {
-    try { modelConfig = config.activeModel(); }
+    try { workflow = config.activeWorkflow(); }
     catch (err) { return res.status(400).json({ error: err.message }); }
   }
 
-  if (!cfg.ollamaModel) return res.status(400).json({ error: 'No Ollama model configured. Set it in Settings first.' });
+  if (!cfg.llmModel) return res.status(400).json({ error: 'No LLM model configured. Set it in Settings first.' });
 
-  const effectiveCfg = { ...cfg };
-  if (humanReview          !== undefined) effectiveCfg.humanReview         = !!humanReview;
-  if (acceptanceGracePeriod !== undefined) effectiveCfg.acceptanceGracePeriod = Number(acceptanceGracePeriod);
+  const { genParams, review: baseReview } = splitOverrides(overrides);
+  const review = { ...baseReview };
+  if (humanReview           !== undefined) review.humanReview = !!humanReview;
+  if (acceptanceGracePeriod !== undefined) review.gracePeriod = Number(acceptanceGracePeriod);
+
+  const pipelineDef = buildPipelineFromWorkflow(workflow, genParams, review);
 
   const session = {
-    id:         uuidv4(),
-    prompt:     prompt.trim(),
-    modelId:    modelId ?? cfg.activeModel,
-    modelLabel: modelConfig.label,
-    iterations: [],
-    status:     'running',
-    createdAt:  new Date().toISOString(),
+    id:            uuidv4(),
+    prompt:        prompt.trim(),
+    workflowId:    workflow.id,
+    workflowLabel: workflow.label,
+    references:    Array.isArray(references) ? references : [],
+    steps:         buildSessionSteps(pipelineDef, cfg),
+    status:        'running',
+    createdAt:     new Date().toISOString(),
   };
   sessions.set(session.id, session);
   db.saveSession(session);
@@ -336,134 +549,63 @@ router.post('/run', async (req, res) => {
   res.flushHeaders();
   emit(res, 'session', { id: session.id, prompt: session.prompt });
 
-  await runLoop(session, effectiveCfg, modelConfig, overrides, res);
+  await runPipeline(session, pipelineDef, cfg, res);
 });
 
 // POST /api/generate/human-review/:sessionId
 router.post('/human-review/:sessionId', (req, res) => {
-  const pending = pendingReviews.get(req.params.sessionId);
-  if (!pending) return res.status(404).json({ error: 'No pending review for this session' });
-  pendingReviews.delete(req.params.sessionId);
-  const { accept, feedback = '' } = req.body;
+  const { stepIndex = 0, accept, feedback = '' } = req.body;
+  const key     = `${req.params.sessionId}:${stepIndex}`;
+  const pending = pendingReviews.get(key);
+  if (!pending) return res.status(404).json({ error: 'No pending review for this session/step' });
+  pendingReviews.delete(key);
   pending.resolve({ accept: !!accept, feedback: feedback.trim() });
   res.status(204).end();
 });
 
 // POST /api/generate/sessions/:id/refuse-accepted
-// Refuses the most recently accepted iteration. Works whether the session is live (cancels
-// the grace period and continues the loop) or already complete (marks it refused for later continuation).
 router.post('/sessions/:id/refuse-accepted', (req, res) => {
   const session = sessions.get(req.params.id) ?? db.loadSession(req.params.id);
   if (!session) return res.status(404).json({ error: 'Session not found' });
 
-  const iteration = [...session.iterations].reverse().find(it => it.verdict === 'ACCEPT');
-  if (!iteration) return res.status(400).json({ error: 'No accepted iteration to refuse' });
+  let found = null;
+  let foundStepIndex = -1;
+  for (let si = session.steps.length - 1; si >= 0 && !found; si--) {
+    const it = [...session.steps[si].iterations].reverse().find(it => it.verdict === 'ACCEPT');
+    if (it) { found = it; foundStepIndex = si; }
+  }
 
-  iteration.verdict = 'REFUSED';
+  if (!found) return res.status(400).json({ error: 'No accepted iteration to refuse' });
+
+  found.verdict = 'REFUSED';
   db.saveSession(session);
 
-  const pendingAcc = pendingAcceptances.get(req.params.id);
+  const pendingAcc = pendingAcceptances.get(`${req.params.id}:${foundStepIndex}`);
   if (pendingAcc) {
     clearTimeout(pendingAcc.timer);
-    pendingAcceptances.delete(req.params.id);
+    pendingAcceptances.delete(`${req.params.id}:${foundStepIndex}`);
     pendingAcc.resolve(true);
   }
 
   res.status(204).end();
 });
 
-// ── GET /api/generate/events — broadcast SSE stream ───────────────────────────
-// Any browser tab can subscribe here to receive every generation event in real
-// time, regardless of whether the job was triggered from the UI or via sdapi.
+// GET /api/generate/events — broadcast SSE stream
+router.post('/kill', async (req, res) => {
+  const { sessionId } = req.body;
+  const kill = activeKills.get(sessionId);
+  if (!kill) return res.status(404).json({ error: 'No active generation for this session' });
+  await kill();
+  res.json({ ok: true });
+});
 
 router.get('/events', (req, res) => {
   res.set({ 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', 'Connection': 'keep-alive' });
   res.flushHeaders();
 
-  const onEvent = (event, data) => {
-    res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
-  };
-
+  const onEvent = (event, data) => res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
   genEmitter.on('gen', onEvent);
   req.on('close', () => genEmitter.off('gen', onEvent));
 });
-
-// ── Prompt message builders ────────────────────────────────────────────────────
-
-const LOCAL_PREAMBLE = _PREAMBLE;
-
-function buildInitialMessages(userPrompt, architecture, archDefaults, skillSummary) {
-  return [
-    {
-      role: 'system',
-      content:
-        `${LOCAL_PREAMBLE}\n\n` +
-        `You are an expert at writing image generation prompts for ${architecture.toUpperCase()} models in ComfyUI. ` +
-        `Convert the user description into the most effective prompt for this model. ` +
-        `Output only the prompt text — no preamble, no explanation, no labels.` +
-        (skillSummary ? `\n\n${skillSummary}` : ''),
-    },
-    { role: 'user', content: `Description: ${userPrompt}\n\nDefault resolution: ${archDefaults.width}x${archDefaults.height}` },
-  ];
-}
-
-function buildRefinementMessages(userPrompt, iterations, architecture, skillSummary) {
-  const history = iterations.map((it, i) => {
-    let entry = `Iteration ${i + 1}:\n  Prompt: ${it.prompt}\n  Verdict: ${it.verdict}\n  Diagnosis: ${it.diagnosis}`;
-    if (it.humanFeedback) entry += `\n  Human feedback: ${it.humanFeedback}`;
-    return entry;
-  }).join('\n\n');
-
-  const last = iterations[iterations.length - 1];
-
-  return [
-    {
-      role: 'system',
-      content:
-        `${LOCAL_PREAMBLE}\n\n` +
-        `You are an expert at writing image generation prompts for ${architecture.toUpperCase()} models in ComfyUI. ` +
-        `Previous attempts have not fully satisfied the description. Analyse what went wrong and produce an improved prompt. ` +
-        `Output only the prompt text — no preamble, no explanation, no labels.` +
-        (skillSummary ? `\n\n${skillSummary}` : ''),
-    },
-    {
-      role: 'user',
-      content:
-        `Original description: ${userPrompt}\n\n` +
-        `Attempt history:\n${history}\n\n` +
-        `Last diagnosis: ${last.diagnosis}\n\n` +
-        `Write an improved prompt:`,
-    },
-  ];
-}
-
-function buildReviewMessages(userPrompt, prompt, architecture, previousIterations, imageBase64, skillSummary) {
-  const context = previousIterations.length > 0
-    ? `\n\nPrevious attempts failed. This is attempt ${previousIterations.length + 1}.`
-    : '';
-
-  const skillNote = skillSummary
-    ? `\n\nActive prompt constraints applied during generation (judge the image with these in mind — do not penalise for intentional style adaptations):\n${skillSummary}`
-    : '';
-
-  return [
-    {
-      role: 'system',
-      content:
-        `${LOCAL_PREAMBLE}\n\n` +
-        `You are reviewing a generated image for a ${architecture.toUpperCase()} model in ComfyUI. ` +
-        `Look at the attached image and assess whether it satisfies the original description. ` +
-        `If rejecting, diagnose specifically what is wrong: content issues, missing elements, or wrong style.${context}${skillNote}\n\n` +
-        `You must always end your response with exactly these two lines — no exceptions:\n` +
-        `VERDICT: ACCEPT or REJECT\n` +
-        `DIAGNOSIS: one sentence on the main issue (or "looks good")`,
-    },
-    {
-      role: 'user',
-      content: `Description: ${userPrompt}\nPrompt: ${prompt}\n\nReview the generated image:`,
-      images: [imageBase64],
-    },
-  ];
-}
 
 module.exports = router;

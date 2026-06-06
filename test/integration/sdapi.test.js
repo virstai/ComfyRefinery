@@ -36,8 +36,9 @@ before(async () => {
   fs.writeFileSync(path.join(tmpDir, 'config.json'), JSON.stringify({
     ollamaUrl:             `http://127.0.0.1:${ollamaPort}`,
     comfyuiUrl:            `http://127.0.0.1:${comfyPort}`,
-    ollamaModel:           'test-model',
-    activeModel:           'test-sd15',
+    llmModel:              'test-model',
+    llmProvider:           'ollama',
+    activeWorkflow:        'test-wf-sd15',
     maxIterations:         2,
     humanReview:           false,
     acceptanceGracePeriod: 0,
@@ -49,6 +50,16 @@ before(async () => {
       'test-sdxl': {
         id: 'test-sdxl', label: 'Test SDXL', architecture: 'sdxl',
         checkpoint: 'test-xl.safetensors',
+      },
+    },
+    workflows: {
+      'test-wf-sd15': {
+        id: 'test-wf-sd15', label: 'Test SD1.5',
+        steps: [{ type: 'generate', modelId: 'test-sd15', params: {}, review: {} }],
+      },
+      'test-wf-sdxl': {
+        id: 'test-wf-sdxl', label: 'Test SDXL',
+        steps: [{ type: 'generate', modelId: 'test-sdxl', params: {}, review: {} }],
       },
     },
   }));
@@ -176,9 +187,9 @@ test('POST /sdapi/v1/txt2img returns 400 when prompt is missing', async () => {
   assert.ok(body.error, 'should return an error message');
 });
 
-test('POST /sdapi/v1/txt2img falls back to active model when override_settings model is unrecognised', async () => {
+test('POST /sdapi/v1/txt2img falls back to active workflow when override_settings model is unrecognised', async () => {
   // Unrecognised checkpoint names (e.g. "automatic1111" echoed by some clients) should
-  // fall back to the active model rather than returning a hard 400.
+  // fall back to the active workflow rather than returning a hard 400.
   const res = await postJSON(sdapi('/txt2img'), {
     prompt:            'test',
     override_settings: { sd_model_checkpoint: 'NonExistentModel' },
@@ -232,28 +243,28 @@ test('GET /sdapi/v1/sd-models returns all configured models in A1111 format', as
 
 // ── GET /POST /sdapi/v1/options ───────────────────────────────────────────────
 
-test('GET /sdapi/v1/options returns current active model as sd_model_checkpoint', async () => {
+test('GET /sdapi/v1/options returns active workflow model as sd_model_checkpoint', async () => {
   const res  = await fetch(sdapi('/options'));
   assert.equal(res.status, 200);
   const data = await res.json();
 
   assert.ok('sd_model_checkpoint' in data, 'should have sd_model_checkpoint field');
-  assert.ok(data.sd_model_checkpoint.includes('Test SD1.5'), 'should reflect active model label');
+  assert.ok(data.sd_model_checkpoint.includes('Test SD1.5'), 'should reflect active workflow model label');
   assert.ok(data.sd_model_checkpoint.includes('test-sd15'),  'should include model id in brackets');
 });
 
-test('POST /sdapi/v1/options updates active model by id', async () => {
+test('POST /sdapi/v1/options switches active workflow by model id', async () => {
   const set = await postJSON(sdapi('/options'), { sd_model_checkpoint: 'test-sdxl' });
   assert.equal(set.status, 200);
 
   const opts = await (await fetch(sdapi('/options'))).json();
   assert.ok(opts.sd_model_checkpoint.includes('Test SDXL'));
 
-  // Restore original active model for subsequent tests.
+  // Restore original active workflow for subsequent tests.
   await postJSON(sdapi('/options'), { sd_model_checkpoint: 'test-sd15' });
 });
 
-test('POST /sdapi/v1/options updates active model by label', async () => {
+test('POST /sdapi/v1/options switches active workflow by model label', async () => {
   const set = await postJSON(sdapi('/options'), { sd_model_checkpoint: 'Test SDXL' });
   assert.equal(set.status, 200);
 

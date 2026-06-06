@@ -11,12 +11,29 @@ const TINY_PNG = Buffer.from(
   'base64',
 );
 
+// Extract the text portion of a message's content regardless of format
+// (OpenAI content can be a string or an array of parts).
+function messageText(m) {
+  if (typeof m.content === 'string') return m.content;
+  if (Array.isArray(m.content)) {
+    return m.content.filter(c => c.type === 'text').map(c => c.text).join(' ');
+  }
+  return '';
+}
+
 // getVerdict is called per review request so callers can change it at any time.
 function makeFakeOllama(getVerdict) {
   return http.createServer((req, res) => {
-    if (req.method !== 'POST' || req.url !== '/api/chat') {
+    if (req.method !== 'POST' || req.url !== '/v1/chat/completions') {
+      // Return empty model list for /v1/models
+      if (req.method === 'GET' && req.url === '/v1/models') {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ data: [] }));
+        return;
+      }
       res.writeHead(404); return res.end();
     }
+
     let body = '';
     req.on('data', c => (body += c));
     req.on('end', () => {
@@ -24,10 +41,10 @@ function makeFakeOllama(getVerdict) {
       const { messages, stream = true } = parsed;
 
       const isReview = messages.some(m =>
-        typeof m.content === 'string' && m.content.toLowerCase().includes('reviewing'),
+        messageText(m).toLowerCase().includes('reviewing'),
       );
       const isSkillRefresh = messages.some(m =>
-        typeof m.content === 'string' && m.content.toLowerCase().includes('knowledge base'),
+        messageText(m).toLowerCase().includes('knowledge base'),
       );
 
       const verdict = getVerdict();
@@ -41,16 +58,23 @@ function makeFakeOllama(getVerdict) {
       }
 
       if (stream === false) {
-        // Non-streaming response — used by ollama.chat (skill refresh)
+        // Non-streaming OpenAI response
         res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ message: { role: 'assistant', content: text }, done: true }));
+        res.end(JSON.stringify({
+          id: 'chatcmpl-fake',
+          choices: [{ index: 0, message: { role: 'assistant', content: text }, finish_reason: 'stop' }],
+        }));
       } else {
-        // Streaming NDJSON — used by ollama.chatStream (prompt building + review)
-        res.writeHead(200, { 'Content-Type': 'application/x-ndjson' });
+        // Streaming SSE — OpenAI format
+        res.writeHead(200, { 'Content-Type': 'text/event-stream' });
         for (const word of text.split(' ')) {
-          res.write(JSON.stringify({ message: { role: 'assistant', content: word + ' ' }, done: false }) + '\n');
+          const chunk = JSON.stringify({
+            id: 'chatcmpl-fake',
+            choices: [{ index: 0, delta: { content: word + ' ' }, finish_reason: null }],
+          });
+          res.write(`data: ${chunk}\n\n`);
         }
-        res.write(JSON.stringify({ message: { role: 'assistant', content: '' }, done: true }) + '\n');
+        res.write('data: [DONE]\n\n');
         res.end();
       }
     });
@@ -59,14 +83,27 @@ function makeFakeOllama(getVerdict) {
 
 function makeFakeComfyUI() {
   const promptId = 'test-prompt-001';
+  const uploads  = [];
+  const prompts  = []; // each submitted ComfyUI /prompt body (parsed JSON)
 
   const httpServer = http.createServer((req, res) => {
     if (req.method === 'POST' && req.url === '/prompt') {
       let body = '';
       req.on('data', c => (body += c));
       req.on('end', () => {
+        prompts.push(JSON.parse(body));
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ prompt_id: promptId }));
+      });
+      return;
+    }
+    if (req.method === 'POST' && req.url === '/upload/image') {
+      // Consume the body (multipart from comfyui.uploadImage via native FormData)
+      req.on('data', () => {});
+      req.on('end', () => {
+        uploads.push({ filename: 'uploaded.png' });
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ name: 'uploaded.png', subfolder: '', type: 'input' }));
       });
       return;
     }
@@ -90,6 +127,71 @@ function makeFakeComfyUI() {
     }
     res.writeHead(404); res.end();
   });
+
+  // Expose arrays on the server object for test assertions
+  httpServer.uploads = uploads;
+  httpServer.prompts = prompts;
+
+  const wss = new WebSocketServer({ server: httpServer });
+  wss.on('connection', ws => {
+    setImmediate(() => {
+      ws.send(JSON.stringify({ type: 'progress', data: { prompt_id: promptId, value: 5,  max: 10 } }));
+      ws.send(JSON.stringify({ type: 'progress', data: { prompt_id: promptId, value: 10, max: 10 } }));
+      ws.send(JSON.stringify({ type: 'executing', data: { prompt_id: promptId, node: null } }));
+    });
+  });
+
+  return httpServer;
+}
+
+function makeVideoFakeComfyUI() {
+  const promptId = 'test-video-prompt-001';
+  const uploads  = [];
+  const prompts  = [];
+
+  const httpServer = http.createServer((req, res) => {
+    if (req.method === 'POST' && req.url === '/prompt') {
+      let body = '';
+      req.on('data', c => (body += c));
+      req.on('end', () => {
+        prompts.push(JSON.parse(body));
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ prompt_id: promptId }));
+      });
+      return;
+    }
+    if (req.method === 'POST' && req.url === '/upload/image') {
+      req.on('data', () => {});
+      req.on('end', () => {
+        uploads.push({ filename: 'uploaded.png' });
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ name: 'uploaded.png', subfolder: '', type: 'input' }));
+      });
+      return;
+    }
+    if (req.url.startsWith('/history/')) {
+      const pid = req.url.split('/').pop();
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({
+        [pid]: { outputs: { '9': { gifs: [{ filename: 'fake_video.mp4', subfolder: '', type: 'output', format: 'video/h264-mp4' }] } } },
+      }));
+      return;
+    }
+    if (req.url.startsWith('/view')) {
+      res.writeHead(200, { 'Content-Type': 'video/mp4' });
+      res.end(Buffer.from('fakemp4'));
+      return;
+    }
+    if (req.url.startsWith('/object_info/')) {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({}));
+      return;
+    }
+    res.writeHead(404); res.end();
+  });
+
+  httpServer.uploads = uploads;
+  httpServer.prompts = prompts;
 
   const wss = new WebSocketServer({ server: httpServer });
   wss.on('connection', ws => {
@@ -134,4 +236,4 @@ async function collectSSE(url, body) {
   return events;
 }
 
-module.exports = { TINY_PNG, makeFakeOllama, makeFakeComfyUI, collectSSE };
+module.exports = { TINY_PNG, makeFakeOllama, makeFakeComfyUI, makeVideoFakeComfyUI, collectSSE };

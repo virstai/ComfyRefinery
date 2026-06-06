@@ -1,12 +1,19 @@
-# Image Iterator
+# ComfyRefinery
 
-An iterative image generation tool that uses **Ollama** to write and refine prompts and **ComfyUI** to generate images. Each generation runs a loop: build prompt → generate image → AI reviews result → optionally pause for human review → repeat until accepted or the iteration limit is reached.
+A workflow orchestration layer on top of ComfyUI. Describe what you want, pick a
+**Workflow**, and ComfyRefinery iterates: build prompt → generate → AI reviews →
+optionally pause for human review → repeat until accepted. Workflows are reusable,
+configurable chains of steps (generate → upscale → video → …) that accumulate a learned
+**skill** — a short prompt-engineering guide the LLM uses to improve over time.
+
+> **Note:** This is a vibe-coded / AI-assisted project. Most features work, but many have not been fully human-tested — especially less common model architectures and more complex multi-step workflows. Expect rough edges and bugs.
 
 ## Prerequisites
 
-- **Node.js** 18 or later
-- **Ollama** running and reachable (needs a vision-capable model, e.g. `gemma4:31b`, `llava`, `llava:13b`)
-- **ComfyUI** running and reachable with at least one model loaded
+- **Node.js** 18+
+- **An OpenAI-compatible LLM** with vision support — Ollama (`gemma4:31b`, `llava:13b`),
+  LM Studio, OpenAI, vLLM, or any server that speaks `/v1/chat/completions`
+- **ComfyUI** running with at least one model loaded
 
 ## Install
 
@@ -14,17 +21,8 @@ An iterative image generation tool that uses **Ollama** to write and refine prom
 git clone https://github.com/virstai/image_iterator.git
 cd image_iterator
 npm install
-```
-
-## Build the UI
-
-The frontend must be compiled before starting the server:
-
-```bash
 npm run ui:build
 ```
-
-This outputs the built app into `public/`.
 
 ## Run
 
@@ -32,125 +30,136 @@ This outputs the built app into `public/`.
 npm start
 ```
 
-The server starts on **http://localhost:3000** by default. Open that URL in your browser.
-
-To override the port:
-
-```bash
-PORT=8080 npm start
-```
+Opens on **http://localhost:3000**. Override the port with `PORT=8080 npm start`.
 
 ## First-time setup
 
-1. Open **http://localhost:3000**
-2. Click the **Settings** gear icon → set your Ollama and ComfyUI URLs, choose an Ollama model, and optionally configure the acceptance grace period
-3. Click the **Models** icon → create at least one model (choose an architecture and fill in the checkpoint/unet/VAE fields)
-4. Select your model from the dropdown in the header
-5. Type a prompt and click **Generate**
+1. **Settings** (⚙) — set LLM base URL (e.g. `http://127.0.0.1:11434/v1`), API key if
+   needed, model name, and ComfyUI URL.
+2. **Models** (⊞) — add at least one model: pick an architecture, fill in the
+   checkpoint / UNet / VAE / CLIP fields. Use "Reload asset lists" if dropdowns are empty.
+3. **Workflows** (▶) — add a workflow: pick a model for the generate step, configure
+   resolution, sampler, and review settings. Set it as active with "Use".
+4. Type a prompt and click **Generate**.
 
 ### Environment variable overrides
 
-These take precedence over the values stored in `data/config.json`:
-
 | Variable | Default | Purpose |
 |---|---|---|
-| `OLLAMA_URL` | `http://127.0.0.1:11434` | Ollama base URL |
+| `OLLAMA_URL` | `http://127.0.0.1:11434` | LLM base URL — `/v1` is appended automatically; accepts any OpenAI-compat server |
 | `COMFYUI_URL` | `http://127.0.0.1:8188` | ComfyUI base URL |
-| `OLLAMA_MODEL` | _(from config)_ | Ollama model name |
+| `OLLAMA_MODEL` | _(from config)_ | LLM model name |
 
-## Development mode
-
-Runs the Express API with `--watch` (auto-restart on changes) and the Vite dev server in parallel:
+## Development
 
 ```bash
-npm run dev
+npm run dev     # Express --watch on :3000 + Vite hot-reload on :5173
+npm test        # all tests
 ```
-
-- API: **http://localhost:3000**
-- Vite dev server (hot-reload UI): **http://localhost:5173**
 
 ## Supported architectures
 
-| Key | Name | Notes |
+### Image
+
+| Key | Name | Loader |
 |---|---|---|
-| `sd15` | SD 1.5 / SD 2.x | Checkpoint + VAE |
-| `sdxl` | SDXL | Checkpoint + VAE, optional refiner |
-| `flux` | Flux.1 | Split (UNet + CLIP-L + T5-XXL + VAE) or checkpoint |
-| `flux2` | Flux 2 | Same as Flux.1 |
-| `sd3` | SD 3 / SD 3.5 | Checkpoint + VAE |
-| `chroma` | ChromaHD | Split (UNet + T5 encoder + VAE); standard ComfyUI nodes only — no custom node pack required |
-| `anima` | Anima | Requires Qwen-3 text encoder and Qwen Image VAE; uses `er_sde` sampler (available in recent ComfyUI builds or via RES4LYF nodes) |
+| `sd15` | SD 1.5 / SD 2.x | Checkpoint + optional external VAE |
+| `sdxl` | SDXL | Checkpoint + optional VAE + optional refiner |
+| `flux` | Flux.1 | Checkpoint, or split (UNet + CLIP-L + T5-XXL + VAE) |
+| `flux2` | Flux 2 (Dev / Klein) | Split only (UNet + CLIP/Mistral or Qwen-3 + VAE) |
+| `sd3` | SD 3 / SD 3.5 | Checkpoint + optional external VAE |
+| `chroma` | ChromaHD | Split only (UNet + T5 encoder + VAE); standard ComfyUI nodes |
+| `anima` | Anima | Split only (UNet + CLIP/Qwen-3 + Qwen-Image VAE); needs `er_sde` sampler |
+
+### Video
+
+Video architectures are used in **video steps** within a workflow. They generate a short
+clip from the final prompt text (T2V) or the previous step's output image (I2V).
+
+| Key | Name | Loader |
+|---|---|---|
+| `wanvideo` | WanVideo (Wan 2.1) | Split (UNet + CLIP/T5 + VAE) |
+| `hunyuanvideo` | HunyuanVideo | Split (UNet + CLIP/T5 + VAE) |
+| `ltxvideo` | LTX-Video | Split (UNet + CLIP/T5 + VAE) |
+| `cogvideox` | CogVideoX | Checkpoint + VAE + CLIP |
 
 ## Settings
 
 | Setting | Default | Description |
 |---|---|---|
-| Max iterations | 3 | Maximum number of generate-review cycles per run |
-| Acceptance grace period | 10s | Seconds to wait after an acceptance before finalising. Set to 0 to disable. |
-| Human review | off | Pause after every iteration for manual accept/reject |
+| Max iterations | 3 | Generate-review cycles per run (overridable per workflow step) |
+| Acceptance grace period | 10 s | Hold after acceptance before finalising; 0 = disabled |
+| Human review | off | Pause after each iteration for manual accept/reject |
 
 ### Acceptance grace period
 
-When an iteration is accepted by the AI, the result is held for a configurable number of seconds before the session is marked complete. During this window a **Refuse** button appears in the iteration modal, letting you reject the result and continue iterating without restarting from scratch. After the timer expires the session completes normally.
+When the AI accepts an iteration the result is held for a configurable window. During
+this time a **Refuse** button appears, letting you reject without restarting. After the
+timer the session completes normally. You can also refuse after the session ends — open
+the iteration modal and use **Continue session** to keep iterating.
 
-You can also refuse an accepted iteration at any time after the session completes — open the iteration modal and click **Refuse acceptance**, then use **Continue session** to run more iterations.
+---
 
 ## Native API
 
-All endpoints are under `/api`.
+All endpoints under `/api`.
 
-### Generate (SSE stream)
+### Generate (SSE streams)
 
-**`POST /api/generate`** — start a new session
+**`POST /api/generate`** — start a new session using the active workflow.
 
-**`POST /api/generate/continue/:id`** — resume an existing session
+**`POST /api/generate/continue/:id`** — resume an existing session.
 
-Request body:
 ```json
 {
-  "prompt": "a cat sitting on a moon",
-  "overrides": { "width": 1024, "height": 1024, "steps": 30 }
+  "prompt": "a cat on the moon",
+  "references": [],
+  "overrides": { "width": 1024, "height": 1024 }
 }
 ```
 
-### Automation endpoint
-
-**`POST /api/generate/run`** — trigger a generation with full per-request control
+**`POST /api/generate/run`** — full per-request control.
 
 ```json
 {
-  "prompt": "a cat sitting on a moon",
-  "overrides": { "width": 1024, "height": 1024, "sampler": "euler", "steps": 28 },
+  "prompt": "a cat on the moon",
+  "workflowId": "portrait-sd15",
+  "overrides": { "steps": 28, "sampler": "euler" },
   "humanReview": false,
-  "acceptanceGracePeriod": 10,
-  "modelId": "anima"
+  "acceptanceGracePeriod": 10
 }
 ```
 
 | Field | Required | Description |
 |---|---|---|
-| `prompt` | yes | The image prompt |
-| `overrides` | no | Override any generation parameter (`width`, `height`, `steps`, `sampler`, `scheduler`, `cfgScale`, `guidance`, `negativePrompt`, `seed`) |
-| `humanReview` | no | `true`/`false` to override the global human review setting |
-| `acceptanceGracePeriod` | no | Seconds to wait after acceptance before returning `done`; `0` to disable; omit to use the global setting |
-| `modelId` | no | Model ID to use; omit to use the active model |
+| `prompt` | yes | Image description |
+| `workflowId` | no | Override active workflow |
+| `references` | no | Array of ComfyUI image refs `[{ filename, subfolder, type }]` |
+| `overrides` | no | Override generation params (`width`, `height`, `steps`, `sampler`, `scheduler`, `cfgScale`, `guidance`, `negativePrompt`, `seed`) — also accepts `maxIterations`, `humanReview`, `acceptanceGracePeriod` to override per-step review |
+| `humanReview` | no | Override human review for this request |
+| `acceptanceGracePeriod` | no | Override grace period in seconds |
 
-All three SSE endpoints emit the following events:
+All three SSE endpoints emit:
 
 | Event | Payload |
 |---|---|
-| `session` | `{ id, prompt }` — session ID and prompt (`resume: true` instead of `prompt` when resuming) |
-| `phase` | `{ phase, iteration }` — current phase name |
-| `token` | `{ iteration, phase, token }` — streaming token from Ollama |
-| `prompt` | `{ iteration, prompt }` — finalised ComfyUI prompt |
-| `progress` | `{ iteration, pct }` — ComfyUI generation progress (0–100) |
-| `image` | `{ iteration, url }` — URL of the generated image |
-| `review` | `{ iteration, verdict, diagnosis }` — AI review result |
-| `human_review` | `{ iteration, aiVerdict, aiDiagnosis }` — waiting for human input |
-| `human_verdict` | `{ iteration, accepted, feedback }` |
-| `accepted_pending` | `{ iteration, gracePeriod, maxIterations? }` — grace period started; `maxIterations: true` when triggered at the end of a rejected batch |
-| `acceptance_refused` | `{ iteration }` — acceptance refused; loop continues |
-| `done` | `{ iterations, accepted, imageUrl, sessionId, prompt }` — final result |
+| `session` | `{ id, prompt }` (or `{ id, resume: true }` when resuming) |
+| `step` | `{ index, type, label, total }` — start of each pipeline step |
+| `phase` | `{ step, phase, iteration }` |
+| `token` | `{ step, iteration, phase, token }` — streaming LLM token |
+| `prompt` | `{ step, iteration, prompt }` — finalised prompt |
+| `progress` | `{ step, iteration, pct }` — ComfyUI progress 0–100 |
+| `preview` | `{ step, iteration, url }` — base64 data URL preview frame |
+| `image` | `{ step, iteration, url }` |
+| `video` | `{ step, url }` — final video URL for video steps |
+| `review` | `{ step, iteration, verdict, diagnosis }` |
+| `human_review` | `{ step, iteration, aiVerdict, aiDiagnosis }` |
+| `human_verdict` | `{ step, iteration, accepted, feedback }` |
+| `accepted_pending` | `{ step, iteration, gracePeriod, humanReview, maxIterations? }` |
+| `acceptance_refused` | `{ step, iteration }` |
+| `step_complete` | `{ step, imageUrl?, videoUrl?, accepted }` — step finished |
+| `done` | `{ accepted, imageUrl?, videoUrl?, sessionId, prompt, iterations }` |
+| `stopped` | `{ step }` — user-aborted; in-progress step cleared |
 | `error` | `{ message }` |
 
 ### Human review
@@ -158,30 +167,45 @@ All three SSE endpoints emit the following events:
 **`POST /api/generate/human-review/:sessionId`**
 
 ```json
-{ "accept": true, "feedback": "looks good but try warmer colours next time" }
+{ "stepIndex": 0, "accept": true, "feedback": "try warmer colours" }
 ```
 
 ### Refusing an accepted result
 
 **`POST /api/generate/sessions/:id/refuse-accepted`**
 
-Marks the most recent accepted iteration as refused. If called during an active grace period the timer is cancelled and the loop continues immediately. Safe to call on completed sessions (use **Continue session** afterwards to run more iterations).
+Marks the most recent accepted iteration as refused. Safe on completed sessions.
 
-No request body required.
+### Kill a running generation
+
+**`POST /api/generate/kill`**
+
+```json
+{ "sessionId": "…" }
+```
+
+Aborts the running pipeline, cancels the in-progress ComfyUI job, and emits `stopped`.
 
 ### Broadcast event stream
 
-**`GET /api/generate/events`** — server-sent event stream that broadcasts every generation event to all connected clients, regardless of whether the session was started from the UI or via the SDAPI. The browser UI subscribes to this on load to show live progress for externally-triggered sessions.
+**`GET /api/generate/events`** — SSE stream broadcasting every generation event to all
+connected clients. The browser subscribes on load so externally-triggered sessions
+(SDAPI, scripts) show live progress in the UI.
 
 ### Sessions
 
 ```
-GET    /api/generate/sessions        — list all sessions
-GET    /api/generate/sessions/:id    — full session data
-DELETE /api/generate/sessions/:id    — delete a session
+GET    /api/generate/sessions
+GET    /api/generate/sessions/:id
+DELETE /api/generate/sessions/:id
 ```
 
-### Config & models
+### Video proxy
+
+**`GET /api/video`** — proxies ComfyUI video output so the browser doesn't need direct
+access. Same query string as ComfyUI's `/view` endpoint (`filename`, `subfolder`, `type`).
+
+### Config, models, workflows
 
 ```
 GET    /api/sessions/config
@@ -192,139 +216,102 @@ POST   /api/sessions/models
 PUT    /api/sessions/models/:id
 DELETE /api/sessions/models/:id
 
+GET    /api/sessions/workflows
+POST   /api/sessions/workflows
+PUT    /api/sessions/workflows/:id
+DELETE /api/sessions/workflows/:id
+
 GET    /api/sessions/architectures
 GET    /api/sessions/assets
 ```
 
 ### Skills
 
-Each model accumulates a skill: a short prompt-engineering guide the LLM uses when building prompts, plus optional enforce notes (style rules applied to every prompt) and a blacklist (words stripped from generated prompts). The skill is re-synthesised automatically after every session using outcome history.
+Each workflow accumulates a **skill**: a prompt-engineering guide the LLM uses when
+building prompts, plus optional enforce rules (style mandates) and a blacklist (words
+stripped from all generated prompts). The skill is re-synthesised automatically after
+every session using accept/reject history.
 
-**`GET /api/sessions/skills/:modelId`** — return the full skill record for a model.
+**`GET /api/sessions/skills/:workflowId`**
 
-**`PATCH /api/sessions/skills/:modelId/notes`** — save the notes array directly.
+**`PATCH /api/sessions/skills/:workflowId/notes`**
 
 ```json
 { "notes": [ { "id": "…", "type": "enforce", "text": "Always use Danbooru tags", "enabled": true, "auto": false } ] }
 ```
 
-**`POST /api/sessions/skills/:modelId/refresh`** — trigger an immediate skill re-synthesis, optionally with a correction note that overrides inferred patterns.
+**`POST /api/sessions/skills/:workflowId/refresh`**
 
 ```json
-{ "note": "This model only produces anime art — never attempt photorealistic prompts." }
+{ "note": "This workflow only produces anime — never attempt photorealistic prompts." }
 ```
 
-| Field | Required | Description |
-|---|---|---|
-| `note` | no | Free-text correction the LLM should apply when rewriting the skill. Omit or send `""` to re-derive from outcomes alone. |
-
-Returns the updated skill record. Useful when the agent has learned the wrong lesson and keeps making the same mistake — describe the problem and the skill will be rewritten to reflect it.
+Triggers an immediate re-synthesis. Use the optional `note` to correct wrong lessons the
+model has learned; it takes priority over inferred patterns. Returns the updated skill record.
 
 ---
 
 ## Stable Diffusion WebUI API (`/sdapi/v1`)
 
-The server exposes a partial [Automatic1111](https://github.com/AUTOMATIC1111/stable-diffusion-webui) compatible API, allowing existing SD tooling, scripts, and ComfyUI clients to use it as a drop-in backend.
+Partial [Automatic1111](https://github.com/AUTOMATIC1111/stable-diffusion-webui)
+compatible API so existing SD tooling works as a drop-in backend.
 
 | Endpoint | Method | Description |
 |---|---|---|
-| `/sdapi/v1/txt2img` | POST | Generate an image (blocking — waits for the full iteration loop including any grace period) |
-| `/sdapi/v1/img2img` | POST | Accepted for compatibility; treated as txt2img — `init_images` and `denoising_strength` are ignored |
-| `/sdapi/v1/progress` | GET | Poll generation progress during a running request |
-| `/sdapi/v1/interrupt` | POST | Abort the current generation |
+| `/sdapi/v1/txt2img` | POST | Generate (blocking — full iteration loop) |
+| `/sdapi/v1/img2img` | POST | Accepted for compat; treated as txt2img |
+| `/sdapi/v1/progress` | GET | Poll progress during a running request |
+| `/sdapi/v1/interrupt` | POST | Abort current generation |
 | `/sdapi/v1/sd-models` | GET | List configured models |
-| `/sdapi/v1/options` | GET | Get active model as `sd_model_checkpoint` |
-| `/sdapi/v1/options` | POST | Set active model via `sd_model_checkpoint` |
-| `/sdapi/v1/samplers` | GET | List supported samplers |
-| `/sdapi/v1/schedulers` | GET | List supported schedulers (ComfyUI scheduler names) |
-| `/sdapi/v1/upscalers` | GET | Stub — returns `[{name:"None"}]`; upscaling not supported |
-| `/sdapi/v1/latent-upscale-modes` | GET | Stub — returns `[]` |
-| `/sdapi/v1/sd-vae` | GET | Stub — returns `[]`; VAE switching not supported |
+| `/sdapi/v1/options` | GET/POST | Get/set active workflow via `sd_model_checkpoint` |
+| `/sdapi/v1/samplers` | GET | |
+| `/sdapi/v1/schedulers` | GET | ComfyUI scheduler names |
+| `/sdapi/v1/upscalers` | GET | Stub |
+| `/sdapi/v1/latent-upscale-modes` | GET | Stub |
+| `/sdapi/v1/sd-vae` | GET | Stub |
 
-### txt2img
+**Supported txt2img parameters:** `prompt`, `negative_prompt`, `steps`, `cfg_scale`,
+`width`, `height`, `sampler_name`, `scheduler`, `seed`, `batch_size`, `n_iter`,
+`override_settings.sd_model_checkpoint`.
 
-`POST /sdapi/v1/txt2img` blocks until the full iteration loop completes and returns the result image as a base64-encoded PNG.
-
-**Supported parameters:**
-
-| Parameter | Description |
-|---|---|
-| `prompt` | Image prompt (required) |
-| `negative_prompt` | Negative prompt |
-| `steps` | Number of sampling steps |
-| `cfg_scale` | Guidance / CFG scale |
-| `width` / `height` | Image dimensions |
-| `sampler_name` | Sampler (see `/sdapi/v1/samplers`; unrecognised names use the model's workflow default) |
-| `scheduler` | Scheduler name (see `/sdapi/v1/schedulers`; omit or send `""` to use the model's workflow default) |
-| `seed` | Seed (`-1` for random; incremented across `batch_size`) |
-| `batch_size` | Images per batch |
-| `n_iter` | Number of batches |
-| `override_settings.sd_model_checkpoint` | Select a specific model for this request |
-
-**Response:**
-```json
-{
-  "images": ["<base64 PNG>", "..."],
-  "parameters": { "...echoed request..." },
-  "info": "{\"seed\": 42, \"prompt\": \"...\", \"steps\": 26, ...}"
-}
-```
+`sd_model_checkpoint` accepts a model label (`SDXL Base`), model ID (`sdxl-base`), or
+`Label [id]` format. The active workflow is switched to the first workflow whose generate
+step uses the matched model.
 
 **Python example:**
-
 ```python
 import requests, base64
 
 r = requests.post('http://localhost:3000/sdapi/v1/txt2img', json={
     'prompt': 'a tiger in golden light, photorealistic',
-    'negative_prompt': 'blurry, low quality',
-    'steps': 26,
-    'cfg_scale': 3.8,
-    'width': 1152,
-    'height': 1152,
-    'sampler_name': 'Euler',
+    'steps': 26, 'cfg_scale': 3.8, 'width': 1152, 'height': 1152,
 })
-
-data = r.json()
 with open('output.png', 'wb') as f:
-    f.write(base64.b64decode(data['images'][0]))
+    f.write(base64.b64decode(r.json()['images'][0]))
 ```
-
-**Selecting a model per-request:**
-
-```python
-r = requests.post('http://localhost:3000/sdapi/v1/txt2img', json={
-    'prompt': 'a fox in a forest',
-    'override_settings': { 'sd_model_checkpoint': 'ChromaHD [chroma]' },
-})
-```
-
-The `sd_model_checkpoint` value accepts a model label (`ChromaHD`), ID (`chroma`), or the combined `Label [id]` format.
 
 ### Notes
-
-- The acceptance grace period applies to SDAPI requests just as it does to UI-triggered sessions. While the grace period is active the browser UI (connected via `GET /api/generate/events`) shows the result and a **Refuse & continue** button. The SDAPI response is not returned until the grace period expires or the user refuses.
-- Unrecognised `sd_model_checkpoint` values (e.g. when a client sends back the backend name rather than a model ID) fall back to the active model.
-- `cfg_scale` is forwarded as both `guidance` and `cfgScale`; each architecture uses whichever applies.
-- `POST /sdapi/v1/img2img` is accepted (clients such as Marinara's illustrator use it when a reference image is provided) but is treated identically to `txt2img` — `init_images` and `denoising_strength` are ignored and the request runs the normal iteration loop.
-- PNG info, interrogate, and training endpoints are not implemented.
+- The acceptance grace period applies to SDAPI sessions; the browser UI (via the
+  broadcast stream) shows the result and a refuse button while it is active.
+- `cfg_scale` is forwarded as both `guidance` and `cfgScale`; each architecture uses
+  whichever applies.
+- `POST /sdapi/v1/img2img` is accepted (some clients send it when a reference image is
+  present) but `init_images` and `denoising_strength` are ignored — use the native
+  `/api/generate/run` endpoint with `references` for reference-image workflows.
 
 ---
 
 ## Data
 
-All persistent data lives in the `data/` directory:
-
 ```
 data/
-  config.json          global settings and model registry
-  sessions/            one JSON file per session
-  skills/              per-model prompt engineering skill + notes (auto-updated after each session)
+  config.json       global settings, model registry, workflow registry
+  sessions/         one JSON file per session
+  skills/           one JSON file per workflow id (skill + notes + outcomes)
 ```
 
-Each `skills/<modelId>.json` file contains:
-- **`skill`** — a short natural-language guide the LLM uses when building prompts (e.g. preferred tag format, framing conventions, things to avoid)
-- **`notes`** — enforce rules (style mandates applied to every prompt) and blacklist words (stripped from generated prompts). Notes can be `auto` (generated by skill refresh) or user-created; each has an `enabled` toggle
+Each `skills/<workflowId>.json` contains:
+- **`skill`** — prompt-engineering guide (e.g. preferred tag format, things to avoid)
+- **`notes`** — enforce rules and blacklist words; each has an `enabled` toggle and an
+  `auto` flag (LLM-generated vs user-created)
 - **`outcomes`** — running accept/reject counts used to synthesise the skill
-
-The skill is re-synthesised automatically after every session. If the agent develops a wrong model of the model's behaviour, use the **Refresh skill** button in the Models panel (or `POST /api/sessions/skills/:modelId/refresh` with a `note`) to correct it without waiting for another session.

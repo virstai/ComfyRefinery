@@ -1,7 +1,7 @@
 {
-  "name": "image-iterator",
-  "version": "1.0.0",
-  "description": "Iterative image prompt builder using Ollama and ComfyUI",
+  "name": "comfy-refinery",
+  "version": "2.0.0",
+  "description": "Workflow orchestration for ComfyUI — multi-step AI-reviewed image pipelines",
   "main": "server.js",
   "scripts": {
     "start":      "node server.js",
@@ -9,8 +9,8 @@
     "ui:dev":     "vite",
     "ui:build":   "vite build",
     "dev":        "concurrently -n api,ui -c cyan,magenta \"npm run server:dev\" \"npm run ui:dev\"",
-    "test":       "node --test test/**/*.test.js",
-    "test:unit":  "node --test test/unit/*.test.js",
+    "test":       "node --test 'test/**/*.test.js'",
+    "test:unit":  "node --test 'test/unit/**/*.test.js'",
     "test:int":   "node --test test/integration/*.test.js"
   },
   "keywords": [],
@@ -19,6 +19,7 @@
   "type": "commonjs",
   "dependencies": {
     "express": "^5.2.1",
+    "marked": "^15.0.0",
     "uuid": "^14.0.0",
     "ws": "^8.21.0"
   },

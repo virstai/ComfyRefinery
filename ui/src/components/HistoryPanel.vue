@@ -1,8 +1,7 @@
 <template>
-  <aside class="panel">
+  <div style="flex:1;overflow-y:auto;padding:20px 24px">
     <div class="panel-header">
       <h2>Session History</h2>
-      <button class="close-btn" @click="$emit('close')">&#x2715;</button>
     </div>
 
     <div v-if="loading" style="color:var(--muted);font-size:13px">Loading…</div>
@@ -13,7 +12,7 @@
       <div v-for="s in sessions" :key="s.id" class="sess-row">
         <div class="sess-info">
           <span class="sess-desc">{{ truncate(s.prompt, 80) }}</span>
-          <span class="sess-meta">{{ s.modelLabel ?? '—' }} &middot; {{ s.iterationCount }} iter &middot; {{ formatDate(s.updatedAt ?? s.createdAt) }}</span>
+          <span class="sess-meta">{{ s.workflowLabel ?? '—' }} &middot; {{ s.iterationCount }} iter &middot; {{ formatDate(s.updatedAt ?? s.createdAt) }}</span>
         </div>
         <span class="sess-status" :class="statusClass(s.status)">{{ s.status }}</span>
         <div class="sess-actions">
@@ -22,14 +21,14 @@
         </div>
       </div>
     </div>
-  </aside>
+  </div>
 </template>
 
 <script setup>
 import { ref, onMounted } from 'vue';
 import { api } from '../api.js';
 
-const emit = defineEmits(['load-session', 'close']);
+const emit = defineEmits(['load-session']);
 
 const sessions = ref([]);
 const loading  = ref(true);

@@ -50,7 +50,7 @@ test('getSummary returns null when outcomes are all zero', () => {
   const dir = process.env.SKILLS_DIR;
   fs.mkdirSync(dir, { recursive: true });
   fs.writeFileSync(path.join(dir, 'zero-model.json'), JSON.stringify({
-    modelId: 'zero-model', modelLabel: 'Zero', architecture: 'sd15',
+    workflowId: 'zero-model', workflowLabel: 'Zero', architecture: 'sd15',
     skill: null, skillUpdatedAt: null,
     outcomes: { accepts: 0, rejects: 0, notes: [] },
   }));
