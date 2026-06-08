@@ -53,6 +53,10 @@
         @changed="onConfigChanged"
       />
 
+      <QueuePanel
+        v-else-if="activeView === 'queue'"
+      />
+
       <HistoryPanel
         v-else-if="activeView === 'history'"
         @load-session="onLoadSession"
@@ -77,6 +81,7 @@ import WorkflowsPanel  from './components/WorkflowsPanel.vue';
 import ModelsPanel     from './components/ModelsPanel.vue';
 import HistoryPanel    from './components/HistoryPanel.vue';
 import SettingsPanel   from './components/SettingsPanel.vue';
+import QueuePanel      from './components/QueuePanel.vue';
 
 import { configState, loadConfig, loadAssets, setActiveWorkflow as storeSetActiveWorkflow } from './stores/config.js';
 import { genState, startGeneration, continueSession, loadSession, clearSession, killGeneration, connectToBroadcast } from './stores/generate.js';

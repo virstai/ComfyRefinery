@@ -80,6 +80,7 @@ const chipRoot = ref(null);
 
 const navItems = [
   { view: 'generate',  icon: '▶', label: 'Generate'  },
+  { view: 'queue',     icon: '⇌', label: 'Queue'     },
   { view: 'workflows', icon: '⬡', label: 'Workflows' },
   { view: 'models',    icon: '⬡', label: 'Models'    },
   { view: 'history',   icon: '☰', label: 'History'   },
