@@ -53,7 +53,9 @@ Open **Settings** (⚙) and fill in:
 - **LLM base URL** — any OpenAI-compatible server, e.g. `http://127.0.0.1:11434/v1`
   for Ollama or `https://api.openai.com/v1` for OpenAI.
 - **API key** — leave blank for local servers.
-- **LLM model** — the model name your server exposes (e.g. `gemma4:31b`).
+- **LLM model** — the model name your server exposes (e.g. `gemma4:31b`). **Must be
+  vision-capable** (able to accept images) — it receives generated images for review
+  and optionally reference images for prompt building.
 - **ComfyUI URL** — default `http://127.0.0.1:8188`.
 
 ### Step 2 — Add a Model
