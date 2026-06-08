@@ -26,6 +26,7 @@ const router   = express.Router();
 const sharp    = require('sharp');
 const config   = require('../services/config');
 const comfyui  = require('../services/comfyui');
+const queue    = require('../services/queue');
 
 async function padToSquare(buffer) {
   const { width, height } = await sharp(buffer).metadata();
@@ -42,12 +43,11 @@ async function padToSquare(buffer) {
 // ── Progress state (module-level; one active job at a time) ──────────────────
 
 const jobState = {
-  active:          false,
-  sessionId:       null,
-  iteration:       0,
-  phase:           '',
-  progress:        0,   // 0–100 mirroring ComfyUI progress events
-  abortController: null,
+  active:    false,
+  sessionId: null,
+  iteration: 0,
+  phase:     '',
+  progress:  0,
 };
 
 // ── Sampler name mapping (A1111 display name → our internal names) ────────────
@@ -187,20 +187,16 @@ async function handleGenerationRequest(req, res) {
 
   if (!prompt.trim()) return res.status(400).json({ error: 'prompt is required' });
 
-  // Resolve model from checkpoint override (for A1111 compat response data only).
-  // Falls back to the model used by the active workflow's first generate step.
   let modelId;
   if (override_settings.sd_model_checkpoint) {
     modelId = findModelId(cfg, override_settings.sd_model_checkpoint);
   }
 
-  // Resolve workflow — prefer one that uses the specified model, else use active workflow.
   const workflowId = (modelId && findWorkflowForModel(cfg, modelId)) || cfg.activeWorkflow;
   if (!workflowId || !cfg.workflows?.[workflowId]) {
     return res.status(400).json({ error: 'No active workflow configured.' });
   }
 
-  // If no explicit model was resolved, derive from the workflow's first generate step.
   if (!modelId) {
     const firstGen = (cfg.workflows[workflowId].steps ?? []).find(s => s.type === 'generate');
     modelId = firstGen?.modelId ?? null;
@@ -210,13 +206,11 @@ async function handleGenerationRequest(req, res) {
     return res.status(400).json({ error: `Model "${modelId}" not found in config.` });
   }
 
-  // Translate A1111 params to our overrides object.
   const overrides = {};
   if (negative_prompt)  overrides.negativePrompt = negative_prompt;
   if (steps    != null) overrides.steps    = Number(steps);
   if (width    != null) overrides.width    = Number(width);
   if (height   != null) overrides.height   = Number(height);
-  // cfg_scale maps to both field names; each workflow picks whichever it uses.
   if (cfg_scale != null) { overrides.guidance = Number(cfg_scale); overrides.cfgScale = Number(cfg_scale); }
 
   if (sampler_name) {
@@ -225,29 +219,20 @@ async function handleGenerationRequest(req, res) {
       overrides.sampler = mapped.sampler;
       if (mapped.scheduler) overrides.scheduler = mapped.scheduler;
     }
-    // Unrecognised names (including "Automatic" / backend-specific samplers) are
-    // intentionally ignored so the model's workflow default kicks in.
   }
 
-  // Explicit top-level scheduler overrides any scheduler inferred from the sampler name.
   if (scheduler && scheduler !== 'N/A') {
     overrides.scheduler = scheduler.toLowerCase().replace(/\s+/g, '_');
   }
 
-  // Strip data-URL prefix from each init_image and keep raw base64.
-  const rawImages = init_images.map(b64 => b64.replace(/^data:image\/\w+;base64,/, ''));
-
-  // imageContext: passed to every run so the LLM sees the images when building the prompt,
-  // regardless of whether they are also used as diffusion references.
+  const rawImages    = init_images.map(b64 => b64.replace(/^data:image\/\w+;base64,/, ''));
   const imageContext = rawImages;
 
-  // Decide whether to upload images to ComfyUI for diffusion use.
-  // Only worthwhile when the active workflow step is in adapter or init-image mode.
   let references = [];
   if (rawImages.length) {
-    const wf        = cfg.workflows?.[workflowId];
-    const firstGen  = (wf?.steps ?? []).find(s => s.type === 'generate');
-    const diffMode  = firstGen?.referenceStrategy?.diffusion?.mode;
+    const wf       = cfg.workflows?.[workflowId];
+    const firstGen = (wf?.steps ?? []).find(s => s.type === 'generate');
+    const diffMode = firstGen?.referenceStrategy?.diffusion?.mode;
     if (diffMode === 'adapter' || diffMode === 'init-image') {
       references = await Promise.all(rawImages.map(async (raw, i) => {
         const buf = await padToSquare(Buffer.from(raw, 'base64'));
@@ -259,78 +244,95 @@ async function handleGenerationRequest(req, res) {
     }
   }
 
-  const host   = req.headers.host;
-  const total  = Math.max(1, Number(batch_size)) * Math.max(1, Number(n_iter));
-  const images = [];
-  const seeds  = [];
+  const host  = req.headers.host;
+  const total = Math.max(1, Number(batch_size)) * Math.max(1, Number(n_iter));
 
-  const ac = new AbortController();
-  jobState.active          = true;
-  jobState.progress        = 0;
-  jobState.phase           = 'Starting…';
-  jobState.iteration       = 0;
-  jobState.sessionId       = null;
-  jobState.abortController = ac;
+  const clientAC = new AbortController();
 
+  // Mark jobState active for /progress polling (shows 'Queued' until the job runs)
+  jobState.active    = true;
+  jobState.progress  = 0;
+  jobState.phase     = 'Queued…';
+  jobState.iteration = 0;
+  jobState.sessionId = null;
+
+  res.on('close', () => { if (!res.writableEnded) clientAC.abort(); });
+
+  let result;
   try {
-    for (let i = 0; i < total; i++) {
-      const iterSeed     = seed !== -1 ? Number(seed) + i : undefined;
-      const iterOverrides = iterSeed != null ? { ...overrides, seed: iterSeed } : overrides;
+    result = await queue.enqueue({
+      prompt:     prompt.slice(0, 120),
+      workflowId,
+      refCount:   references.length,
+      signal:     clientAC.signal,
+      runFn: async (pipelineSignal) => {
+        const images = [];
+        const seeds  = [];
+        let   lastImageUrl = null;
 
-      // Start a generation run via our own /api/generate/run endpoint.
-      // acceptanceGracePeriod is intentionally omitted so the configured value is used —
-      // the broadcast SSE lets the UI show the grace-period window even for sdapi sessions.
-      const runRes = await fetch(`http://${host}/api/generate/run`, {
-        method:  'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({ prompt, references, imageContext, overrides: iterOverrides, workflowId }),
-        signal: ac.signal,
-      });
+        // When the pipeline signal fires, kill the server-side pipeline
+        pipelineSignal.addEventListener('abort', () => {
+          const sid = jobState.sessionId;
+          if (sid) {
+            fetch(`http://${host}/api/generate/kill`, {
+              method: 'POST', headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ sessionId: sid }),
+            }).catch(() => {});
+          }
+        }, { once: true });
 
-      if (!runRes.ok) {
-        const body = await runRes.json().catch(() => ({}));
-        throw new Error(body.error || `Run request failed with status ${runRes.status}`);
-      }
+        for (let i = 0; i < total; i++) {
+          const iterSeed      = seed !== -1 ? Number(seed) + i : undefined;
+          const iterOverrides = iterSeed != null ? { ...overrides, seed: iterSeed } : overrides;
 
-      // Wait for the done (or error) SSE event while tracking progress for /progress.
-      let resolveRun, rejectRun;
-      const runPromise = new Promise((resolve, reject) => { resolveRun = resolve; rejectRun = reject; });
+          const runRes = await fetch(`http://${host}/api/generate/run`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body:   JSON.stringify({ prompt, references, imageContext, overrides: iterOverrides, workflowId }),
+            signal: pipelineSignal,
+          });
 
-      consumeSSE(runRes, (event, data) => {
-        switch (event) {
-          case 'session':   jobState.sessionId = data.id; break;
-          case 'phase':     jobState.phase = data.phase; jobState.iteration = data.iteration ?? 0; break;
-          case 'progress':  jobState.progress = data.pct ?? 0; break;
-          case 'done':      resolveRun(data); break;
-          case 'error':     rejectRun(new Error(data.message)); break;
+          if (!runRes.ok) {
+            const body = await runRes.json().catch(() => ({}));
+            throw new Error(body.error || `Run request failed with status ${runRes.status}`);
+          }
+
+          let resolveRun, rejectRun;
+          const runPromise = new Promise((resolve, reject) => { resolveRun = resolve; rejectRun = reject; });
+
+          consumeSSE(runRes, (event, data) => {
+            switch (event) {
+              case 'session':  jobState.sessionId = data.id; break;
+              case 'phase':    jobState.phase = data.phase; jobState.iteration = data.iteration ?? 0; break;
+              case 'progress': jobState.progress = data.pct ?? 0; break;
+              case 'done':     resolveRun(data); break;
+              case 'error':    rejectRun(new Error(data.message)); break;
+            }
+          }).then(() => rejectRun(new Error('Generation stream ended without a result')))
+            .catch(rejectRun);
+
+          const runResult = await runPromise;
+
+          if (runResult.imageUrl) {
+            images.push(await fetchBase64(host, runResult.imageUrl));
+            lastImageUrl = runResult.imageUrl;
+          }
+          seeds.push(iterSeed ?? -1);
         }
-      }).then(() => {
-        // Stream closed without a done event — treat as an error.
-        rejectRun(new Error('Generation stream ended without a result'));
-      }).catch(rejectRun);
 
-      const result = await runPromise;
-
-      if (result.imageUrl) {
-        images.push(await fetchBase64(host, result.imageUrl));
-      }
-      seeds.push(iterSeed ?? -1);
-    }
+        return { images, seeds, outputImageUrl: lastImageUrl };
+      },
+    });
   } catch (err) {
-    jobState.active          = false;
-    jobState.abortController = null;
-    return res.status(500).json({ error: err.message });
+    jobState.active = false; jobState.progress = 0; jobState.phase = ''; jobState.sessionId = null;
+    if (!res.headersSent) return res.status(500).json({ error: err.message });
+    return;
   }
 
-  jobState.active          = false;
-  jobState.progress        = 0;
-  jobState.phase           = '';
-  jobState.sessionId       = null;
-  jobState.abortController = null;
+  jobState.active = false; jobState.progress = 0; jobState.phase = ''; jobState.sessionId = null;
 
+  const { images, seeds } = result;
   const info = JSON.stringify({
-    prompt,
-    negative_prompt,
+    prompt, negative_prompt,
     seed:         seeds[0] ?? -1,
     all_seeds:    seeds,
     steps:        overrides.steps    ?? null,
@@ -461,9 +463,8 @@ router.get('/sd-vae', (req, res) => {
 // Abort the currently-running txt2img job (if any).
 
 router.post('/interrupt', (req, res) => {
-  if (jobState.active && jobState.abortController) {
-    jobState.abortController.abort();
-  }
+  const { running } = queue.getState();
+  if (running) queue.cancel(running.id);
   res.json({});
 });
 
