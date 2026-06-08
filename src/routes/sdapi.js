@@ -258,6 +258,19 @@ async function handleGenerationRequest(req, res) {
 
   res.on('close', () => { if (!res.writableEnded) clientAC.abort(); });
 
+  // Keep the connection alive for clients/proxies with idle-read timeouts.
+  // Spaces are valid JSON leading whitespace; the real payload comes at the end.
+  // Delay the first write by 60 s so early validation errors still return proper HTTP status codes.
+  let keepaliveInterval = null;
+  const keepaliveStart = setTimeout(() => {
+    if (!res.writableEnded) {
+      res.setHeader('Content-Type', 'application/json');
+      res.write(' ');
+      keepaliveInterval = setInterval(() => { if (!res.writableEnded) res.write(' '); }, 30_000);
+    }
+  }, 60_000);
+  const clearKeepalive = () => { clearTimeout(keepaliveStart); clearInterval(keepaliveInterval); };
+
   let result;
   try {
     result = await queue.enqueue({
@@ -323,11 +336,14 @@ async function handleGenerationRequest(req, res) {
       },
     });
   } catch (err) {
+    clearKeepalive();
     jobState.active = false; jobState.progress = 0; jobState.phase = ''; jobState.sessionId = null;
     if (!res.headersSent) return res.status(500).json({ error: err.message });
+    if (!res.writableEnded) res.end(JSON.stringify({ error: err.message }));
     return;
   }
 
+  clearKeepalive();
   jobState.active = false; jobState.progress = 0; jobState.phase = ''; jobState.sessionId = null;
 
   const { images, seeds } = result;
@@ -344,7 +360,9 @@ async function handleGenerationRequest(req, res) {
     infotexts:    [`${prompt}\nNegative prompt: ${negative_prompt}`],
   });
 
-  res.json({ images, parameters: req.body, info });
+  const payload = JSON.stringify({ images, parameters: req.body, info });
+  if (res.headersSent) res.end(payload);
+  else res.json({ images, parameters: req.body, info });
 }
 
 // ── POST /sdapi/v1/txt2img ────────────────────────────────────────────────────

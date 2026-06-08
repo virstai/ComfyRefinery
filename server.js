@@ -14,6 +14,8 @@ const queueRoutes       = require('./src/routes/queue');
 
 const app = express();
 const server = createServer(app);
+// Disable the 5-minute default so long-running sdapi generation requests aren't killed mid-flight
+server.requestTimeout = 0;
 
 app.use(express.json({ limit: '50mb' }));
 app.use(express.static(path.join(__dirname, 'public')));
