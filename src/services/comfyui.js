@@ -182,7 +182,8 @@ async function fetchInputList(nodeType, inputName) {
   const res = await fetch(`${baseUrl()}/object_info/${nodeType}`);
   if (!res.ok) throw new Error(`ComfyUI object_info error ${res.status}`);
   const data = await res.json();
-  const field = data?.[nodeType]?.input?.required?.[inputName];
+  const inputs = data?.[nodeType]?.input ?? {};
+  const field = inputs.required?.[inputName] ?? inputs.optional?.[inputName];
   if (!field) return [];
   // New ComfyUI format: ["COMBO", { options: [...] }]
   if (Array.isArray(field[1]?.options)) return field[1].options;
@@ -192,13 +193,17 @@ async function fetchInputList(nodeType, inputName) {
 }
 
 async function getAssets() {
+  // Ask ComfyUI to flush its in-memory model file cache before we query.
+  // POST /api/models/refresh exists in ComfyUI 0.3+; silently ignored on older builds.
+  await fetch(`${baseUrl()}/api/models/refresh`, { method: 'POST' }).catch(() => {});
+
   const [checkpoints, vaes, clips, unets, upscaleModels, ipAdapterModels, clipVisionModels, reduxModels] = await Promise.allSettled([
     fetchInputList('CheckpointLoaderSimple', 'ckpt_name'),
     fetchInputList('VAELoader',              'vae_name'),
     fetchInputList('CLIPLoader',             'clip_name'),
     fetchInputList('UNETLoader',             'unet_name'),
     fetchInputList('UpscaleModelLoader',     'model_name'),
-    fetchInputList('IPAdapterModelLoader',   'model_name'),
+    fetchInputList('IPAdapterModelLoader',   'ipadapter_file'),
     fetchInputList('CLIPVisionLoader',       'clip_name'),
     fetchInputList('StyleModelLoader',       'style_model_name'),
   ]);

@@ -264,10 +264,10 @@ async function runVideoStep(stepDef, stepIndex, session, ctx, cfg, res, isKilled
 
 // ── Pipeline execution ────────────────────────────────────────────────────────────
 
-async function runPipeline(session, pipelineDef, cfg, res) {
+async function runPipeline(session, pipelineDef, cfg, res, imageContext = []) {
   const tag = session.id.slice(0, 8);
   const abortController = new AbortController();
-  const ctx = { userPrompt: session.prompt, references: session.references ?? [], cfg, signal: abortController.signal };
+  const ctx = { userPrompt: session.prompt, references: session.references ?? [], imageContext, cfg, signal: abortController.signal };
 
   let killed = false;
 
@@ -511,7 +511,7 @@ router.delete('/sessions/:id', (req, res) => {
 router.post('/run', async (req, res) => {
   const cfg = config.load();
 
-  const { prompt, references, overrides = {}, humanReview, acceptanceGracePeriod, workflowId } = req.body;
+  const { prompt, references, imageContext, overrides = {}, humanReview, acceptanceGracePeriod, workflowId } = req.body;
   if (!prompt?.trim()) return res.status(400).json({ error: 'prompt is required' });
 
   let workflow;
@@ -549,7 +549,7 @@ router.post('/run', async (req, res) => {
   res.flushHeaders();
   emit(res, 'session', { id: session.id, prompt: session.prompt });
 
-  await runPipeline(session, pipelineDef, cfg, res);
+  await runPipeline(session, pipelineDef, cfg, res, Array.isArray(imageContext) ? imageContext : []);
 });
 
 // POST /api/generate/human-review/:sessionId

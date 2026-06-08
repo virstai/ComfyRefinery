@@ -4,14 +4,14 @@
   "description": "Workflow orchestration for ComfyUI — multi-step AI-reviewed image pipelines",
   "main": "server.js",
   "scripts": {
-    "start":      "node server.js",
+    "start": "node server.js",
     "server:dev": "node --watch server.js",
-    "ui:dev":     "vite",
-    "ui:build":   "vite build",
-    "dev":        "concurrently -n api,ui -c cyan,magenta \"npm run server:dev\" \"npm run ui:dev\"",
-    "test":       "node --test 'test/**/*.test.js'",
-    "test:unit":  "node --test 'test/unit/**/*.test.js'",
-    "test:int":   "node --test test/integration/*.test.js"
+    "ui:dev": "vite",
+    "ui:build": "vite build",
+    "dev": "concurrently -n api,ui -c cyan,magenta \"npm run server:dev\" \"npm run ui:dev\"",
+    "test": "node --test 'test/**/*.test.js'",
+    "test:unit": "node --test 'test/unit/**/*.test.js'",
+    "test:int": "node --test test/integration/*.test.js"
   },
   "keywords": [],
   "author": "",
@@ -20,6 +20,7 @@
   "dependencies": {
     "express": "^5.2.1",
     "marked": "^15.0.0",
+    "sharp": "^0.34.5",
     "uuid": "^14.0.0",
     "ws": "^8.21.0"
   },
@@ -28,5 +29,8 @@
     "concurrently": "^10.0.0",
     "vite": "^8.0.14",
     "vue": "^3.5.35"
+  },
+  "allowScripts": {
+    "sharp@0.34.5": true
   }
 }

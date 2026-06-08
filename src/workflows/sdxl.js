@@ -27,20 +27,28 @@ function build(params) {
   }
   const resolvedVae = p.vae ? ["20", 0] : ["1", 2];
 
-  // IPAdapter chain: nodes 50–51 are loaders; 52+ alternate LoadImage/IPAdapter pairs per ref.
+  // IPAdapter chain:
+  //   49 = IPAdapterModelLoader (load the specific file)
+  //   50 = IPAdapterUnifiedLoader (patches model pipeline + auto-selects clip_vision via preset)
+  //   51+i*2 = LoadImage, 52+i*2 = IPAdapter per ref image
   let modelRef = ["1", 0];
-  if (p.ipAdapterImages?.length && p.adapterModel && p.clipVisionModel) {
-    nodes["50"] = { class_type: "IPAdapterModelLoader", inputs: { model_name: p.adapterModel } };
-    nodes["51"] = { class_type: "CLIPVisionLoader",     inputs: { clip_name: p.clipVisionModel } };
+  if (p.ipAdapterImages?.length && p.adapterModel) {
+    const f = p.adapterModel.toLowerCase();
+    const preset = f.includes('face') ? 'PLUS FACE (portraits)'
+                 : f.includes('vit-g') || f.includes('vit_g') ? 'VIT-G (medium strength)'
+                 : 'PLUS (high strength)';
+    nodes["49"] = { class_type: "IPAdapterModelLoader",  inputs: { ipadapter_file: p.adapterModel } };
+    nodes["50"] = { class_type: "IPAdapterUnifiedLoader", inputs: { model: ["1", 0], preset, ipadapter: ["49", 0] } };
+    modelRef = ["50", 0];
     const perWeight = (p.adapterWeight ?? 0.6) / p.ipAdapterImages.length;
     p.ipAdapterImages.forEach((ref, i) => {
       const imgPath = ref.subfolder ? `${ref.subfolder}/${ref.filename}` : ref.filename;
-      const loadId  = String(52 + i * 2);
-      const ipaId   = String(53 + i * 2);
+      const loadId  = String(51 + i * 2);
+      const ipaId   = String(52 + i * 2);
       nodes[loadId] = { class_type: "LoadImage", inputs: { image: imgPath } };
       nodes[ipaId]  = { class_type: "IPAdapter", inputs: {
-        model: modelRef, ip_adapter: ["50", 0], clip_vision: ["51", 0],
-        image: [loadId, 0], weight: perWeight, start_at: 0, end_at: 1,
+        model: modelRef, ipadapter: ["50", 1],
+        image: [loadId, 0], weight: perWeight, weight_type: "style transfer", start_at: 0, end_at: 1,
       }};
       modelRef = [ipaId, 0];
     });

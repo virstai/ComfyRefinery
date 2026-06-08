@@ -139,7 +139,7 @@
       </div>
     </div>
 
-    <!-- Reference adapter (IPAdapter for sd15/sdxl, Redux for flux/flux2) -->
+    <!-- Reference adapter (IPAdapter for sd15/sdxl/anima, Redux for flux/flux2) -->
     <div v-if="adapterModelType">
       <hr>
       <strong>Reference adapter</strong>
@@ -153,7 +153,7 @@
           {{ adapterModelType === 'ipa' ? 'No IPAdapter models found (requires IPAdapter custom nodes).' : 'No Redux/style models found in ComfyUI.' }}
         </span>
       </label>
-      <label>CLIP Vision model
+      <label v-if="hasField('clipVisionModel')">CLIP Vision model
         <select v-model="form.clipVisionModel">
           <option value="">— none —</option>
           <option v-for="m in assets.comfyui?.clipVisionModels ?? []" :key="m" :value="m">{{ m }}</option>

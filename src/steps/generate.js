@@ -95,17 +95,24 @@ async function prepare(stepDef, ctx, previousIterations, onToken) {
     ? buildInitialMessages(userPrompt, architecture, archDefaults, skillSummary)
     : buildRefinementMessages(userPrompt, previousIterations, architecture, skillSummary);
 
-  // Vision notes: fetch all references as base64 and inject before the user
-  // message so the LLM can use them as compositional guidance when building the prompt.
+  // Vision notes: inject reference images as base64 so the LLM can use them as
+  // compositional guidance when building the prompt.
+  // ctx.imageContext — already-decoded base64 strings (e.g. from A1111 init_images), used directly.
+  // ctx.references  — ComfyUI input refs that must be fetched from ComfyUI first.
+  // Both sources are combined; either can be empty.
   const refs = ctx.references ?? [];
-  if (stepDef.referenceStrategy?.visionNotes && refs.length > 0) {
-    const refImages = await Promise.all(refs.map(async ref => {
+  if (stepDef.referenceStrategy?.visionNotes && (refs.length > 0 || ctx.imageContext?.length > 0)) {
+    const direct  = ctx.imageContext ?? [];
+    const fetched = await Promise.all(refs.map(async ref => {
       const url = `${cfg.comfyuiUrl}/view?filename=${encodeURIComponent(ref.filename)}&subfolder=${encodeURIComponent(ref.subfolder ?? '')}&type=${encodeURIComponent(ref.type ?? 'input')}`;
       const r = await fetch(url);
       if (!r.ok) throw new Error(`Failed to fetch reference image: ${r.status}`);
       return Buffer.from(await r.arrayBuffer()).toString('base64');
     }));
-    messages.splice(1, 0, { role: 'user', content: 'Reference images for composition guidance:', images: refImages });
+    const refImages = [...direct, ...fetched];
+    if (refImages.length) {
+      messages.splice(1, 0, { role: 'user', content: 'Reference images for composition guidance:', images: refImages });
+    }
   }
 
   const raw    = await llm.chatStream(cfg, messages, onToken, { signal: ctx.signal });
@@ -132,7 +139,7 @@ function buildComfyWorkflow(stepDef, prepareResult, ctx) {
 
   if (refs.length > 0 && mode === 'init-image') {
     initImage = refs[0];
-    denoise   = rs.denoise ?? 0.6;
+    denoise   = rs.denoise ?? prepareResult.params.denoise ?? 0.6;
   }
 
   // Chain previous step's output as init-image when no reference override is active
@@ -146,7 +153,7 @@ function buildComfyWorkflow(stepDef, prepareResult, ctx) {
   let adapterParams = {};
   if (refs.length > 0 && mode === 'adapter') {
     const arch = ctx.modelConfig?.architecture;
-    if (arch === 'sd15' || arch === 'sdxl') {
+    if (arch === 'sd15' || arch === 'sdxl' || arch === 'anima') {
       adapterParams = { ipAdapterImages: refs };
     } else if (arch === 'flux') {
       adapterParams = { reduxImages: refs };

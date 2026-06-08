@@ -5,8 +5,13 @@
 //
 // Implemented:
 //   POST /sdapi/v1/txt2img              — blocking generation (runs the full iteration loop)
-//   GET  /sdapi/v1/progress             — progress polling during a running txt2img request
-//   POST /sdapi/v1/interrupt            — abort a running txt2img request
+//   POST /sdapi/v1/img2img              — generation with reference images; init_images are:
+//                                         • always passed as LLM vision context (prompt builder sees them)
+//                                         • uploaded to ComfyUI and used as diffusion references only when
+//                                           the active workflow step is configured for "adapter" or "init-image" mode
+//                                         denoising_strength maps to the denoise param for init-image mode
+//   GET  /sdapi/v1/progress             — progress polling during a running generation request
+//   POST /sdapi/v1/interrupt            — abort a running request
 //   GET  /sdapi/v1/sd-models            — list configured models
 //   GET  /sdapi/v1/options              — get active model
 //   POST /sdapi/v1/options              — set active model via sd_model_checkpoint
@@ -16,9 +21,23 @@
 //   GET  /sdapi/v1/latent-upscale-modes — stub (no latent upscaling support)
 //   GET  /sdapi/v1/sd-vae               — stub (no VAE switching support)
 
-const express = require('express');
-const router  = express.Router();
-const config  = require('../services/config');
+const express  = require('express');
+const router   = express.Router();
+const sharp    = require('sharp');
+const config   = require('../services/config');
+const comfyui  = require('../services/comfyui');
+
+async function padToSquare(buffer) {
+  const { width, height } = await sharp(buffer).metadata();
+  if (width === height) return buffer;
+  const size = Math.max(width, height);
+  const left = Math.floor((size - width)  / 2);
+  const top  = Math.floor((size - height) / 2);
+  return sharp(buffer)
+    .extend({ top, bottom: size - height - top, left, right: size - width - left,
+              background: { r: 0, g: 0, b: 0, alpha: 1 } })
+    .toBuffer();
+}
 
 // ── Progress state (module-level; one active job at a time) ──────────────────
 
@@ -54,6 +73,8 @@ const SAMPLER_MAP = {
   'ddim':                  { sampler: 'ddim' },
   'unipc':                 { sampler: 'uni_pc' },
   'uni pc':                { sampler: 'uni_pc' },
+  'er sde':                { sampler: 'er_sde' },
+  'er_sde':                { sampler: 'er_sde' },
 };
 
 const SAMPLERS_LIST = [
@@ -74,6 +95,7 @@ const SAMPLERS_LIST = [
   { name: 'DPM++ 3M SDE Karras', aliases: ['dpmpp_3m_sde_karras'],  options: {} },
   { name: 'DDIM',                 aliases: ['ddim'],                 options: {} },
   { name: 'UniPC',                aliases: ['uni_pc'],               options: {} },
+  { name: 'ER SDE',               aliases: ['er_sde'],               options: {} },
 ];
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -147,17 +169,19 @@ async function handleGenerationRequest(req, res) {
   if (!cfg.llmModel) return res.status(400).json({ error: 'No LLM model configured.' });
 
   const {
-    prompt           = '',
-    negative_prompt  = '',
+    prompt            = '',
+    negative_prompt   = '',
+    init_images       = [],
+    denoising_strength,
     steps,
     cfg_scale,
     width,
     height,
     sampler_name,
     scheduler,
-    seed             = -1,
-    batch_size       = 1,
-    n_iter           = 1,
+    seed              = -1,
+    batch_size        = 1,
+    n_iter            = 1,
     override_settings = {},
   } = req.body;
 
@@ -210,6 +234,31 @@ async function handleGenerationRequest(req, res) {
     overrides.scheduler = scheduler.toLowerCase().replace(/\s+/g, '_');
   }
 
+  // Strip data-URL prefix from each init_image and keep raw base64.
+  const rawImages = init_images.map(b64 => b64.replace(/^data:image\/\w+;base64,/, ''));
+
+  // imageContext: passed to every run so the LLM sees the images when building the prompt,
+  // regardless of whether they are also used as diffusion references.
+  const imageContext = rawImages;
+
+  // Decide whether to upload images to ComfyUI for diffusion use.
+  // Only worthwhile when the active workflow step is in adapter or init-image mode.
+  let references = [];
+  if (rawImages.length) {
+    const wf        = cfg.workflows?.[workflowId];
+    const firstGen  = (wf?.steps ?? []).find(s => s.type === 'generate');
+    const diffMode  = firstGen?.referenceStrategy?.diffusion?.mode;
+    if (diffMode === 'adapter' || diffMode === 'init-image') {
+      references = await Promise.all(rawImages.map(async (raw, i) => {
+        const buf = await padToSquare(Buffer.from(raw, 'base64'));
+        return comfyui.uploadImage(buf, `sdapi_ref_${i}.png`);
+      }));
+      if (denoising_strength != null && diffMode === 'init-image') {
+        overrides.denoise = Number(denoising_strength);
+      }
+    }
+  }
+
   const host   = req.headers.host;
   const total  = Math.max(1, Number(batch_size)) * Math.max(1, Number(n_iter));
   const images = [];
@@ -234,7 +283,7 @@ async function handleGenerationRequest(req, res) {
       const runRes = await fetch(`http://${host}/api/generate/run`, {
         method:  'POST',
         headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({ prompt, overrides: iterOverrides, workflowId }),
+        body:    JSON.stringify({ prompt, references, imageContext, overrides: iterOverrides, workflowId }),
         signal: ac.signal,
       });
 
@@ -300,9 +349,6 @@ async function handleGenerationRequest(req, res) {
 router.post('/txt2img', handleGenerationRequest);
 
 // ── POST /sdapi/v1/img2img ────────────────────────────────────────────────────
-// Marinara's illustrator sends img2img when a reference image is provided.
-// We don't do true img2img — init_images and denoising_strength are ignored
-// and the request is handled as a normal txt2img generation.
 router.post('/img2img', handleGenerationRequest);
 
 // ── GET /sdapi/v1/progress ────────────────────────────────────────────────────

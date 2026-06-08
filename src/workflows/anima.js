@@ -25,6 +25,27 @@ function build(params) {
     "5": { class_type: "CLIPTextEncode", inputs: { text: p.negativePrompt, clip: ["2", 0] } },
   };
 
+  // IP-Adapter chain: node 50 = AnimaIPAdapterLoader; nodes 51+i*3 = LoadImage,
+  // 52+i*3 = AnimaSiglipeEncodeImage, 53+i*3 = AnimaIPAdapterApply per ref image.
+  let modelRef = ["1", 0];
+  if (p.ipAdapterImages?.length && p.adapterModel) {
+    nodes["50"] = { class_type: "AnimaIPAdapterLoader", inputs: { ipadapter_path: `models/ipadapter/${p.adapterModel}` } };
+    const perWeight = (p.adapterWeight ?? 1.0) / p.ipAdapterImages.length;
+    p.ipAdapterImages.forEach((ref, i) => {
+      const imgPath = ref.subfolder ? `${ref.subfolder}/${ref.filename}` : ref.filename;
+      const loadId  = String(51 + i * 3);
+      const encId   = String(52 + i * 3);
+      const applyId = String(53 + i * 3);
+      nodes[loadId]  = { class_type: "LoadImage",               inputs: { image: imgPath } };
+      nodes[encId]   = { class_type: "AnimaSiglipeEncodeImage", inputs: { image: [loadId, 0] } };
+      nodes[applyId] = { class_type: "AnimaIPAdapterApply",     inputs: {
+        model: modelRef, ipadapter: ["50", 0], siglip_features: [encId, 0],
+        weight: perWeight, start_at: 0.0, end_at: 1.0,
+      }};
+      modelRef = [applyId, 0];
+    });
+  }
+
   let latentRef;
   let denoise;
   if (p.initImage) {
@@ -46,7 +67,7 @@ function build(params) {
     inputs: {
       seed, steps: p.steps, cfg: p.cfgScale,
       sampler_name: p.sampler, scheduler: p.scheduler, denoise,
-      model: ["1", 0], positive: ["4", 0], negative: ["5", 0], latent_image: latentRef,
+      model: modelRef, positive: ["4", 0], negative: ["5", 0], latent_image: latentRef,
     },
   };
   nodes["8"] = { class_type: "VAEDecode", inputs: { samples: ["7", 0], vae: ["3", 0] } };
