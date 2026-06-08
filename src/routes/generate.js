@@ -500,7 +500,7 @@ router.get('/sessions/:id', (req, res) => {
 router.delete('/sessions', (req, res) => {
   const { status } = req.query;
   if (!status) return res.status(400).json({ error: 'status query param required (running|error|all)' });
-  const all   = db.listSessions();
+  const all   = db.listSessions(Number.MAX_SAFE_INTEGER);
   let deleted = 0;
   for (const s of all) {
     if (status === 'all' || s.status === status) {

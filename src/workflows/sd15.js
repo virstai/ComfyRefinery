@@ -46,7 +46,8 @@ function build(params) {
       nodes[loadId] = { class_type: "LoadImage", inputs: { image: imgPath } };
       nodes[ipaId]  = { class_type: "IPAdapter", inputs: {
         model: modelRef, ipadapter: ["50", 1],
-        image: [loadId, 0], weight: perWeight, weight_type: "style transfer", start_at: 0, end_at: 1,
+        image: [loadId, 0], weight: perWeight, weight_type: "style transfer",
+        start_at: 0, end_at: 0.5, embeds_scaling: "V only",
       }};
       modelRef = [ipaId, 0];
     });
