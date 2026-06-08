@@ -329,3 +329,42 @@ test('POST /api/sessions/skills/unknown-workflow/refresh returns 404', async () 
   const body = await res.json();
   assert.ok(body.error);
 });
+
+test('DELETE /api/generate/sessions?status=error deletes matching sessions', async () => {
+  // Create a fake error session on disk
+  const errorSession = {
+    id: 'bulk-delete-test-id', prompt: 'test', workflowId: 'wf',
+    workflowLabel: 'wf', references: [], steps: [], status: 'error',
+    createdAt: new Date().toISOString(),
+  };
+  const sessDir = path.join(tmpDir, 'sessions');
+  fs.mkdirSync(sessDir, { recursive: true });
+  fs.writeFileSync(path.join(sessDir, `${errorSession.id}.json`), JSON.stringify(errorSession));
+
+  const res  = await fetch(`http://127.0.0.1:${appPort}/api/generate/sessions?status=error`, {
+    method: 'DELETE',
+  });
+  assert.equal(res.status, 200);
+  const body = await res.json();
+  assert.ok(body.deleted >= 1);
+  assert.ok(!fs.existsSync(path.join(sessDir, `${errorSession.id}.json`)));
+});
+
+test('DELETE /api/generate/sessions?status=all deletes all sessions', async () => {
+  // Create two sessions
+  const sessDir = path.join(tmpDir, 'sessions');
+  fs.mkdirSync(sessDir, { recursive: true });
+  for (const [id, status] of [['bulk-all-1', 'complete'], ['bulk-all-2', 'running']]) {
+    fs.writeFileSync(path.join(sessDir, `${id}.json`), JSON.stringify({
+      id, prompt: 'x', workflowId: 'wf', workflowLabel: 'wf',
+      references: [], steps: [], status, createdAt: new Date().toISOString(),
+    }));
+  }
+
+  const res = await fetch(`http://127.0.0.1:${appPort}/api/generate/sessions?status=all`, {
+    method: 'DELETE',
+  });
+  assert.equal(res.status, 200);
+  const body = await res.json();
+  assert.ok(body.deleted >= 2);
+});

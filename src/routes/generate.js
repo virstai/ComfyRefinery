@@ -496,6 +496,22 @@ router.get('/sessions/:id', (req, res) => {
   res.json(session);
 });
 
+// DELETE /api/generate/sessions?status=running|error|all — bulk delete
+router.delete('/sessions', (req, res) => {
+  const { status } = req.query;
+  if (!status) return res.status(400).json({ error: 'status query param required (running|error|all)' });
+  const all   = db.listSessions();
+  let deleted = 0;
+  for (const s of all) {
+    if (status === 'all' || s.status === status) {
+      sessions.delete(s.id);
+      db.deleteSession(s.id);
+      deleted++;
+    }
+  }
+  res.json({ deleted });
+});
+
 // DELETE /api/generate/sessions/:id — delete a persisted session
 router.delete('/sessions/:id', (req, res) => {
   const { id } = req.params;
