@@ -3,6 +3,8 @@
 const { EventEmitter } = require('events');
 const { v4: uuidv4 }  = require('uuid');
 
+const MAX_DONE = 100;
+
 function jobSnapshot(job) {
   return {
     id:             job.id,
@@ -35,6 +37,10 @@ class Queue extends EventEmitter {
   }
 
   enqueue({ prompt, workflowId, refCount = 0, runFn, signal } = {}) {
+    if (signal?.aborted) {
+      return Promise.reject(new Error('Cancelled: client disconnected'));
+    }
+
     let resolve, reject;
     const promise = new Promise((res, rej) => { resolve = res; reject = rej; });
 
@@ -124,6 +130,7 @@ class Queue extends EventEmitter {
       job.reject(err);
     } finally {
       this.done.push(job);
+      if (this.done.length > MAX_DONE) this.done.splice(0, this.done.length - MAX_DONE);
       this.running = null;
       this.emit('changed', this.getState());
       this._processNext();

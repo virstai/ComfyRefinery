@@ -150,6 +150,20 @@ describe('Queue', () => {
     assert.ok(!('clientSignal' in done[0]));
   });
 
+  test('runFn error sets status to error and rejects promise', async () => {
+    const q = freshQueue();
+    let caught;
+    await q.enqueue({
+      prompt: 'a', workflowId: 'wf', refCount: 0,
+      runFn: async () => { throw new Error('pipeline failed'); },
+    }).catch(err => { caught = err; });
+    assert.ok(caught instanceof Error);
+    assert.equal(caught.message, 'pipeline failed');
+    const { done } = q.getState();
+    assert.equal(done[0].status, 'error');
+    assert.equal(done[0].error, 'pipeline failed');
+  });
+
   test('emits changed events on state transitions', async () => {
     const q = freshQueue();
     const statuses = [];
