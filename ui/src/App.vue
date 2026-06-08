@@ -16,6 +16,9 @@
 
     <div class="main-area">
       <template v-if="activeView === 'generate'">
+        <div v-if="genState.liveRunning && !genState.running" class="live-banner" @click="returnToLive">
+          Generation in progress — click to return to live view
+        </div>
         <GenerateSection
           :running="genState.running"
           :session-id="genState.sessionId"
@@ -84,7 +87,7 @@ import SettingsPanel   from './components/SettingsPanel.vue';
 import QueuePanel      from './components/QueuePanel.vue';
 
 import { configState, loadConfig, loadAssets, setActiveWorkflow as storeSetActiveWorkflow } from './stores/config.js';
-import { genState, startGeneration, continueSession, loadSession, clearSession, killGeneration, connectToBroadcast } from './stores/generate.js';
+import { genState, startGeneration, continueSession, loadSession, clearSession, killGeneration, connectToBroadcast, returnToLive } from './stores/generate.js';
 
 const activeView = ref('generate');
 
@@ -126,3 +129,20 @@ async function onLoadSession(sessionId) {
   await loadSession(sessionId);
 }
 </script>
+
+<style scoped>
+.live-banner {
+  padding: 8px 16px;
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  border-bottom: 1px solid color-mix(in srgb, var(--accent) 40%, transparent);
+  color: var(--accent);
+  cursor: pointer;
+  font-size: 0.8rem;
+  text-align: center;
+  letter-spacing: 0.02em;
+  transition: background 0.15s;
+}
+.live-banner:hover {
+  background: color-mix(in srgb, var(--accent) 22%, transparent);
+}
+</style>

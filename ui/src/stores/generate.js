@@ -9,6 +9,7 @@ export const genState = reactive({
   prompt:     '',
   references: [],
   running:         false,
+  liveRunning:     false, // a broadcast job is actively in progress
   activeStepIndex: null,
   totalSteps:      0,
   activeStepLabel: '',
@@ -17,6 +18,7 @@ export const genState = reactive({
 });
 
 let _hasDirectStream = false;
+let _livePaused      = false; // true while user views history; suppresses display updates
 
 function blankIteration(n) {
   return {
@@ -284,6 +286,7 @@ export function readSSEStream(response, onDone) {
 
 export async function startGeneration(prompt, references = []) {
   _hasDirectStream    = true;
+  _livePaused         = false;
   genState.running    = true;
   genState.steps      = [];
   genState.loadedDesc = null;
@@ -307,6 +310,7 @@ export async function startGeneration(prompt, references = []) {
 
 export async function continueSession(sessionId, references = []) {
   _hasDirectStream   = true;
+  _livePaused        = false;
   genState.running   = true;
   genState.status    = 'Continuing session…';
   genState.iterBadge = '';
@@ -327,6 +331,8 @@ export async function continueSession(sessionId, references = []) {
 }
 
 export async function loadSession(sessionId) {
+  _livePaused        = true;  // pause live broadcast updates while viewing history
+  genState.running   = false; // not displaying live content
   genState.status    = 'Loading session…';
   genState.iterBadge = '';
   genState.steps     = [];
@@ -359,6 +365,13 @@ export async function loadSession(sessionId) {
   return session;
 }
 
+export function returnToLive() {
+  _livePaused      = false;
+  genState.steps   = [];
+  genState.status  = '';
+  genState.running = true;
+}
+
 export async function submitHumanReview(sessionId, stepIndex, accept, feedback) {
   await api('POST', `/api/generate/human-review/${sessionId}`, { stepIndex, accept, feedback });
 }
@@ -382,6 +395,7 @@ export async function killGeneration() {
 }
 
 export function clearSession() {
+  _livePaused         = false;
   genState.sessionId  = null;
   genState.loadedDesc = null;
   genState.prompt     = '';
@@ -399,7 +413,7 @@ export function connectToBroadcast() {
   async function connect() {
     try {
       const response = await fetch('/api/generate/events');
-      if (!response.ok) { setTimeout(connect, 3000); return; }
+      if (!response.ok) return;
 
       const reader  = response.body.getReader();
       const decoder = new TextDecoder();
@@ -420,17 +434,35 @@ export function connectToBroadcast() {
             const event = eMatch[1].trim();
             const data  = JSON.parse(dMatch[1]);
             if (event === 'session' && !data.resume) {
-              genState.running    = true;
-              genState.steps      = [];
-              genState.iterBadge  = '';
-              genState.loadedDesc = null;
+              // New job always takes over — clears any paused history view
+              genState.liveRunning = true;
+              _livePaused          = false;
+              genState.running     = true;
+              genState.steps       = [];
+              genState.iterBadge   = '';
+              genState.loadedDesc  = null;
+            } else if (event === 'done' || event === 'stopped' || event === 'error') {
+              genState.liveRunning = false;
             }
-            handleEvent(event, data);
+            if (!_livePaused) handleEvent(event, data);
           } catch { /* ignore */ }
         }
       }
-    } catch { /* connection lost */ }
-    setTimeout(connect, 3000);
+    } catch { /* connection lost */ } finally {
+      // If a live job was in progress when the connection dropped, clear the stale state
+      if (genState.liveRunning) {
+        genState.liveRunning     = false;
+        genState.running         = false;
+        genState.steps           = [];
+        genState.status          = 'Connection lost';
+        genState.iterBadge       = '';
+        genState.activeStepIndex = null;
+        genState.totalSteps      = 0;
+        genState.activeStepLabel = '';
+        genState.activeStepPct   = 0;
+      }
+      setTimeout(connect, 3000);
+    }
   }
   connect();
 }
