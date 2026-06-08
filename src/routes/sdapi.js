@@ -27,6 +27,13 @@ const sharp    = require('sharp');
 const config   = require('../services/config');
 const comfyui  = require('../services/comfyui');
 const queue    = require('../services/queue');
+const { Agent } = require('undici');
+
+// The internal SSE fetch to /api/generate/run can run for many minutes (per-image
+// generate+review loop).  Node's global fetch is undici-backed and has a default
+// bodyTimeout of 300 s — independent of any AbortSignal — which fires mid-stream
+// and kills the outer client connection.  Disable it for internal long-poll fetches.
+const longPollAgent = new Agent({ headersTimeout: 0, bodyTimeout: 0 });
 
 async function padToSquare(buffer) {
   const { width, height } = await sharp(buffer).metadata();
@@ -157,7 +164,7 @@ async function consumeSSE(response, onEvent) {
 
 // Fetch a server-relative image path and return a base64-encoded string.
 async function fetchBase64(host, imageUrl) {
-  const res = await fetch(`http://${host}${imageUrl}`);
+  const res = await fetch(`http://${host}${imageUrl}`, { dispatcher: longPollAgent });
   if (!res.ok) throw new Error(`Image fetch failed: ${res.status}`);
   return Buffer.from(await res.arrayBuffer()).toString('base64');
 }
@@ -302,6 +309,7 @@ async function handleGenerationRequest(req, res) {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
             body:   JSON.stringify({ prompt, references, imageContext, overrides: iterOverrides, workflowId }),
             signal: pipelineSignal,
+            dispatcher: longPollAgent,
           });
 
           if (!runRes.ok) {

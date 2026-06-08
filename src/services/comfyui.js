@@ -51,9 +51,11 @@ function waitForCompletion(promptId, clientId, onProgress, onPreview) {
         if (!entry) return false;
         const status = entry.status;
         if (status?.status_str === 'error') {
-          const msgs   = status.messages ?? [];
-          const errMsg = msgs.find(([t]) => t === 'execution_error')?.[1]?.exception_message;
-          throw new Error(`ComfyUI: ${errMsg || 'execution error'}`);
+          const msgs    = status.messages ?? [];
+          const errData = msgs.find(([t]) => t === 'execution_error')?.[1];
+          const nodeCtx = errData?.node_type ? ` [${errData.node_type}]` : '';
+          const errMsg  = errData?.exception_message;
+          throw new Error(`ComfyUI${nodeCtx}: ${errMsg || 'execution error'}`);
         }
         return status?.completed === true;
       } catch (e) {
@@ -93,8 +95,9 @@ function waitForCompletion(promptId, clientId, onProgress, onPreview) {
         // pipeline surfaces the actual error rather than hanging or returning no images.
         if (msg.type === 'execution_error') {
           if (!msg.data?.prompt_id || msg.data.prompt_id === promptId) {
-            const detail = msg.data?.exception_message || msg.data?.error || 'execution error';
-            finish(new Error(`ComfyUI: ${detail}`));
+            const nodeCtx = msg.data?.node_type ? ` [${msg.data.node_type}]` : '';
+            const detail  = msg.data?.exception_message || msg.data?.error || 'execution error';
+            finish(new Error(`ComfyUI${nodeCtx}: ${detail}`));
           }
         }
       } catch { /* ignore parse errors */ }

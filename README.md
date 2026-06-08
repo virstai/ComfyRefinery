@@ -78,7 +78,7 @@ clip from the final prompt text (T2V) or the previous step's output image (I2V).
 
 | Key | Name | Loader |
 |---|---|---|
-| `wanvideo` | WanVideo (Wan 2.1) | Split (UNet + CLIP/T5 + VAE) |
+| `wanvideo` | WanVideo (Wan 2.2) | Split (UNet + CLIP/T5 + VAE) |
 | `hunyuanvideo` | HunyuanVideo | Split (UNet + CLIP/T5 + VAE) |
 | `ltxvideo` | LTX-Video | Split (UNet + CLIP/T5 + VAE) |
 | `cogvideox` | CogVideoX | Checkpoint + VAE + CLIP |
@@ -259,7 +259,7 @@ compatible API so existing SD tooling works as a drop-in backend.
 | Endpoint | Method | Description |
 |---|---|---|
 | `/sdapi/v1/txt2img` | POST | Generate (blocking — full iteration loop) |
-| `/sdapi/v1/img2img` | POST | Accepted for compat; treated as txt2img |
+| `/sdapi/v1/img2img` | POST | Generate with reference images (see Notes) |
 | `/sdapi/v1/progress` | GET | Poll progress during a running request |
 | `/sdapi/v1/interrupt` | POST | Abort current generation |
 | `/sdapi/v1/sd-models` | GET | List configured models |
@@ -295,9 +295,11 @@ with open('output.png', 'wb') as f:
   broadcast stream) shows the result and a refuse button while it is active.
 - `cfg_scale` is forwarded as both `guidance` and `cfgScale`; each architecture uses
   whichever applies.
-- `POST /sdapi/v1/img2img` is accepted (some clients send it when a reference image is
-  present) but `init_images` and `denoising_strength` are ignored — use the native
-  `/api/generate/run` endpoint with `references` for reference-image workflows.
+- `POST /sdapi/v1/img2img`: `init_images` are always forwarded to the LLM as vision
+  context (the prompt builder sees them). They are also uploaded to ComfyUI and used as
+  diffusion references when the active workflow step is configured for `adapter` or
+  `init-image` mode; otherwise only the vision context path is active.
+  `denoising_strength` maps to `denoise` in `init-image` mode.
 
 ---
 
