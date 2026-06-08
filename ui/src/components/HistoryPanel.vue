@@ -4,6 +4,12 @@
       <h2>Session History</h2>
     </div>
 
+    <div class="history-actions">
+      <button class="small secondary" @click="clearByStatus('running')" title="Delete sessions stuck in running state">Clear stuck</button>
+      <button class="small secondary" @click="clearByStatus('error')"   title="Delete all error sessions">Clear errors</button>
+      <button class="small danger"    @click="clearAll"                  title="Delete all sessions">Clear all</button>
+    </div>
+
     <div v-if="loading" style="color:var(--muted);font-size:13px">Loading…</div>
     <div v-else-if="error"   style="color:var(--reject);font-size:13px">{{ error }}</div>
     <div v-else-if="!sessions.length" style="color:var(--muted);font-size:13px">No sessions yet.</div>
@@ -34,7 +40,9 @@ const sessions = ref([]);
 const loading  = ref(true);
 const error    = ref(null);
 
-onMounted(async () => {
+async function loadSessions() {
+  loading.value = true;
+  error.value   = null;
   try {
     sessions.value = await api('GET', '/api/generate/sessions');
   } catch (err) {
@@ -42,7 +50,9 @@ onMounted(async () => {
   } finally {
     loading.value = false;
   }
-});
+}
+
+onMounted(loadSessions);
 
 function load(id) {
   emit('load-session', id);
@@ -53,6 +63,29 @@ async function remove(id) {
   try {
     await api('DELETE', `/api/generate/sessions/${id}`);
     sessions.value = sessions.value.filter(s => s.id !== id);
+  } catch (err) {
+    alert(`Delete failed: ${err.message}`);
+  }
+}
+
+async function clearByStatus(status) {
+  const label = status === 'running' ? 'stuck running' : `${status}`;
+  if (!confirm(`Delete all ${label} sessions?`)) return;
+  try {
+    const result = await api('DELETE', `/api/generate/sessions?status=${status}`);
+    alert(`Deleted ${result.deleted} session(s).`);
+    await loadSessions();
+  } catch (err) {
+    alert(`Delete failed: ${err.message}`);
+  }
+}
+
+async function clearAll() {
+  if (!confirm('Delete ALL sessions? This cannot be undone.')) return;
+  try {
+    const result = await api('DELETE', '/api/generate/sessions?status=all');
+    alert(`Deleted ${result.deleted} session(s).`);
+    await loadSessions();
   } catch (err) {
     alert(`Delete failed: ${err.message}`);
   }
@@ -70,3 +103,11 @@ function statusClass(status) {
   return { complete: 'sess-complete', running: 'sess-running', error: 'sess-error' }[status] ?? '';
 }
 </script>
+
+<style scoped>
+.history-actions {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+</style>
