@@ -34,13 +34,66 @@ Opens on **http://localhost:3000**. Override the port with `PORT=8080 npm start`
 
 ## First-time setup
 
-1. **Settings** (⚙) — set LLM base URL (e.g. `http://127.0.0.1:11434/v1`), API key if
-   needed, model name, and ComfyUI URL.
-2. **Models** (⊞) — add at least one model: pick an architecture, fill in the
-   checkpoint / UNet / VAE / CLIP fields. Use "Reload asset lists" if dropdowns are empty.
-3. **Workflows** (▶) — add a workflow: pick a model for the generate step, configure
-   resolution, sampler, and review settings. Set it as active with "Use".
-4. Type a prompt and click **Generate**.
+ComfyRefinery is an orchestration layer — it builds prompts, submits workflows to
+ComfyUI, and reviews the results. **ComfyUI must already be running** with your model
+files in place before the app is useful.
+
+Two things need to be configured before generating:
+
+- **Model** — a named entry that points to model files already present in ComfyUI
+  (checkpoint, UNet, VAE, CLIP, etc.). ComfyRefinery reads what's available directly
+  from ComfyUI, so it only lists files ComfyUI can actually load.
+- **Workflow** — a pipeline (generate → upscale → …) that references one or more
+  Models. You must have at least one Model before you can create a Workflow.
+
+### Step 1 — Settings
+
+Open **Settings** (⚙) and fill in:
+
+- **LLM base URL** — any OpenAI-compatible server, e.g. `http://127.0.0.1:11434/v1`
+  for Ollama or `https://api.openai.com/v1` for OpenAI.
+- **API key** — leave blank for local servers.
+- **LLM model** — the model name your server exposes (e.g. `gemma4:31b`).
+- **ComfyUI URL** — default `http://127.0.0.1:8188`.
+
+### Step 2 — Add a Model
+
+Open **Models** (⊞) and click **Add model**:
+
+1. Choose an **architecture** (SDXL, Flux, SD 1.5, …). Each architecture shows a
+   short note describing which files and folders ComfyUI expects, and whether any
+   custom nodes are required.
+2. Fill in the file fields. The dropdowns are populated from ComfyUI's own file lists —
+   if they are empty, click **Reload asset lists** (this calls ComfyUI's API to refresh
+   its model cache and re-reads all available files). Files must already be present in
+   the correct ComfyUI folder for their type:
+
+   | Field | ComfyUI folder |
+   |---|---|
+   | Checkpoint | `models/checkpoints/` |
+   | UNet / diffusion model | `models/diffusion_models/` or `models/unet/` |
+   | VAE | `models/vae/` |
+   | CLIP / text encoder | `models/clip/` or `models/text_encoders/` |
+   | IP-Adapter | `models/ipadapter/` |
+   | CLIP Vision | `models/clip_vision/` |
+   | Upscale model | `models/upscale_models/` |
+
+3. Give the model a label and save.
+
+### Step 3 — Add a Workflow
+
+Open **Workflows** (▶) and click **Add workflow**:
+
+1. Add a **generate step** and select the Model you just created.
+2. Configure resolution, sampler, scheduler, and review settings.
+3. Optionally add an **upscale** or **video** step after the generate step.
+4. Click **Use** to make it the active workflow.
+
+### Step 4 — Generate
+
+Type a prompt and click **Generate**. The LLM builds the prompt, ComfyUI generates
+the image, and the AI reviews it — repeating until accepted or the iteration limit
+is reached.
 
 ### Environment variable overrides
 
