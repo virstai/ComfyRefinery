@@ -244,6 +244,10 @@ button:disabled  { opacity: .45; cursor: not-allowed; }
   padding: 2px 7px; border-radius: 10px;
 }
 
+.thumb-badge--pose {
+  background: color-mix(in srgb, #0ea5e9 80%, transparent);
+}
+
 .thumb-footer {
   display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
   padding: 6px 8px; border-top: 1px solid var(--border);

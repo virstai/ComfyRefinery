@@ -34,7 +34,7 @@
         </label>
       </div>
       <label>Trigger words <span class="hint">(comma-separated; the LLM is told to include them)</span>
-        <input type="text" :value="lora.triggerWords.join(', ')" @input="lora.triggerWords = splitWords($event.target.value)">
+        <input type="text" :value="(lora.triggerWords ?? []).join(', ')" @input="lora.triggerWords = splitWords($event.target.value)">
       </label>
       <label>Description <span class="hint">(shown to the LLM when deciding)</span>
         <input type="text" v-model="lora.description" placeholder="e.g. 8-step turbo — speeds up generation">
@@ -78,7 +78,7 @@ async function save(lora) {
     const saved = await saveLora(lora.filename, {
       label:         lora.label,
       architecture:  lora.architecture,
-      triggerWords:  lora.triggerWords,
+      triggerWords:  lora.triggerWords ?? [],
       description:   lora.description,
       defaultWeight: lora.defaultWeight,
     });
