@@ -148,7 +148,7 @@ router.get('/assets', async (req, res) => {
     llm.listModels(cfg),
   ]);
 
-  const comfy  = comfyAssets.status === 'fulfilled' ? comfyAssets.value : { checkpoints: [], vaes: [], clips: [], unets: [], upscaleModels: [], ipAdapterModels: [], clipVisionModels: [], reduxModels: [], errors: [comfyAssets.reason.message] };
+  const comfy  = comfyAssets.status === 'fulfilled' ? comfyAssets.value : { checkpoints: [], vaes: [], clips: [], unets: [], upscaleModels: [], ipAdapterModels: [], clipVisionModels: [], reduxModels: [], loras: [], controlNets: [], errors: [comfyAssets.reason.message] };
   const models = llmModels.status === 'fulfilled' ? llmModels.value : [];
 
   res.json({

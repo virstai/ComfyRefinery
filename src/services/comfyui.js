@@ -195,12 +195,35 @@ async function fetchInputList(nodeType, inputName) {
   return [];
 }
 
+function listLoras() {
+  return fetchInputList('LoraLoader', 'lora_name');
+}
+
+// Safetensors header metadata for a lora file (ComfyUI /view_metadata endpoint).
+// Returns null when the endpoint or file is unavailable.
+async function getLoraMetadata(filename) {
+  try {
+    const res = await fetch(`${baseUrl()}/view_metadata/loras?filename=${encodeURIComponent(filename)}`);
+    if (!res.ok) return null;
+    return await res.json();
+  } catch { return null; }
+}
+
+// Whether a node class is installed (used to detect optional custom node packs).
+async function hasNode(nodeType) {
+  try {
+    const res = await fetch(`${baseUrl()}/object_info/${nodeType}`);
+    if (!res.ok) return false;
+    return !!(await res.json())?.[nodeType];
+  } catch { return false; }
+}
+
 async function getAssets() {
   // Ask ComfyUI to flush its in-memory model file cache before we query.
   // POST /api/models/refresh exists in ComfyUI 0.3+; silently ignored on older builds.
   await fetch(`${baseUrl()}/api/models/refresh`, { method: 'POST' }).catch(() => {});
 
-  const [checkpoints, vaes, clips, unets, upscaleModels, ipAdapterModels, clipVisionModels, reduxModels] = await Promise.allSettled([
+  const [checkpoints, vaes, clips, unets, upscaleModels, ipAdapterModels, clipVisionModels, reduxModels, loras, controlNets] = await Promise.allSettled([
     fetchInputList('CheckpointLoaderSimple', 'ckpt_name'),
     fetchInputList('VAELoader',              'vae_name'),
     fetchInputList('CLIPLoader',             'clip_name'),
@@ -209,9 +232,11 @@ async function getAssets() {
     fetchInputList('IPAdapterModelLoader',   'ipadapter_file'),
     fetchInputList('CLIPVisionLoader',       'clip_name'),
     fetchInputList('StyleModelLoader',       'style_model_name'),
+    fetchInputList('LoraLoader',             'lora_name'),
+    fetchInputList('ControlNetLoader',       'control_net_name'),
   ]);
 
-  const all = [checkpoints, vaes, clips, unets, upscaleModels, ipAdapterModels, clipVisionModels, reduxModels];
+  const all = [checkpoints, vaes, clips, unets, upscaleModels, ipAdapterModels, clipVisionModels, reduxModels, loras, controlNets];
   return {
     checkpoints:      checkpoints.status      === 'fulfilled' ? checkpoints.value      : [],
     vaes:             vaes.status             === 'fulfilled' ? vaes.value             : [],
@@ -221,6 +246,8 @@ async function getAssets() {
     ipAdapterModels:  ipAdapterModels.status  === 'fulfilled' ? ipAdapterModels.value  : [],
     clipVisionModels: clipVisionModels.status === 'fulfilled' ? clipVisionModels.value : [],
     reduxModels:      reduxModels.status      === 'fulfilled' ? reduxModels.value      : [],
+    loras:            loras.status            === 'fulfilled' ? loras.value            : [],
+    controlNets:      controlNets.status      === 'fulfilled' ? controlNets.value      : [],
     errors: all.filter(r => r.status === 'rejected').map(r => r.reason.message),
   };
 }
@@ -240,4 +267,4 @@ async function interrupt() {
   try { await fetch(`${baseUrl()}/interrupt`, { method: 'POST' }); } catch { /* best effort */ }
 }
 
-module.exports = { generate, generateVideo, getOutputVideos, getAssets, uploadImage, interrupt };
+module.exports = { generate, generateVideo, getOutputVideos, getAssets, listLoras, getLoraMetadata, hasNode, uploadImage, interrupt };
