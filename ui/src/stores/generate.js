@@ -39,6 +39,9 @@ function blankIteration(n) {
     acceptedPending:    false,
     gracePeriod:        null,
     graceMaxIterations: false,
+    poseImageUrl:       null,
+    loras:              null,
+    warnings:           [],
   };
 }
 
@@ -63,7 +66,7 @@ function ensureIteration(stepIndex, n) {
 
 export function handleEvent(event, data) {
   const si     = data.step ?? 0;
-  const labels = { prompt_building: 'Building prompt…', generating: 'Generating…', reviewing: 'Reviewing…' };
+  const labels = { prompt_building: 'Building prompt…', generating: 'Generating…', reviewing: 'Reviewing…', posing: 'Generating pose guide…' };
 
   switch (event) {
     case 'session':
@@ -97,6 +100,8 @@ export function handleEvent(event, data) {
       it.progress  = 100;
       it.status    = data.verdict ?? '';
       if (data.humanFeedback) it.humanFeedback = data.humanFeedback;
+      it.poseImageUrl = data.poseImageUrl ?? it.poseImageUrl;
+      it.loras        = data.loras        ?? it.loras;
       break;
     }
 
@@ -146,6 +151,18 @@ export function handleEvent(event, data) {
     case 'image': {
       const it = ensureIteration(si, data.iteration);
       it.imageUrl = data.url; // replaces any preview data-URL with the real image URL
+      break;
+    }
+
+    case 'pose': {
+      const it = ensureIteration(si, data.iteration);
+      it.poseImageUrl = data.url;
+      break;
+    }
+
+    case 'warning': {
+      const it = ensureIteration(si, data.iteration);
+      it.warnings.push(data.message);
       break;
     }
 
