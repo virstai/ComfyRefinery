@@ -46,6 +46,7 @@ async function chat(cfg, messages, options = {}) {
   return (await res.json()).choices[0].message.content;
 }
 
+// Returns a plain string when options.tools is absent/empty; { text, toolCalls: [{ id, name, args }] } otherwise.
 async function chatStream(cfg, messages, onToken, options = {}) {
   const { signal, tools, ...bodyOptions } = options;
   const body = { model: cfg.llmModel, messages: toOpenAIMessages(messages), stream: true, ...bodyOptions };
