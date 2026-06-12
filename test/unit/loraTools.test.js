@@ -2,7 +2,7 @@
 
 const { test } = require('node:test');
 const assert   = require('node:assert/strict');
-const { catalogForArch, loraSystemSection, buildTools, interpretToolCalls, mergeLoras } =
+const { catalogForArch, alwaysOnSection, addLoraTool, requestPoseTool, mergeLoras } =
   require('../../src/lib/loraTools');
 
 const REGISTRY = {
@@ -22,57 +22,64 @@ test('catalogForArch hides null-architecture loras', () => {
   assert.ok(!cat.some(l => l.filename === 'untagged.safetensors'));
 });
 
-test('loraSystemSection lists always-on trigger words and selectable catalog', () => {
-  const cat  = catalogForArch(REGISTRY, 'anima', ['anima_turbo.safetensors']);
-  const text = loraSystemSection(cat, [{ name: 'anima_turbo.safetensors', weight: 1.0 }], REGISTRY);
+test('alwaysOnSection lists trigger words; empty string when no always-on loras', () => {
+  const text = alwaysOnSection([{ name: 'anima_turbo.safetensors', weight: 1.0 }], REGISTRY);
   assert.match(text, /already applied/);
   assert.match(text, /turbo/);
-  assert.match(text, /add_lora/);
-  assert.match(text, /anima_pose\.safetensors/);
+  assert.equal(alwaysOnSection([], REGISTRY), '');
 });
 
-test('loraSystemSection empty when nothing to say', () => {
-  assert.equal(loraSystemSection([], [], REGISTRY), '');
-});
-
-test('buildTools: add_lora enum from catalog, request_pose only when offered', () => {
-  const cat = catalogForArch(REGISTRY, 'anima', []);
-  const withPose = buildTools(cat, true);
-  assert.equal(withPose.length, 2);
-  assert.deepEqual(withPose[0].function.parameters.properties.name.enum,
+test('addLoraTool: guidance lists the catalog, schema enum constrains names', () => {
+  const cat  = catalogForArch(REGISTRY, 'anima', []);
+  const tool = addLoraTool(cat, [], []);
+  assert.equal(tool.name, 'add_lora');
+  assert.match(tool.guidance, /add_lora/);
+  assert.match(tool.guidance, /anima_pose\.safetensors/);
+  assert.match(tool.guidance, /speed lora/);
+  assert.deepEqual(tool.parameters.properties.name.enum,
     ['anima_turbo.safetensors', 'anima_pose.safetensors']);
-  assert.equal(withPose[1].function.name, 'request_pose');
-
-  assert.equal(buildTools(cat, false).length, 1);
-  assert.equal(buildTools([], false).length, 0);
-  assert.equal(buildTools([], true).length, 1, 'pose tool offered even with empty catalog');
+  assert.deepEqual(tool.parameters.required, ['name']);
 });
 
-test('interpretToolCalls: known loras kept, unknown dropped with warning, pose flag set', () => {
+test('addLoraTool.execute: applies with explicit weight and with catalog default', () => {
   const cat = catalogForArch(REGISTRY, 'anima', []);
-  const out = interpretToolCalls([
-    { id: 'c1', name: 'add_lora',     args: { name: 'anima_pose.safetensors', weight: 0.5 } },
-    { id: 'c2', name: 'add_lora',     args: { name: 'evil.safetensors' } },
-    { id: 'c3', name: 'add_lora',     args: { name: 'anima_turbo.safetensors' } },
-    { id: 'c4', name: 'request_pose', args: { reason: 'specific framing' } },
-    { id: 'c5', name: 'mystery_tool', args: {} },
-  ], cat);
-  assert.deepEqual(out.loras, [
+  const chosen = [], warnings = [];
+  const tool = addLoraTool(cat, chosen, warnings);
+
+  assert.match(tool.execute({ name: 'anima_pose.safetensors', weight: 0.5 }), /Applied/);
+  assert.match(tool.execute({ name: 'anima_turbo.safetensors' }), /Applied/);
+  assert.deepEqual(chosen, [
     { name: 'anima_pose.safetensors',  weight: 0.5 },
     { name: 'anima_turbo.safetensors', weight: 1.0 },
   ]);
-  assert.equal(out.wantsPose, true);
-  assert.equal(out.warnings.length, 2);
+  assert.equal(warnings.length, 0);
 });
 
-test('interpretToolCalls dedupes repeated add_lora for the same name', () => {
+test('addLoraTool.execute: dedupes repeats (first wins) and rejects unknown names with feedback', () => {
   const cat = catalogForArch(REGISTRY, 'anima', []);
-  const out = interpretToolCalls([
-    { id: 'c1', name: 'add_lora', args: { name: 'anima_pose.safetensors', weight: 0.5 } },
-    { id: 'c2', name: 'add_lora', args: { name: 'anima_pose.safetensors', weight: 0.9 } },
-  ], cat);
-  assert.equal(out.loras.length, 1);
-  assert.equal(out.loras[0].weight, 0.5, 'first call wins');
+  const chosen = [], warnings = [];
+  const tool = addLoraTool(cat, chosen, warnings);
+
+  tool.execute({ name: 'anima_pose.safetensors', weight: 0.5 });
+  assert.match(tool.execute({ name: 'anima_pose.safetensors', weight: 0.9 }), /already applied/i);
+  assert.equal(chosen.length, 1);
+  assert.equal(chosen[0].weight, 0.5);
+
+  const reply = tool.execute({ name: 'evil.safetensors' });
+  assert.match(reply, /Unknown LoRA/);
+  assert.match(reply, /catalog/i, 'corrective feedback points back to the catalog');
+  assert.equal(warnings.length, 1);
+  assert.match(warnings[0], /evil\.safetensors/);
+});
+
+test('requestPoseTool: guidance explains when to call; execute flips state', () => {
+  const state = { wantsPose: false };
+  const tool  = requestPoseTool(state);
+  assert.equal(tool.name, 'request_pose');
+  assert.match(tool.guidance, /request_pose/);
+  assert.match(tool.guidance, /pose/i);
+  assert.match(tool.execute({ reason: 'framing' }), /[Pp]ose guide/);
+  assert.equal(state.wantsPose, true);
 });
 
 test('mergeLoras: step always-on first, llm additions deduped, step wins', () => {

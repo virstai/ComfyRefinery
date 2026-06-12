@@ -121,7 +121,9 @@ test('poseMode always: pose graph runs first, main graph gets LLLite + always-on
 test('poseMode auto: LLM tool calls add a lora and request the pose', async () => {
   reviewVerdict  = 'ACCEPT';
   comfyServer.prompts.length = 0;
+  let systemContent = '';
   toolCallScript = parsed => {
+    systemContent = parsed.messages[0]?.content ?? '';
     // Only respond with tool calls on the first round (no tool results yet)
     if (parsed.messages.some(m => m.role === 'tool')) return [];
     return [
@@ -131,6 +133,11 @@ test('poseMode auto: LLM tool calls add a lora and request the pose', async () =
   };
 
   const events = await collectSSE(`${base()}/api/generate/run`, { prompt: 'a dancer mid-leap', workflowId: 'wf-pose-auto' });
+
+  // Tool guidance must be in the system prompt — tool schemas alone don't
+  // make local models call tools when the prompt says "output only the prompt".
+  assert.match(systemContent, /request_pose/, 'pose guidance present in system prompt');
+  assert.match(systemContent, /add_lora/, 'lora guidance present in system prompt');
 
   assert.equal(comfyServer.prompts.length, 2, 'pose ran because the LLM requested it');
   const mainGraph = comfyServer.prompts[1].prompt;

@@ -88,7 +88,7 @@ reference strategy, ordered steps, per-step review. **Active-selected entity.**
 
 Generate step LoRA / ControlNet fields:
 - `loras` — always-on LoRA list applied to every iteration: `[{ name, weight }]`.
-- `llmLoras` — `true` enables LLM tool calling; LLM may call `add_lora` / `request_pose` (bounded 3-round loop via `src/lib/loraTools.js`). Selected LoRAs are recorded on the iteration.
+- `llmLoras` — `true` enables LLM tool calling; LLM may call `add_lora` / `request_pose` via the agent loop (`src/services/agent.js`, bounded 3 rounds). Each tool carries its own system-prompt guidance, so the prompt adapts to whichever tools the step's settings enable — local models won't call tools from schemas alone. Selected LoRAs are recorded on the iteration.
 - `controlNet` — `{ poseMode, poseModelId, controlNetModel, strength }`. `poseMode`: `"off"` (disabled), `"auto"` (LLM-triggered via `request_pose`), `"always"` (unconditional). When active, a pose pre-pass runs (`src/services/pose.js`): draft generation with `poseModelId` + DWPreprocessor extraction in a single ComfyUI graph; skeleton re-uploaded as input for the main generation. Anima arch only (other archs ignore this field).
 
 `referenceStrategy.diffusion` — `{ mode, denoise? }`:
@@ -312,6 +312,7 @@ src/
     skills.js         — skill/notes read/write (data/skills/<workflowId>.json)
     skillRefresher.js — LLM-driven skill synthesis; locked notes preserved
     llm.js            — provider router
+    agent.js          — generic tool-calling agent loop (guidance injection, execute handlers, bounded rounds)
     comfyui.js        — ComfyUI HTTP + WebSocket client; preview frame handling
     loraRegistry.js   — cfg.loras CRUD; scan via /api/sessions/loras/scan (reads ComfyUI LoRA list + auto-detects arch via loraMeta.js)
     pose.js           — pose pre-pass: draft gen + DWPreprocessor extraction in one ComfyUI graph; returns skeleton image ref
@@ -333,7 +334,7 @@ src/
   lib/
     parsers.js        — parsePromptResponse, parseReview
     loraMeta.js       — auto-detect LoRA architecture from ComfyUI /view_metadata response
-    loraTools.js      — OpenAI tool definitions (add_lora, request_pose) + bounded tool-call loop (max 3 rounds)
+    loraTools.js      — lora catalog helpers + agent tool factories (add_lora, request_pose) with per-tool guidance
 ui/src/
   stores/
     config.js         — configState, loadConfig, saveConfig, model/workflow CRUD

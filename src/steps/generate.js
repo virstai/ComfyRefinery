@@ -1,14 +1,12 @@
 'use strict';
 
-const llm    = require('../services/llm');
 const skills = require('../services/skills');
+const agent  = require('../services/agent');
 const { buildWorkflow: buildArchWorkflow, getDefaults } = require('../workflows');
 const { parsePromptResponse } = require('../lib/parsers');
 const { LOCAL_PREAMBLE } = require('../services/skillRefresher');
 const pose = require('../services/pose');
-const { catalogForArch, loraSystemSection, buildTools, interpretToolCalls, mergeLoras } = require('../lib/loraTools');
-
-const MAX_TOOL_ROUNDS = 3;
+const { catalogForArch, alwaysOnSection, addLoraTool, requestPoseTool, mergeLoras } = require('../lib/loraTools');
 
 function label(stepDef, cfg) {
   return cfg?.models?.[stepDef.modelId]?.label ?? stepDef.modelId ?? 'Generate';
@@ -121,49 +119,31 @@ async function prepare(stepDef, ctx, previousIterations, onToken) {
     }
   }
 
-  // ── LoRA catalog + tools ────────────────────────────────────────────
-  const registry  = cfg.loras ?? {};
-  const alwaysOn  = stepDef.loras ?? [];
-  const catalog   = stepDef.llmLoras
+  // ── Agent tools, assembled from the step's settings ─────────────────
+  // Each tool carries its own system-prompt guidance, so the prompt only
+  // mentions capabilities this step actually enables.
+  const registry = cfg.loras ?? {};
+  const alwaysOn = stepDef.loras ?? [];
+  const catalog  = stepDef.llmLoras
     ? catalogForArch(registry, architecture, alwaysOn.map(l => l.name))
     : [];
-  const offerPose = stepDef.controlNet?.poseMode === 'auto';
-  const tools     = buildTools(catalog, offerPose);
 
-  const loraSection = loraSystemSection(catalog, alwaysOn, registry);
-  if (loraSection) messages[0].content += `\n\n${loraSection}`;
+  const llmChosen = [];
+  const poseState = { wantsPose: false };
+  const warnings  = [];
+  const tools     = [];
+  if (catalog.length)                          tools.push(addLoraTool(catalog, llmChosen, warnings));
+  if (stepDef.controlNet?.poseMode === 'auto') tools.push(requestPoseTool(poseState));
 
-  // ── LLM call: bounded tool loop when tools are on offer ────────────
-  let raw;
-  const allToolCalls = [];
-  if (tools.length) {
-    let convo = messages;
-    for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
-      const result = await llm.chatStream(cfg, convo, onToken, { signal: ctx.signal, tools });
-      raw = result.text;
-      if (!result.toolCalls.length) break;
-      allToolCalls.push(...result.toolCalls);
-      convo = [
-        ...convo,
-        {
-          role: 'assistant', content: result.text || null,
-          tool_calls: result.toolCalls.map(tc => ({
-            id: tc.id, type: 'function',
-            function: { name: tc.name, arguments: JSON.stringify(tc.args) },
-          })),
-        },
-        ...result.toolCalls.map(tc => ({ role: 'tool', tool_call_id: tc.id, content: 'applied' })),
-      ];
-    }
-    // Round cap hit with no usable prompt → one final call without tools.
-    if (!raw?.trim()) raw = await llm.chatStream(cfg, convo, onToken, { signal: ctx.signal });
-  } else {
-    raw = await llm.chatStream(cfg, messages, onToken, { signal: ctx.signal });
-  }
+  const alwaysOnText = alwaysOnSection(alwaysOn, registry);
+  if (alwaysOnText) messages[0].content += `\n\n${alwaysOnText}`;
 
-  const prompt = parsePromptResponse(raw);
-  const { loras: llmChosen, wantsPose, warnings } = interpretToolCalls(allToolCalls, catalog);
-  const loras = mergeLoras(alwaysOn, llmChosen);
+  const result = await agent.run(cfg, messages, tools, { onToken, signal: ctx.signal });
+  warnings.push(...result.warnings);
+
+  const prompt = parsePromptResponse(result.text);
+  const loras  = mergeLoras(alwaysOn, llmChosen);
+  const wantsPose = poseState.wantsPose;
 
   const params = {
     ...archDefaults,
