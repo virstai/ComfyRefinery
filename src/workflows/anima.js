@@ -18,16 +18,34 @@ function build(params) {
   const seed = p.seed ?? Math.floor(Math.random() * 2 ** 32);
 
   const nodes = {
-    "1": { class_type: "UNETLoader",     inputs: { unet_name: p.unetName, weight_dtype: "default" } },
-    "2": { class_type: "CLIPLoader",     inputs: { clip_name: p.clipL, type: "qwen_image" } },
-    "3": { class_type: "VAELoader",      inputs: { vae_name: p.vaeName } },
-    "4": { class_type: "CLIPTextEncode", inputs: { text: p.positivePrompt, clip: ["2", 0] } },
-    "5": { class_type: "CLIPTextEncode", inputs: { text: p.negativePrompt, clip: ["2", 0] } },
+    "1": { class_type: "UNETLoader", inputs: { unet_name: p.unetName, weight_dtype: "default" } },
+    "2": { class_type: "CLIPLoader", inputs: { clip_name: p.clipL, type: "qwen_image" } },
+    "3": { class_type: "VAELoader",  inputs: { vae_name: p.vaeName } },
   };
+
+  let modelRef = ["1", 0];
+  let clipRef  = ["2", 0];
+
+  // LoRA chain: nodes 30+i. Each LoraLoader patches both model and clip;
+  // everything downstream hangs off the last link.
+  (p.loras ?? []).forEach((l, i) => {
+    const id = String(30 + i);
+    nodes[id] = { class_type: "LoraLoader", inputs: {
+      lora_name:      l.name,
+      strength_model: l.weight ?? 1.0,
+      strength_clip:  l.weight ?? 1.0,
+      model:          modelRef,
+      clip:           clipRef,
+    }};
+    modelRef = [id, 0];
+    clipRef  = [id, 1];
+  });
+
+  nodes["4"] = { class_type: "CLIPTextEncode", inputs: { text: p.positivePrompt, clip: clipRef } };
+  nodes["5"] = { class_type: "CLIPTextEncode", inputs: { text: p.negativePrompt, clip: clipRef } };
 
   // IP-Adapter chain: node 50 = AnimaIPAdapterLoader; nodes 51+i*3 = LoadImage,
   // 52+i*3 = AnimaSiglipeEncodeImage, 53+i*3 = AnimaIPAdapterApply per ref image.
-  let modelRef = ["1", 0];
   if (p.ipAdapterImages?.length && p.adapterModel) {
     nodes["50"] = { class_type: "AnimaIPAdapterLoader", inputs: { ipadapter_path: `models/ipadapter/${p.adapterModel}` } };
     const perWeight = (p.adapterWeight ?? 1.0) / p.ipAdapterImages.length;
