@@ -69,3 +69,15 @@ export async function saveNotes(workflowId, notes) {
 export async function refreshSkill(workflowId, note = '') {
   return api('POST', `/api/sessions/skills/${encodeURIComponent(workflowId)}/refresh`, { note });
 }
+
+export async function loadLoras() {
+  return (await api('GET', '/api/sessions/loras')).loras ?? {};
+}
+
+export async function scanLoras() {
+  return (await api('POST', '/api/sessions/loras/scan')).loras ?? {};
+}
+
+export async function saveLora(filename, data) {
+  return api('PUT', '/api/sessions/loras', { filename, ...data });
+}
