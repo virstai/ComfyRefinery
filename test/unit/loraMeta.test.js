@@ -19,7 +19,7 @@ test('detects sdxl from ss_base_model_version', () => {
 test('detects sd3 / flux / flux2 / anima / chroma', () => {
   assert.equal(detectArchitecture({ ss_base_model_version: 'sd3_m' }),    'sd3');
   assert.equal(detectArchitecture({ ss_base_model_version: 'flux1' }),    'flux');
-  assert.equal(detectArchitecture({ ss_base_model_version: 'flux2' }),    'flux2');
+  assert.equal(detectArchitecture({ ss_base_model_version: 'flux2_base_v1-0' }),    'flux2');
   assert.equal(detectArchitecture({ ss_base_model_version: 'anima_v1' }), 'anima');
   assert.equal(detectArchitecture({ ss_base_model_version: 'chroma' }),   'chroma');
 });
@@ -28,6 +28,7 @@ test('falls back to modelspec.architecture', () => {
   assert.equal(detectArchitecture({ 'modelspec.architecture': 'stable-diffusion-xl-v1-base/lora' }), 'sdxl');
   assert.equal(detectArchitecture({ 'modelspec.architecture': 'flux-1-dev/lora' }), 'flux');
   assert.equal(detectArchitecture({ 'modelspec.architecture': 'anima/lora' }), 'anima');
+  assert.equal(detectArchitecture({ 'modelspec.architecture': 'flux-2-dev/lora' }), 'flux2');
 });
 
 test('ss_base_model_version wins over modelspec', () => {
