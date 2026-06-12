@@ -95,6 +95,7 @@ async function _runIterativeLoop(stepType, stepDef, stepIndex, session, ctx, cfg
       }
 
       // ── Phase 1.5: pre-pass (pose ControlNet) ─────────────────────
+      let prePassWarning = null;
       if (typeof stepType.prePass === 'function') {
         const pre = await stepType.prePass(stepDef, prepResult, ctx, {
           onStart: () => {
@@ -105,6 +106,7 @@ async function _runIterativeLoop(stepType, stepDef, stepIndex, session, ctx, cfg
         });
         if (isKilled()) throw new Error('Generation stopped by user');
         if (pre?.warning) {
+          prePassWarning = pre.warning;
           console.log(`[${tag}] step ${stepIndex} iter ${iterNum}: ${pre.warning}`);
           emit(res, 'warning', { step: stepIndex, iteration: iterNum, message: pre.warning });
         }
@@ -155,7 +157,9 @@ async function _runIterativeLoop(stepType, stepDef, stepIndex, session, ctx, cfg
       if (isKilled()) throw new Error('Generation stopped by user');
       const { verdict, diagnosis } = parseReview(reviewRaw);
       console.log(`[${tag}] step ${stepIndex} iter ${iterNum}: verdict=${verdict} — ${diagnosis}`);
-      emit(res, 'review', { step: stepIndex, iteration: iterNum, verdict, diagnosis });
+      emit(res, 'review', { step: stepIndex, iteration: iterNum, verdict, diagnosis,
+        ...(prepResult.loras?.length ? { loras: prepResult.loras } : {}),
+        ...(prepResult.poseImageUrl  ? { poseUsed: true }          : {}) });
 
       const iteration = { prompt: prepResult.prompt, imageUrl, verdict, diagnosis };
       if (prepResult.loras?.length) iteration.loras = prepResult.loras;
@@ -163,6 +167,8 @@ async function _runIterativeLoop(stepType, stepDef, stepIndex, session, ctx, cfg
         iteration.poseUsed     = true;
         iteration.poseImageUrl = prepResult.poseImageUrl;
       }
+      const iterWarnings = [...(prepResult.warnings ?? []), ...(prePassWarning ? [prePassWarning] : [])];
+      if (iterWarnings.length) iteration.warnings = iterWarnings;
       stepData.iterations.push(iteration);
       accepted = verdict === 'ACCEPT';
 

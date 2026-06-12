@@ -87,4 +87,8 @@ test('missing DWPose node: warning event, generation continues without controlne
   assert.equal(comfyServer.prompts.length, 1, 'only the main run');
   assert.ok(!nodeTypes(comfyServer.prompts[0].prompt).includes('AnimaLLLiteLoader'), 'no controlnet in main graph');
   assert.ok(events.find(e => e.event === 'done').data.accepted, 'pipeline completed normally');
+
+  const done2   = events.find(e => e.event === 'done').data;
+  const session = await (await fetch(`${base()}/api/generate/sessions/${done2.sessionId}`)).json();
+  assert.match(session.steps[0].iterations[0].warnings[0], /DWPreprocessor/, 'warning persisted on iteration');
 });

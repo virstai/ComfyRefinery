@@ -12,7 +12,10 @@ async function scan() {
   const available = await comfyui.listLoras();
   const registry  = { ...(config.load().loras ?? {}) };
 
-  for (const name of Object.keys(registry)) {
+  // Guard: an empty list with a non-empty registry usually means a misparsed
+  // object_info response, not a wiped loras folder — don't prune user data.
+  const shouldPrune = available.length > 0;
+  for (const name of shouldPrune ? Object.keys(registry) : []) {
     if (!available.includes(name)) delete registry[name];
   }
 

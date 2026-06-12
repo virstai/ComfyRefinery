@@ -102,6 +102,7 @@ export function handleEvent(event, data) {
       if (data.humanFeedback) it.humanFeedback = data.humanFeedback;
       it.poseImageUrl = data.poseImageUrl ?? it.poseImageUrl;
       it.loras        = data.loras        ?? it.loras;
+      if (data.warnings) it.warnings = data.warnings;
       break;
     }
 
@@ -189,6 +190,7 @@ export function handleEvent(event, data) {
       it.verdict         = data.verdict;
       it.streamingReview = '';
       it.status          = data.verdict;
+      if (data.loras) it.loras = data.loras;
       break;
     }
 

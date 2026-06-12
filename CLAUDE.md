@@ -110,7 +110,8 @@ Skill + notes live in `data/skills/<workflowId>.json`, keyed by workflow ID.
     { "type": "generate", "label": "SDXL Base", "modelId": "sdxl-base",
       "iterations": [ { "prompt": "...", "imageUrl": "...", "verdict": "ACCEPT", "diagnosis": "...",
                         "loras": [{ "name": "anima_turbo.safetensors", "weight": 1.0, "source": "step" }],  // source: "step" | "llm"
-                        "poseUsed": true, "poseImageUrl": "/api/image?..." } ],
+                        "poseUsed": true, "poseImageUrl": "/api/image?...",
+                        "warnings": ["DWPreprocessor not found — skipping pose"] } ],  // optional, only when non-empty
       "outputImageUrl": "/api/image?..." },
     { "type": "upscale", "label": "4x-UltraSharp.pth ×4",
       "iterations": [ { "imageUrl": "...", "verdict": "ACCEPT", "diagnosis": "..." } ],
@@ -133,7 +134,7 @@ All events carry `step` (0-indexed). Full event list:
 | `progress` | `{ step, iteration, pct }` | ComfyUI sampling progress 0–100 |
 | `preview` | `{ step, iteration, url }` | Base64 data URL from ComfyUI WS binary frame |
 | `image` | `{ step, iteration, url }` | Final image URL after generation |
-| `review` | `{ step, iteration, verdict, diagnosis }` | AI review result |
+| `review` | `{ step, iteration, verdict, diagnosis, loras?, poseUsed? }` | AI review result; `loras`/`poseUsed` present when LLM chose them |
 | `human_review` | `{ step, iteration, aiVerdict, aiDiagnosis }` | Awaiting human decision |
 | `human_verdict` | `{ step, iteration, accepted, feedback }` | Human decision received |
 | `accepted_pending` | `{ step, iteration, gracePeriod, humanReview, maxIterations? }` | Grace period started |

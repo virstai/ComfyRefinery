@@ -141,6 +141,10 @@ test('poseMode auto: LLM tool calls add a lora and request the pose', async () =
   const done    = events.find(e => e.event === 'done').data;
   const session = await (await fetch(`${base()}/api/generate/sessions/${done.sessionId}`)).json();
   assert.equal(session.steps[0].iterations[0].loras[0].source, 'llm');
+
+  const reviewEvt = events.find(e => e.event === 'review');
+  assert.equal(reviewEvt.data.loras[0].name, 'anima_style.safetensors', 'review event carries live loras');
+  assert.equal(reviewEvt.data.poseUsed, true);
 });
 
 test('poseMode auto without request_pose: single run, no pose', async () => {
