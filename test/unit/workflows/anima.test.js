@@ -62,3 +62,45 @@ test('lora weight defaults to 1.0 when omitted', () => {
   assert.equal(wf['30'].inputs.strength_model, 1.0);
   assert.equal(wf['30'].inputs.strength_clip, 1.0);
 });
+
+test('controlNet: LLLite node patches model between loras and sampler', () => {
+  const wf = build({ ...BASE,
+    loras: [{ name: 'turbo.safetensors', weight: 1.0 }],
+    controlNet: { image: { filename: 'pose.png', subfolder: '' }, model: 'anima_lllite_pose.safetensors', strength: 0.8 },
+  });
+  const load = wf['70'];
+  assert.equal(load.class_type, 'LoadImage');
+  assert.equal(load.inputs.image, 'pose.png');
+
+  const lllite = wf['71'];
+  assert.deepEqual(lllite.inputs.model, ['30', 0], 'patches the post-lora model');
+  assert.equal(lllite.inputs.model_name, 'anima_lllite_pose.safetensors');
+  assert.deepEqual(lllite.inputs.cond_image, ['70', 0]);
+  assert.equal(lllite.inputs.strength, 0.8);
+
+  assert.deepEqual(sampler(wf).inputs.model, ['71', 0]);
+});
+
+test('controlNet with subfolder image path', () => {
+  const wf = build({ ...BASE,
+    controlNet: { image: { filename: 'pose.png', subfolder: 'poses' }, model: 'lllite.safetensors' },
+  });
+  assert.equal(wf['70'].inputs.image, 'poses/pose.png');
+  assert.equal(wf['71'].inputs.strength, 0.8, 'default strength');
+});
+
+test('controlNet ignored when image or model missing', () => {
+  const a = build({ ...BASE, controlNet: { model: 'lllite.safetensors' } });
+  const b = build({ ...BASE, controlNet: { image: { filename: 'pose.png' } } });
+  assert.equal(a['71'], undefined);
+  assert.equal(b['71'], undefined);
+});
+
+test('controlNet + ipadapter: adapter chains off the LLLite-patched model', () => {
+  const wf = build({ ...BASE,
+    controlNet: { image: { filename: 'pose.png', subfolder: '' }, model: 'lllite.safetensors' },
+    adapterModel: 'anima_ipa.safetensors',
+    ipAdapterImages: [{ filename: 'ref.png', subfolder: '' }],
+  });
+  assert.deepEqual(wf['53'].inputs.model, ['71', 0]);
+});

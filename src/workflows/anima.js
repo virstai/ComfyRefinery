@@ -3,6 +3,12 @@
 // Anima — 2B parameter anime/illustration model by CircleStone Labs.
 // Split loading only: UNETLoader + CLIPLoader (Qwen-3) + VAELoader (Qwen-Image).
 // er_sde is the recommended sampler; available in recent ComfyUI builds or via RES4LYF.
+
+// Anima-LLLite ControlNet node (kohya LLLite pattern: one node patches MODEL
+// with a conditioning image — no separate loader/apply pair).
+// ⚠ Verify class/input names against the installed pack's object_info — same
+// caveat as the AnimaIPAdapter nodes.
+const LLLITE_NODE = 'AnimaLLLiteLoader';
 const defaults = {
   width:          1024,
   height:         1024,
@@ -43,6 +49,23 @@ function build(params) {
 
   nodes["4"] = { class_type: "CLIPTextEncode", inputs: { text: p.positivePrompt, clip: clipRef } };
   nodes["5"] = { class_type: "CLIPTextEncode", inputs: { text: p.negativePrompt, clip: clipRef } };
+
+  // ControlNet (Anima-LLLite): model patch conditioned on a pose/control image.
+  if (p.controlNet?.image && p.controlNet?.model) {
+    const cn = p.controlNet;
+    const imgPath = cn.image.subfolder ? `${cn.image.subfolder}/${cn.image.filename}` : cn.image.filename;
+    nodes["70"] = { class_type: "LoadImage", inputs: { image: imgPath } };
+    nodes["71"] = { class_type: LLLITE_NODE, inputs: {
+      model:         modelRef,
+      model_name:    cn.model,
+      cond_image:    ["70", 0],
+      strength:      cn.strength ?? 0.8,
+      steps:         0,
+      start_percent: 0.0,
+      end_percent:   1.0,
+    }};
+    modelRef = ["71", 0];
+  }
 
   // IP-Adapter chain: node 50 = AnimaIPAdapterLoader; nodes 51+i*3 = LoadImage,
   // 52+i*3 = AnimaSiglipeEncodeImage, 53+i*3 = AnimaIPAdapterApply per ref image.
