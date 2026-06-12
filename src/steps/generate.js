@@ -5,6 +5,10 @@ const skills = require('../services/skills');
 const { buildWorkflow: buildArchWorkflow, getDefaults } = require('../workflows');
 const { parsePromptResponse } = require('../lib/parsers');
 const { LOCAL_PREAMBLE } = require('../services/skillRefresher');
+const pose = require('../services/pose');
+const { catalogForArch, loraSystemSection, buildTools, interpretToolCalls, mergeLoras } = require('../lib/loraTools');
+
+const MAX_TOOL_ROUNDS = 3;
 
 function label(stepDef, cfg) {
   return cfg?.models?.[stepDef.modelId]?.label ?? stepDef.modelId ?? 'Generate';
@@ -28,6 +32,8 @@ function buildInitialMessages(userPrompt, architecture, archDefaults, skillSumma
 function buildRefinementMessages(userPrompt, iterations, architecture, skillSummary) {
   const history = iterations.map((it, i) => {
     let entry = `Iteration ${i + 1}:\n  Prompt: ${it.prompt}\n  Verdict: ${it.verdict}\n  Diagnosis: ${it.diagnosis}`;
+    if (it.loras?.length) entry += `\n  LoRAs used: ${it.loras.map(l => `${l.name}@${l.weight}`).join(', ')}`;
+    if (it.poseUsed)      entry += `\n  Pose guide: used`;
     if (it.humanFeedback) entry += `\n  Human feedback: ${it.humanFeedback}`;
     return entry;
   }).join('\n\n');
@@ -115,8 +121,49 @@ async function prepare(stepDef, ctx, previousIterations, onToken) {
     }
   }
 
-  const raw    = await llm.chatStream(cfg, messages, onToken, { signal: ctx.signal });
+  // ── LoRA catalog + tools ────────────────────────────────────────────
+  const registry  = cfg.loras ?? {};
+  const alwaysOn  = stepDef.loras ?? [];
+  const catalog   = stepDef.llmLoras
+    ? catalogForArch(registry, architecture, alwaysOn.map(l => l.name))
+    : [];
+  const offerPose = stepDef.controlNet?.poseMode === 'auto';
+  const tools     = buildTools(catalog, offerPose);
+
+  const loraSection = loraSystemSection(catalog, alwaysOn, registry);
+  if (loraSection) messages[0].content += `\n\n${loraSection}`;
+
+  // ── LLM call: bounded tool loop when tools are on offer ────────────
+  let raw;
+  const allToolCalls = [];
+  if (tools.length) {
+    let convo = messages;
+    for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
+      const result = await llm.chatStream(cfg, convo, onToken, { signal: ctx.signal, tools });
+      raw = result.text;
+      if (!result.toolCalls.length) break;
+      allToolCalls.push(...result.toolCalls);
+      convo = [
+        ...convo,
+        {
+          role: 'assistant', content: result.text || null,
+          tool_calls: result.toolCalls.map(tc => ({
+            id: tc.id, type: 'function',
+            function: { name: tc.name, arguments: JSON.stringify(tc.args) },
+          })),
+        },
+        ...result.toolCalls.map(tc => ({ role: 'tool', tool_call_id: tc.id, content: 'applied' })),
+      ];
+    }
+    // Round cap hit with no usable prompt → one final call without tools.
+    if (!raw?.trim()) raw = await llm.chatStream(cfg, convo, onToken, { signal: ctx.signal });
+  } else {
+    raw = await llm.chatStream(cfg, messages, onToken, { signal: ctx.signal });
+  }
+
   const prompt = parsePromptResponse(raw);
+  const { loras: llmChosen, wantsPose, warnings } = interpretToolCalls(allToolCalls, catalog);
+  const loras = mergeLoras(alwaysOn, llmChosen);
 
   const params = {
     ...archDefaults,
@@ -125,7 +172,39 @@ async function prepare(stepDef, ctx, previousIterations, onToken) {
     positivePrompt: prompt,
   };
 
-  return { prompt, params };
+  return { prompt, params, loras, wantsPose, warnings };
+}
+
+// Optional pre-pass between prepare() and the main generation: pose ControlNet.
+// Never fatal — returns { warning } on failure and the step continues txt2img.
+// hooks.onStart fires once the pose run actually begins (drives the 'posing'
+// phase event); hooks.onProgress forwards ComfyUI sampling progress.
+async function prePass(stepDef, prepResult, ctx, hooks = {}) {
+  const cn = stepDef.controlNet;
+  if (!cn || !cn.poseMode || cn.poseMode === 'off') return null;
+  const wanted = cn.poseMode === 'always' || (cn.poseMode === 'auto' && prepResult.wantsPose);
+  if (!wanted) return null;
+
+  const poseModelConfig = ctx.cfg.models?.[cn.poseModelId];
+  if (!poseModelConfig)    return { warning: `Pose skipped: pose model "${cn.poseModelId}" not configured` };
+  if (!cn.controlNetModel) return { warning: 'Pose skipped: no ControlNet model configured on this step' };
+
+  hooks.onStart?.();
+  try {
+    const { ref, imageUrl } = await pose.generatePose({
+      cfg:    ctx.cfg,
+      poseModelConfig,
+      prompt: prepResult.prompt,
+      width:  prepResult.params.width,
+      height: prepResult.params.height,
+      onProgress: hooks.onProgress,
+    });
+    prepResult.poseRef      = ref;
+    prepResult.poseImageUrl = imageUrl;
+    return { poseImageUrl: imageUrl };
+  } catch (err) {
+    return { warning: err.message };
+  }
 }
 
 // Build the ComfyUI workflow graph for this iteration.
@@ -163,10 +242,17 @@ function buildComfyWorkflow(stepDef, prepareResult, ctx) {
     // Other archs: no adapter defined, falls through to txt2img
   }
 
+  const cn = stepDef.controlNet;
+  const controlNetParams = (prepareResult.poseRef && cn?.controlNetModel)
+    ? { controlNet: { image: prepareResult.poseRef, model: cn.controlNetModel, strength: cn.strength ?? 0.8 } }
+    : {};
+
   const { workflow } = buildArchWorkflow(ctx.modelConfig, {
     ...prepareResult.params,
     ...(initImage ? { initImage, denoise } : {}),
     ...adapterParams,
+    ...(prepareResult.loras?.length ? { loras: prepareResult.loras } : {}),
+    ...controlNetParams,
   });
   return workflow;
 }
@@ -181,4 +267,4 @@ function reviewMessages(stepDef, prepareResult, ctx, imageBase64, previousIterat
   );
 }
 
-module.exports = { label, prepare, buildComfyWorkflow, reviewMessages };
+module.exports = { label, prepare, prePass, buildComfyWorkflow, reviewMessages };
