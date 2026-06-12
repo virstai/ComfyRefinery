@@ -88,6 +88,31 @@ async function _runIterativeLoop(stepType, stepDef, stepIndex, session, ctx, cfg
         emit(res, 'prompt', { step: stepIndex, iteration: iterNum, prompt: prepResult.prompt });
       }
 
+      // Tool-interpretation warnings from prepare (unknown loras etc.)
+      for (const w of prepResult.warnings ?? []) {
+        console.log(`[${tag}] step ${stepIndex} iter ${iterNum}: ${w}`);
+        emit(res, 'warning', { step: stepIndex, iteration: iterNum, message: w });
+      }
+
+      // ── Phase 1.5: pre-pass (pose ControlNet) ─────────────────────
+      if (typeof stepType.prePass === 'function') {
+        const pre = await stepType.prePass(stepDef, prepResult, ctx, {
+          onStart: () => {
+            emit(res, 'phase', { step: stepIndex, phase: 'posing', iteration: iterNum });
+            console.log(`[${tag}] step ${stepIndex} iter ${iterNum}: generating pose guide…`);
+          },
+          onProgress: pct => emit(res, 'progress', { step: stepIndex, iteration: iterNum, pct }),
+        });
+        if (isKilled()) throw new Error('Generation stopped by user');
+        if (pre?.warning) {
+          console.log(`[${tag}] step ${stepIndex} iter ${iterNum}: ${pre.warning}`);
+          emit(res, 'warning', { step: stepIndex, iteration: iterNum, message: pre.warning });
+        }
+        if (pre?.poseImageUrl) {
+          emit(res, 'pose', { step: stepIndex, iteration: iterNum, url: pre.poseImageUrl });
+        }
+      }
+
       // ── Phase 2: generate ─────────────────────────────────────────
       emit(res, 'phase', { step: stepIndex, phase: 'generating', iteration: iterNum });
       console.log(`[${tag}] step ${stepIndex} iter ${iterNum}: queuing ComfyUI job…`);
@@ -133,6 +158,11 @@ async function _runIterativeLoop(stepType, stepDef, stepIndex, session, ctx, cfg
       emit(res, 'review', { step: stepIndex, iteration: iterNum, verdict, diagnosis });
 
       const iteration = { prompt: prepResult.prompt, imageUrl, verdict, diagnosis };
+      if (prepResult.loras?.length) iteration.loras = prepResult.loras;
+      if (prepResult.poseImageUrl) {
+        iteration.poseUsed     = true;
+        iteration.poseImageUrl = prepResult.poseImageUrl;
+      }
       stepData.iterations.push(iteration);
       accepted = verdict === 'ACCEPT';
 

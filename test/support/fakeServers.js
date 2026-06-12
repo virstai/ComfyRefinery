@@ -22,7 +22,7 @@ function messageText(m) {
 }
 
 // getVerdict is called per review request so callers can change it at any time.
-function makeFakeOllama(getVerdict) {
+function makeFakeOllama(getVerdict, opts = {}) {
   return http.createServer((req, res) => {
     if (req.method !== 'POST' || req.url !== '/v1/chat/completions') {
       // Return empty model list for /v1/models
@@ -55,6 +55,26 @@ function makeFakeOllama(getVerdict) {
         text = `Image assessed.\nVERDICT: ${verdict}\nDIAGNOSIS: ${verdict === 'ACCEPT' ? 'looks good' : 'subject not visible'}`;
       } else {
         text = 'a detailed landscape with mountains, high quality, sharp focus';
+      }
+
+      // Tool-call emission: when the request offers tools and the test's
+      // getToolCalls callback returns calls, stream them as split deltas
+      // (exercising accumulation) and finish with no content.
+      if (stream !== false && parsed.tools && opts.getToolCalls) {
+        const calls = opts.getToolCalls(parsed) ?? [];
+        if (calls.length) {
+          res.writeHead(200, { 'Content-Type': 'text/event-stream' });
+          calls.forEach((c, i) => {
+            const argStr = JSON.stringify(c.args ?? {});
+            const mid    = Math.ceil(argStr.length / 2);
+            res.write(`data: ${JSON.stringify({ choices: [{ index: 0, delta: { tool_calls: [{ index: i, id: `call_${i}`, type: 'function', function: { name: c.name, arguments: argStr.slice(0, mid) } }] }, finish_reason: null }] })}\n\n`);
+            res.write(`data: ${JSON.stringify({ choices: [{ index: 0, delta: { tool_calls: [{ index: i, function: { arguments: argStr.slice(mid) } }] }, finish_reason: null }] })}\n\n`);
+          });
+          res.write(`data: ${JSON.stringify({ choices: [{ index: 0, delta: {}, finish_reason: 'tool_calls' }] })}\n\n`);
+          res.write('data: [DONE]\n\n');
+          res.end();
+          return;
+        }
       }
 
       if (stream === false) {
