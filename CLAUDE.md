@@ -109,7 +109,7 @@ Skill + notes live in `data/skills/<workflowId>.json`, keyed by workflow ID.
   "steps": [
     { "type": "generate", "label": "SDXL Base", "modelId": "sdxl-base",
       "iterations": [ { "prompt": "...", "imageUrl": "...", "verdict": "ACCEPT", "diagnosis": "...",
-                        "loras": [{ "name": "anima_turbo.safetensors", "weight": 1.0, "source": "always-on" }],
+                        "loras": [{ "name": "anima_turbo.safetensors", "weight": 1.0, "source": "step" }],  // source: "step" | "llm"
                         "poseUsed": true, "poseImageUrl": "/api/image?..." } ],
       "outputImageUrl": "/api/image?..." },
     { "type": "upscale", "label": "4x-UltraSharp.pth ×4",
@@ -151,7 +151,7 @@ All events carry `step` (0-indexed). Full event list:
 
 ### LLM abstraction
 All LLM calls through `src/services/llm.js`:
-- `llm.chatStream(cfg, messages, onToken, options?)` — streaming; `options.signal` aborts the fetch; `options.tools` passes an OpenAI-format tool array. When `tools` are present the call returns `{ text, toolCalls }` (where `toolCalls` is an array of `{ name, arguments }` objects) rather than a plain string.
+- `llm.chatStream(cfg, messages, onToken, options?)` — streaming; `options.signal` aborts the fetch; `options.tools` passes an OpenAI-format tool array. When `tools` are present the call returns `{ text, toolCalls }` (where `toolCalls` is an array of `{ id, name, args }` objects with `args` JSON-parsed) rather than a plain string.
 - `llm.chat(cfg, messages)` — non-streaming (skill refresh)
 - `llm.listModels(cfg)` → `string[]` — enumerate model IDs
 
