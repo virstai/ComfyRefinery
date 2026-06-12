@@ -22,7 +22,7 @@ function buildPoseGraph(poseModelConfig, prompt, { width, height }) {
   if (!saveEntry) throw new Error('Pose model graph has no SaveImage node');
   const [saveId, saveNode] = saveEntry;
 
-  workflow['90'] = {
+  workflow['990'] = {
     class_type: DWPOSE_NODE,
     inputs: {
       image:          saveNode.inputs.images,
@@ -34,7 +34,7 @@ function buildPoseGraph(poseModelConfig, prompt, { width, height }) {
       pose_estimator: POSE_ESTIMATOR,
     },
   };
-  workflow[saveId] = { ...saveNode, inputs: { ...saveNode.inputs, images: ['90', 0] } };
+  workflow[saveId] = { ...saveNode, inputs: { ...saveNode.inputs, images: ['990', 0] } };
   return workflow;
 }
 

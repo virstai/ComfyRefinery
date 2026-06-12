@@ -12,11 +12,11 @@ const POSE_MODEL = {
 test('pose graph routes SaveImage through the DWPose preprocessor', () => {
   const wf = buildPoseGraph(POSE_MODEL, 'a knight on a hill', { width: 1024, height: 1024 });
 
-  const dw = wf['90'];
+  const dw = wf['990'];
   assert.equal(dw.class_type, DWPOSE_NODE);
 
   const save = Object.values(wf).find(n => n.class_type === 'SaveImage');
-  assert.deepEqual(save.inputs.images, ['90', 0], 'SaveImage takes the skeleton, not the draft');
+  assert.deepEqual(save.inputs.images, ['990', 0], 'SaveImage takes the skeleton, not the draft');
 
   // DWPose input is what SaveImage originally consumed (the VAEDecode output)
   const decode = Object.entries(wf).find(([, n]) => n.class_type === 'VAEDecode');
