@@ -18,6 +18,7 @@ const GLOBAL_DEFAULTS = {
   acceptanceGracePeriod:  10, // seconds; 0 = disabled
   models:                 {},
   workflows:              {},
+  loras:                  {},
 };
 
 // Model loader fields only — sampling params live in workflow steps.

@@ -81,7 +81,7 @@ function makeFakeOllama(getVerdict) {
   });
 }
 
-function makeFakeComfyUI() {
+function makeFakeComfyUI(opts = {}) {
   const promptId = 'test-prompt-001';
   const uploads  = [];
   const prompts  = []; // each submitted ComfyUI /prompt body (parsed JSON)
@@ -115,15 +115,27 @@ function makeFakeComfyUI() {
       }));
       return;
     }
+    if (req.url.startsWith('/view_metadata/loras')) {
+      const u = new URL(req.url, 'http://x');
+      const meta = opts.loraMetadata?.[u.searchParams.get('filename')];
+      if (meta) {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify(meta));
+      }
+      res.writeHead(404); return res.end();
+    }
     if (req.url.startsWith('/view')) {
       res.writeHead(200, { 'Content-Type': 'image/png' });
       res.end(TINY_PNG);
       return;
     }
     if (req.url.startsWith('/object_info/')) {
+      const nodeType = req.url.split('/').pop();
       res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({}));
-      return;
+      if (opts.objectInfo?.[nodeType]) {
+        return res.end(JSON.stringify({ [nodeType]: opts.objectInfo[nodeType] }));
+      }
+      return res.end(JSON.stringify({}));
     }
     res.writeHead(404); res.end();
   });
