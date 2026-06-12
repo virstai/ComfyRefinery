@@ -9,11 +9,11 @@
 const comfyui = require('./comfyui');
 const { buildWorkflow: buildArchWorkflow } = require('../workflows');
 
-// ⚠ Node/model names below are the comfyui_controlnet_aux defaults — verify
-// against the installed pack's object_info (same caveat as the LLLite nodes).
+// comfyui_controlnet_aux defaults, verified against the pack's dwpose.py.
+// Both detector models auto-download from huggingface on first use.
 const DWPOSE_NODE    = 'DWPreprocessor';
 const BBOX_DETECTOR  = 'yolox_l.onnx';
-const POSE_ESTIMATOR = 'dw-ll_ucoco_384_bs5.torchscript.pt';
+const POSE_ESTIMATOR = 'dw-ll_ucoco_384.onnx';
 
 function buildPoseGraph(poseModelConfig, prompt, { width, height }) {
   const { workflow } = buildArchWorkflow(poseModelConfig, { positivePrompt: prompt, width, height });

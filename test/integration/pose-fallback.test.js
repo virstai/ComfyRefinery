@@ -85,7 +85,7 @@ test('missing DWPose node: warning event, generation continues without controlne
   assert.match(warning.data.message, /DWPreprocessor/);
 
   assert.equal(comfyServer.prompts.length, 1, 'only the main run');
-  assert.ok(!nodeTypes(comfyServer.prompts[0].prompt).includes('AnimaLLLiteLoader'), 'no controlnet in main graph');
+  assert.ok(!nodeTypes(comfyServer.prompts[0].prompt).includes('AnimaLLLiteApply'), 'no controlnet in main graph');
   assert.ok(events.find(e => e.event === 'done').data.accepted, 'pipeline completed normally');
 
   const done2   = events.find(e => e.event === 'done').data;

@@ -383,7 +383,17 @@ Integration tests write to a tmpDir; set `DATA_DIR` / `SESSIONS_DIR` / `SKILLS_D
 ## Known limitations
 
 - **Preview images**: ComfyUI's `latent2rgb` preview method does not emit binary WS frames for Flux/Flux 2 (16-channel latent space). Use `--preview-method taesd` with a Flux-compatible TAESD model for previews on those architectures. SD1.5/SDXL previews work with `latent2rgb`.
-- **Pose pre-pass**: requires the `comfyui_controlnet_aux` custom node pack for DWPreprocessor; detector and estimator filenames default to pack defaults (verify against your installation if the pose step errors).
-- **AnimaLLLiteLoader**: the node name and input schema in `anima.js` are unverified against a live pack — check ComfyUI's `object_info` endpoint when the pack is installed and correct any mismatches.
+- **Pose pre-pass**: requires the `comfyui_controlnet_aux` custom node pack
+  (`DWPreprocessor`). Install on the ComfyUI host:
+  `cd ComfyUI/custom_nodes && git clone https://github.com/Fannovel16/comfyui_controlnet_aux && ComfyUI/venv/bin/pip install -r comfyui_controlnet_aux/requirements.txt`
+  (~43 packages; verified no conflicts with the existing torch stack via pip dry-run).
+  The DWPose detector models (`yolox_l.onnx`, `dw-ll_ucoco_384.onnx`) auto-download
+  from huggingface on first use.
+- **Anima-LLLite**: ControlNet on anima needs `kohya-ss/ComfyUI-Anima-LLLite`
+  (`cd ComfyUI/custom_nodes && git clone https://github.com/kohya-ss/ComfyUI-Anima-LLLite`,
+  no pip deps). The node is `AnimaLLLiteApply` (verified against the pack:
+  `model, lllite_name, image, strength, start_percent, end_percent, preserve_wrapper`);
+  LLLite `.safetensors` weights go in `ComfyUI/models/controlnet/` and are picked
+  up by the editor's ControlNet-model dropdown. Restart ComfyUI after installing.
 - **ControlNet scope**: ControlNet (pose) is anima-only for now; other architecture builders ignore the `controlNet` step field.
 - **LoRA builder scope**: the `loras` / `llmLoras` step fields inject a LoraLoader chain in anima.js only; other architecture builders currently ignore them.

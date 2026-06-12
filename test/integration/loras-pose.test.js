@@ -105,7 +105,7 @@ test('poseMode always: pose graph runs first, main graph gets LLLite + always-on
   const poseGraph = comfyServer.prompts[0].prompt;
   const mainGraph = comfyServer.prompts[1].prompt;
   assert.ok(nodeTypes(poseGraph).includes('DWPreprocessor'), 'pose graph extracts skeleton');
-  assert.ok(nodeTypes(mainGraph).includes('AnimaLLLiteLoader'), 'main graph has LLLite node');
+  assert.ok(nodeTypes(mainGraph).includes('AnimaLLLiteApply'), 'main graph has LLLite node');
   assert.ok(nodeTypes(mainGraph).includes('LoraLoader'), 'always-on lora applied');
 
   // Session iteration records pose + loras

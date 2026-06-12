@@ -73,10 +73,12 @@ test('controlNet: LLLite node patches model between loras and sampler', () => {
   assert.equal(load.inputs.image, 'pose.png');
 
   const lllite = wf['71'];
+  assert.equal(lllite.class_type, 'AnimaLLLiteApply');
   assert.deepEqual(lllite.inputs.model, ['30', 0], 'patches the post-lora model');
-  assert.equal(lllite.inputs.model_name, 'anima_lllite_pose.safetensors');
-  assert.deepEqual(lllite.inputs.cond_image, ['70', 0]);
+  assert.equal(lllite.inputs.lllite_name, 'anima_lllite_pose.safetensors');
+  assert.deepEqual(lllite.inputs.image, ['70', 0]);
   assert.equal(lllite.inputs.strength, 0.8);
+  assert.equal(lllite.inputs.preserve_wrapper, true);
 
   assert.deepEqual(sampler(wf).inputs.model, ['71', 0]);
 });
