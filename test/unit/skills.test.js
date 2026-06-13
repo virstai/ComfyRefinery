@@ -52,23 +52,26 @@ test('getSummary returns null when no data exists', () => {
   assert.equal(skills.getSummary('no-model'), null);
 });
 
-test('getSummary returns null when outcomes are all zero', () => {
+test('getSummary returns architecture default when no synthesised skill and zero outcomes', () => {
   const dir = process.env.SKILLS_DIR;
   fs.mkdirSync(dir, { recursive: true });
-  // Write a legacy-format file so migration kicks in; skill is null → no active version.
+  // sd15 has a default skill — getSummary returns it even with zero outcomes.
   fs.writeFileSync(path.join(dir, 'zero-model.json'), JSON.stringify({
     workflowId: 'zero-model', workflowLabel: 'Zero', architecture: 'sd15',
     skill: null, skillUpdatedAt: null,
     outcomes: { accepts: 0, rejects: 0 }, notes: [],
   }));
-  assert.equal(skills.getSummary('zero-model'), null);
+  const summary = skills.getSummary('zero-model');
+  assert.ok(summary !== null, 'should return architecture default instead of null');
+  assert.ok(summary.includes('Danbooru'), 'should include sd15 architecture default text');
 });
 
-test('getSummary returns stats text when no synthesised skill exists', () => {
+test('getSummary returns architecture default when no synthesised skill exists', () => {
   skills.record('m3', 'Model 3', 'sdxl', 'ACCEPT');
   const summary = skills.getSummary('m3');
-  assert.ok(summary.includes('1/1'));
-  assert.ok(summary.includes('100%'));
+  // sdxl has a default skill — it is returned before the stats fallback.
+  assert.ok(summary !== null, 'should return architecture default');
+  assert.ok(summary.includes('SDXL'), 'should include sdxl architecture default text');
 });
 
 test('getSummary returns synthesised skill text when one exists', () => {

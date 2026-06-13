@@ -180,6 +180,104 @@
       </label>
     </div>
 
+    <!-- Skill section -->
+    <div v-if="modelId && skillData" class="skill-section">
+      <hr>
+      <div class="skill-header">
+        <h3>Model Skill</h3>
+        <label class="skill-lock">
+          <input type="checkbox" :checked="skillLocked" @change="toggleLock">
+          <span :class="{ 'skill-lock-active': skillLocked }">{{ skillLocked ? 'Locked' : 'Lock updates' }}</span>
+        </label>
+      </div>
+
+      <div v-if="skillLocked" class="skill-lock-banner">
+        Auto-updates paused — unlock to allow skill refreshes.
+      </div>
+
+      <div v-if="usingDefault && defaultSkill" class="skill-text">{{ defaultSkill }}</div>
+      <div v-else-if="activeVersion?.skill" class="skill-text">{{ activeVersion.skill }}</div>
+      <div v-else class="skill-text" style="color:var(--muted)">No skill synthesised yet — will be generated after the first session.</div>
+      <div v-if="usingDefault && defaultSkill" class="hint">Architecture default — used until a custom skill is generated</div>
+      <div v-else-if="activeVersion" class="hint">{{ formatDate(activeVersion.createdAt) }} · {{ activeVersion.source }}</div>
+
+      <div v-if="!skillLocked" class="skill-correction">
+        <textarea
+          v-model="correctionNote"
+          rows="3"
+          placeholder="Describe what the agent got wrong or should change (optional)…"
+          :disabled="refreshing"
+        ></textarea>
+        <button class="small primary" :disabled="refreshing" @click="doRefreshSkill">
+          {{ refreshing ? 'Refreshing…' : 'Refresh skill' }}
+        </button>
+      </div>
+
+      <template v-if="activeVersion && activeSessions > 0">
+        <h3 style="margin-top:14px">Outcomes</h3>
+        <div class="ln-header">
+          <span class="ln-rate">{{ activeVersion.outcomes.accepts }}/{{ activeSessions }} accepted</span>
+          <div class="ln-bar"><div class="ln-fill" :style="{ width: outcomeRate + '%' }"></div></div>
+          <span class="ln-pct">{{ outcomeRate }}%</span>
+        </div>
+      </template>
+
+      <template v-if="sortedVersions.length > 0 || defaultSkill">
+        <h3 style="margin-top:14px">Version History</h3>
+        <div v-if="defaultSkill" class="ver-row ver-default" :class="{ 'ver-active': usingDefault }">
+          <div class="ver-meta">
+            <span class="ver-date">Built-in default</span>
+            <span class="ver-source">architecture baseline</span>
+          </div>
+          <div class="ver-preview">{{ defaultSkill.slice(0, 90) + (defaultSkill.length > 90 ? '…' : '') }}</div>
+          <div class="ver-actions">
+            <button class="small secondary" :disabled="usingDefault" @click="doResetToDefault">Use</button>
+          </div>
+        </div>
+        <div v-for="ver in sortedVersions" :key="ver.id" class="ver-row" :class="{ 'ver-active': ver.id === activeVersionId }">
+          <div class="ver-meta">
+            <span class="ver-date">{{ formatDate(ver.createdAt) }}</span>
+            <span class="ver-source">{{ ver.source }}</span>
+            <span class="ver-rate" :style="{ color: versionRateColor(ver) }">{{ versionRateText(ver) }}</span>
+          </div>
+          <div class="ver-preview">{{ ver.skill ? ver.skill.slice(0, 90) + (ver.skill.length > 90 ? '…' : '') : 'No skill text' }}</div>
+          <div class="ver-actions">
+            <button class="small secondary" :disabled="ver.id === activeVersionId" @click="doActivateVersion(ver.id)">Use</button>
+            <button class="small danger"    :disabled="ver.id === activeVersionId" @click="doDeleteVersion(ver.id)">×</button>
+          </div>
+        </div>
+      </template>
+    </div>
+
+    <!-- Notes section -->
+    <div v-if="modelId" class="skill-section">
+      <hr>
+      <h3>Notes</h3>
+      <p v-if="!localNotes.length" class="hint">No notes yet — discoveries will appear here after sessions.</p>
+      <div v-for="note in localNotes" :key="note.id" class="note-row">
+        <label class="note-toggle">
+          <input type="checkbox" :checked="note.enabled" @change="toggleNote(note.id)">
+          <span v-if="note.type === 'enforce'" class="note-text">{{ note.text }}</span>
+          <span v-else class="note-text"><strong>Blacklist:</strong> {{ (note.words ?? []).join(', ') }}</span>
+        </label>
+        <span v-if="note.auto" class="note-auto">auto</span>
+        <button class="small danger" @click="deleteNote(note.id)">×</button>
+      </div>
+      <div class="note-add">
+        <select v-model="addNoteType" class="note-add-select">
+          <option value="enforce">Style enforcement</option>
+          <option value="blacklist">Blacklist words</option>
+        </select>
+        <input
+          v-model="addNoteText"
+          class="note-add-input"
+          :placeholder="addNoteType === 'enforce' ? 'e.g. Adapt photorealistic requests to anime style' : 'comma-separated words'"
+          @keydown.enter="addNote"
+        >
+        <button class="small primary" @click="addNote">Add</button>
+      </div>
+    </div>
+
     <div class="panel-actions">
       <button class="primary"               @click="save">Save model</button>
       <button class="secondary"             @click="$emit('cancel')">Cancel</button>
@@ -197,7 +295,7 @@
 
 <script setup>
 import { reactive, computed, watch, ref } from 'vue';
-import { saveModel, deleteModel } from '../stores/config.js';
+import { saveModel, deleteModel, loadSkill, saveNotes, refreshSkill as apiRefreshSkill, activateSkillVersion, deleteSkillVersion, setSkillLocked, resetSkillToDefault } from '../stores/config.js';
 import ArchHelpModal from './ArchHelpModal.vue';
 
 const props = defineProps({
@@ -207,6 +305,130 @@ const props = defineProps({
   assets:   { type: Object, default: () => ({}) },
 });
 const emit = defineEmits(['saved', 'deleted', 'cancel']);
+
+// ── Skill / notes state ────────────────────────────────────────────────────────
+
+const skillData      = ref(null);
+const localNotes     = ref([]);
+const addNoteType    = ref('enforce');
+const addNoteText    = ref('');
+const correctionNote = ref('');
+const refreshing     = ref(false);
+
+watch(() => props.modelId, async id => {
+  skillData.value  = null;
+  localNotes.value = [];
+  if (id) {
+    skillData.value  = await loadSkill(id).catch(() => null);
+    localNotes.value = (skillData.value?.notes ?? []).map(n => ({ ...n }));
+  }
+}, { immediate: true });
+
+const activeVersionId = computed(() => skillData.value?.activeVersionId ?? null);
+const activeVersion   = computed(() => (skillData.value?.versions ?? []).find(v => v.id === activeVersionId.value) ?? null);
+const usingDefault    = computed(() => !activeVersionId.value);
+const defaultSkill    = computed(() => skillData.value?.defaultSkill ?? null);
+const activeSessions  = computed(() => { const o = activeVersion.value?.outcomes; return o ? o.accepts + o.rejects : 0; });
+const skillLocked     = computed(() => skillData.value?.skillLocked ?? false);
+const sortedVersions  = computed(() => [...(skillData.value?.versions ?? [])].sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt)));
+const outcomeRate     = computed(() => {
+  if (!activeSessions.value) return 0;
+  return Math.round((activeVersion.value.outcomes.accepts / activeSessions.value) * 100);
+});
+
+function versionRateText(ver) {
+  const total = ver.outcomes.accepts + ver.outcomes.rejects;
+  if (!total) return 'no data';
+  return `${ver.outcomes.accepts}/${total} (${Math.round(ver.outcomes.accepts / total * 100)}%)`;
+}
+
+function versionRateColor(ver) {
+  const total = ver.outcomes.accepts + ver.outcomes.rejects;
+  if (!total) return 'var(--muted)';
+  const rate = ver.outcomes.accepts / total;
+  if (rate >= 0.60) return 'var(--accent)';
+  if (rate >= 0.30) return '#e6a817';
+  return 'var(--danger, #e05)';
+}
+
+function formatDate(iso) {
+  const d = new Date(iso);
+  return `${d.toLocaleDateString()} ${d.toLocaleTimeString()}`;
+}
+
+function genId() {
+  return Date.now().toString(36) + Math.random().toString(36).slice(2);
+}
+
+async function toggleLock() {
+  const data = await setSkillLocked(props.modelId, !skillLocked.value);
+  skillData.value = data;
+}
+
+async function doActivateVersion(versionId) {
+  const data = await activateSkillVersion(props.modelId, versionId);
+  skillData.value = data;
+  localNotes.value = (data.notes ?? []).map(n => ({ ...n }));
+}
+
+async function doDeleteVersion(versionId) {
+  if (!confirm('Delete this skill version?')) return;
+  const data = await deleteSkillVersion(props.modelId, versionId);
+  skillData.value = data;
+  localNotes.value = (data.notes ?? []).map(n => ({ ...n }));
+}
+
+async function doResetToDefault() {
+  const data = await resetSkillToDefault(props.modelId);
+  skillData.value = data;
+  localNotes.value = (data.notes ?? []).map(n => ({ ...n }));
+}
+
+async function doRefreshSkill() {
+  if (refreshing.value || skillLocked.value) return;
+  refreshing.value = true;
+  try {
+    const data = await apiRefreshSkill(props.modelId, correctionNote.value.trim());
+    skillData.value  = data;
+    localNotes.value = (data.notes ?? []).map(n => ({ ...n }));
+    correctionNote.value = '';
+  } catch (err) {
+    alert(`Skill refresh failed: ${err.message}`);
+  } finally {
+    refreshing.value = false;
+  }
+}
+
+async function persistNotes() {
+  const data = await saveNotes(props.modelId, localNotes.value);
+  skillData.value = data;
+}
+
+async function toggleNote(id) {
+  const note = localNotes.value.find(n => n.id === id);
+  if (note) { note.enabled = !note.enabled; await persistNotes(); }
+}
+
+async function deleteNote(id) {
+  localNotes.value = localNotes.value.filter(n => n.id !== id);
+  await persistNotes();
+}
+
+async function addNote() {
+  const text = addNoteText.value.trim();
+  if (!text) return;
+  if (addNoteType.value === 'enforce') {
+    localNotes.value.push({ id: genId(), type: 'enforce', enabled: false, auto: false, text });
+  } else {
+    for (const word of text.split(',').map(w => w.trim()).filter(Boolean)) {
+      localNotes.value.push({ id: genId(), type: 'blacklist', words: [word], enabled: false, auto: false });
+    }
+  }
+  addNoteText.value = '';
+  await persistNotes();
+}
+
+// ── Model form state ───────────────────────────────────────────────────────────
 
 const form = reactive({
   label: '', architecture: '', splitLoad: false,

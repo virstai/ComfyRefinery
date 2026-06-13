@@ -58,28 +58,32 @@ export async function deleteModel(id) {
   configState.config = await api('GET', '/api/sessions/config');
 }
 
-export async function loadSkill(workflowId) {
-  return api('GET', `/api/sessions/skills/${encodeURIComponent(workflowId)}`);
+export async function loadSkill(modelId) {
+  return api('GET', `/api/sessions/skills/${encodeURIComponent(modelId)}`);
 }
 
-export async function saveNotes(workflowId, notes) {
-  return api('PATCH', `/api/sessions/skills/${encodeURIComponent(workflowId)}/notes`, { notes });
+export async function saveNotes(modelId, notes) {
+  return api('PATCH', `/api/sessions/skills/${encodeURIComponent(modelId)}/notes`, { notes });
 }
 
-export async function refreshSkill(workflowId, note = '') {
-  return api('POST', `/api/sessions/skills/${encodeURIComponent(workflowId)}/refresh`, { note });
+export async function refreshSkill(modelId, note = '') {
+  return api('POST', `/api/sessions/skills/${encodeURIComponent(modelId)}/refresh`, { note });
 }
 
-export async function activateSkillVersion(workflowId, versionId) {
-  return api('POST', `/api/sessions/skills/${encodeURIComponent(workflowId)}/versions/${encodeURIComponent(versionId)}/activate`);
+export async function activateSkillVersion(modelId, versionId) {
+  return api('POST', `/api/sessions/skills/${encodeURIComponent(modelId)}/versions/${encodeURIComponent(versionId)}/activate`);
 }
 
-export async function deleteSkillVersion(workflowId, versionId) {
-  return api('DELETE', `/api/sessions/skills/${encodeURIComponent(workflowId)}/versions/${encodeURIComponent(versionId)}`);
+export async function deleteSkillVersion(modelId, versionId) {
+  return api('DELETE', `/api/sessions/skills/${encodeURIComponent(modelId)}/versions/${encodeURIComponent(versionId)}`);
 }
 
-export async function setSkillLocked(workflowId, locked) {
-  return api('PATCH', `/api/sessions/skills/${encodeURIComponent(workflowId)}/lock`, { locked });
+export async function setSkillLocked(modelId, locked) {
+  return api('PATCH', `/api/sessions/skills/${encodeURIComponent(modelId)}/lock`, { locked });
+}
+
+export async function resetSkillToDefault(modelId) {
+  return api('POST', `/api/sessions/skills/${encodeURIComponent(modelId)}/reset`);
 }
 
 export async function loadLoras() {

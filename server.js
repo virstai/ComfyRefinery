@@ -70,7 +70,7 @@ if (require.main === module) {
   server.listen(PORT, () => {
     const cfg = config.load();
     console.log(`ComfyRefinery running at http://localhost:${PORT}`);
-    console.log(`  Ollama:  ${cfg.ollamaUrl}`);
+    console.log(`  LLM:     ${cfg.llmBaseUrl}`);
     console.log(`  ComfyUI: ${cfg.comfyuiUrl}`);
   });
 }

@@ -298,11 +298,11 @@ test('DELETE /api/generate/sessions/:id removes the session', async () => {
   assert.equal(get.status, 404);
 });
 
-// ── POST /api/sessions/skills/:workflowId/refresh ────────────────────────────────
+// ── POST /api/sessions/skills/:modelId/refresh ────────────────────────────────────
 
-test('POST /api/sessions/skills/test-wf-sd15/refresh returns updated skill data', async () => {
+test('POST /api/sessions/skills/test-sd15/refresh returns updated skill data', async () => {
   // Use a correction note so the refresh runs regardless of session count.
-  const res = await fetch(`${base()}/api/sessions/skills/test-wf-sd15/refresh`, {
+  const res = await fetch(`${base()}/api/sessions/skills/test-sd15/refresh`, {
     method:  'POST',
     headers: { 'Content-Type': 'application/json' },
     body:    JSON.stringify({ note: 'Seed refresh for test.' }),
@@ -314,8 +314,8 @@ test('POST /api/sessions/skills/test-wf-sd15/refresh returns updated skill data'
   assert.ok(actVer?.createdAt,  'active version should have a createdAt timestamp');
 });
 
-test('POST /api/sessions/skills/test-wf-sd15/refresh with correction note updates skill', async () => {
-  const res = await fetch(`${base()}/api/sessions/skills/test-wf-sd15/refresh`, {
+test('POST /api/sessions/skills/test-sd15/refresh with correction note updates skill', async () => {
+  const res = await fetch(`${base()}/api/sessions/skills/test-sd15/refresh`, {
     method:  'POST',
     headers: { 'Content-Type': 'application/json' },
     body:    JSON.stringify({ note: 'Always use danbooru tags, never natural language.' }),
@@ -326,8 +326,8 @@ test('POST /api/sessions/skills/test-wf-sd15/refresh with correction note update
   assert.ok(actVer?.skill, 'should return updated skill data in active version');
 });
 
-test('POST /api/sessions/skills/unknown-workflow/refresh returns 404', async () => {
-  const res = await fetch(`${base()}/api/sessions/skills/unknown-workflow/refresh`, {
+test('POST /api/sessions/skills/unknown-model/refresh returns 404', async () => {
+  const res = await fetch(`${base()}/api/sessions/skills/unknown-model/refresh`, {
     method:  'POST',
     headers: { 'Content-Type': 'application/json' },
     body:    JSON.stringify({}),

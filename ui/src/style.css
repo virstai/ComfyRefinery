@@ -317,6 +317,11 @@ button:disabled  { opacity: .45; cursor: not-allowed; }
   padding: 8px 10px; margin-bottom: 6px;
 }
 .ver-row.ver-active { border-color: var(--accent); }
+.ver-row.ver-default {
+  border-style: dashed;
+  background: color-mix(in srgb, var(--surface2) 60%, transparent);
+}
+.ver-row.ver-default.ver-active { border-color: var(--accent); border-style: solid; }
 .ver-meta {
   display: flex; align-items: center; gap: 8px;
   font-size: 11px; margin-bottom: 4px;

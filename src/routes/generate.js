@@ -210,7 +210,7 @@ async function _runIterativeLoop(stepType, stepDef, stepIndex, session, ctx, cfg
       }
 
       if (stepDef.type === 'generate') {
-        skills.record(session.workflowId, session.workflowLabel, ctx.modelConfig?.architecture, accepted ? 'ACCEPT' : 'REJECT');
+        skills.record(ctx.modelConfig.id, ctx.modelConfig.label, ctx.modelConfig.architecture, accepted ? 'ACCEPT' : 'REJECT');
       }
       db.saveSession(session);
     }
@@ -238,7 +238,7 @@ async function _runIterativeLoop(stepType, stepDef, stepIndex, session, ctx, cfg
 async function runGenerateStep(stepDef, stepIndex, session, ctx, cfg, res, isKilled = () => false) {
   const modelConfig = cfg.models?.[stepDef.modelId];
   if (!modelConfig) throw new Error(`Model "${stepDef.modelId}" not found in config`);
-  ctx = { ...ctx, modelConfig, skillId: session.workflowId };
+  ctx = { ...ctx, modelConfig, skillId: modelConfig.id };
 
   if (ctx.inputImage) {
     try {
@@ -403,16 +403,15 @@ async function runPipeline(session, pipelineDef, cfg, res, imageContext = []) {
     activeKills.delete(session.id);
     db.saveSession(session);
     res.end();
-    // Refresh skill for this workflow using the first generate step's model arch
-    if (session.workflowId) {
-      const workflow = cfg.workflows?.[session.workflowId];
-      if (workflow) {
-        const firstGenStep = pipelineDef.find(s => s.type === 'generate');
-        const modelConfig  = firstGenStep ? cfg.models?.[firstGenStep.modelId] : null;
-        if (modelConfig) {
-          refreshSkill(session.workflowId, workflow.label, modelConfig.architecture)
-            .catch(err => console.error(`[${tag}] skill refresh failed: ${err.message}`));
-        }
+    // Refresh skill for each unique model used in generate steps
+    const seenModelIds = new Set();
+    for (const step of pipelineDef) {
+      if (step.type !== 'generate' || !step.modelId || seenModelIds.has(step.modelId)) continue;
+      seenModelIds.add(step.modelId);
+      const mc = cfg.models?.[step.modelId];
+      if (mc) {
+        refreshSkill(mc.id, mc.label, mc.architecture)
+          .catch(err => console.error(`[${tag}] skill refresh failed: ${err.message}`));
       }
     }
   }

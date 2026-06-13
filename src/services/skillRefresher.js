@@ -15,9 +15,9 @@ function genId() {
   return Date.now().toString(36) + Math.random().toString(36).slice(2);
 }
 
-async function refreshSkill(workflowId, workflowLabel, arch, correctionNote = '') {
+async function refreshSkill(modelId, modelLabel, arch, correctionNote = '') {
   const cfg  = config.load();
-  const data = skills.get(workflowId);
+  const data = skills.get(modelId);
   if (!data) return;
 
   // Lock is absolute — cannot refresh when locked (manual or auto).
@@ -40,9 +40,9 @@ async function refreshSkill(workflowId, workflowLabel, arch, correctionNote = ''
         const prevRate   = prevVer.outcomes.accepts / prevTotal;
         const activeRate = activeVer.outcomes.accepts / activeSessions;
         if (activeRate < prevRate - 0.20) {
-          skills.activateVersion(workflowId, prevVer.id);
-          skills.setLocked(workflowId, true);
-          console.log(`[skills] auto-reverted ${workflowId}: active ${Math.round(activeRate * 100)}% vs prev ${Math.round(prevRate * 100)}% (>20pp drop)`);
+          skills.activateVersion(modelId, prevVer.id);
+          skills.setLocked(modelId, true);
+          console.log(`[skills] auto-reverted ${modelId}: active ${Math.round(activeRate * 100)}% vs prev ${Math.round(prevRate * 100)}% (>20pp drop)`);
           return;
         }
       }
@@ -62,7 +62,7 @@ async function refreshSkill(workflowId, workflowLabel, arch, correctionNote = ''
   const currentSkill = activeVer?.skill ?? null;
 
   const userContent =
-    `Workflow: ${workflowLabel} (architecture: ${arch})\n\n` +
+    `Model: ${modelLabel} (architecture: ${arch})\n\n` +
     `Outcome data:\n${statsText}\n\n` +
     `Current skill text:\n${currentSkill ?? 'None yet — write a fresh one.'}\n\n` +
     (lockedEnforce.length
@@ -111,13 +111,13 @@ async function refreshSkill(workflowId, workflowLabel, arch, correctionNote = ''
   }
 
   const newSkill = (sections.SKILL ?? []).join('\n').trim() || raw.trim();
-  skills.addVersion(workflowId, newSkill, correctionNote ? 'manual' : 'auto');
+  skills.addVersion(modelId, newSkill, correctionNote ? 'manual' : 'auto');
 
   const enforceLines   = sections.ENFORCE ?? [];
   const blacklistWords = (sections.BLACKLIST ?? []).join(',').split(',').map(w => w.trim()).filter(Boolean);
 
   if (enforceLines.length || blacklistWords.length) {
-    const latest     = skills.get(workflowId);
+    const latest     = skills.get(modelId);
     const userNotes  = (latest.notes ?? []).filter(n => !n.auto);
     const latestAuto = (latest.notes ?? []).filter(n => n.auto);
     const lockedAuto = latestAuto.filter(n => n.enabled);
@@ -139,10 +139,10 @@ async function refreshSkill(workflowId, workflowLabel, arch, correctionNote = ''
         return { id: prev?.id ?? genId(), type: 'blacklist', words: [word], enabled: false, auto: true };
       });
 
-    skills.saveNotes(workflowId, [...userNotes, ...lockedAuto, ...newEnforce, ...newBlacklist]);
+    skills.saveNotes(modelId, [...userNotes, ...lockedAuto, ...newEnforce, ...newBlacklist]);
   }
 
-  console.log(`[skills] updated skill for ${workflowId}${correctionNote ? ' (manual correction)' : ''}`);
+  console.log(`[skills] updated skill for ${modelId}${correctionNote ? ' (manual correction)' : ''}`);
 }
 
 module.exports = { refreshSkill, LOCAL_PREAMBLE };

@@ -65,6 +65,10 @@
           <input type="number" v-model.number="step.refinerSwitchAt" min="0" max="1" step="0.05" placeholder="0.8">
         </label>
 
+        <label v-if="si > 0">Chain denoise <span class="hint">(img2img strength when using previous step's output; default 0.5)</span>
+          <input type="number" v-model.number="step.chainDenoise" min="0.01" max="1" step="0.05" placeholder="0.5">
+        </label>
+
         <!-- Reference strategy -->
         <div class="review-block">
           <strong>References</strong>
@@ -270,92 +274,6 @@
       </button>
     </div>
 
-    <!-- Skill section -->
-    <div v-if="workflowId && skillData" class="skill-section">
-      <hr>
-      <div class="skill-header">
-        <h3>Workflow Skill</h3>
-        <label class="skill-lock">
-          <input type="checkbox" :checked="skillLocked" @change="toggleLock">
-          <span :class="{ 'skill-lock-active': skillLocked }">{{ skillLocked ? 'Locked' : 'Lock updates' }}</span>
-        </label>
-      </div>
-
-      <div v-if="skillLocked" class="skill-lock-banner">
-        Auto-updates paused — unlock to allow skill refreshes.
-      </div>
-
-      <div v-if="activeVersion?.skill" class="skill-text">{{ activeVersion.skill }}</div>
-      <div v-else class="skill-text" style="color:var(--muted)">No skill synthesised yet — will be generated after the first session.</div>
-      <div v-if="activeVersion" class="hint">{{ formatDate(activeVersion.createdAt) }} · {{ activeVersion.source }}</div>
-
-      <div v-if="!skillLocked" class="skill-correction">
-        <textarea
-          v-model="correctionNote"
-          rows="3"
-          placeholder="Describe what the agent got wrong or should change (optional)…"
-          :disabled="refreshing"
-        ></textarea>
-        <button class="small primary" :disabled="refreshing" @click="doRefreshSkill">
-          {{ refreshing ? 'Refreshing…' : 'Refresh skill' }}
-        </button>
-      </div>
-
-      <template v-if="activeVersion && activeSessions > 0">
-        <h3 style="margin-top:14px">Outcomes</h3>
-        <div class="ln-header">
-          <span class="ln-rate">{{ activeVersion.outcomes.accepts }}/{{ activeSessions }} accepted</span>
-          <div class="ln-bar"><div class="ln-fill" :style="{ width: outcomeRate + '%' }"></div></div>
-          <span class="ln-pct">{{ outcomeRate }}%</span>
-        </div>
-      </template>
-
-      <template v-if="sortedVersions.length > 1">
-        <h3 style="margin-top:14px">Version History</h3>
-        <div v-for="ver in sortedVersions" :key="ver.id" class="ver-row" :class="{ 'ver-active': ver.id === activeVersionId }">
-          <div class="ver-meta">
-            <span class="ver-date">{{ formatDate(ver.createdAt) }}</span>
-            <span class="ver-source">{{ ver.source }}</span>
-            <span class="ver-rate" :style="{ color: versionRateColor(ver) }">{{ versionRateText(ver) }}</span>
-          </div>
-          <div class="ver-preview">{{ ver.skill ? ver.skill.slice(0, 90) + (ver.skill.length > 90 ? '…' : '') : 'No skill text' }}</div>
-          <div class="ver-actions">
-            <button class="small secondary" :disabled="ver.id === activeVersionId" @click="doActivateVersion(ver.id)">Use</button>
-            <button class="small danger"    :disabled="ver.id === activeVersionId" @click="doDeleteVersion(ver.id)">×</button>
-          </div>
-        </div>
-      </template>
-    </div>
-
-    <!-- Notes section -->
-    <div v-if="workflowId" class="skill-section">
-      <hr>
-      <h3>Notes</h3>
-      <p v-if="!localNotes.length" class="hint">No notes yet — discoveries will appear here after sessions.</p>
-      <div v-for="note in localNotes" :key="note.id" class="note-row">
-        <label class="note-toggle">
-          <input type="checkbox" :checked="note.enabled" @change="toggleNote(note.id)">
-          <span v-if="note.type === 'enforce'" class="note-text">{{ note.text }}</span>
-          <span v-else class="note-text"><strong>Blacklist:</strong> {{ (note.words ?? []).join(', ') }}</span>
-        </label>
-        <span v-if="note.auto" class="note-auto">auto</span>
-        <button class="small danger" @click="deleteNote(note.id)">×</button>
-      </div>
-      <div class="note-add">
-        <select v-model="addType" class="note-add-select">
-          <option value="enforce">Style enforcement</option>
-          <option value="blacklist">Blacklist words</option>
-        </select>
-        <input
-          v-model="addText"
-          class="note-add-input"
-          :placeholder="addType === 'enforce' ? 'e.g. Adapt photorealistic requests to anime style' : 'comma-separated words'"
-          @keydown.enter="addNote"
-        >
-        <button class="small primary" @click="addNote">Add</button>
-      </div>
-    </div>
-
     <div class="panel-actions">
       <button class="primary"               @click="save">Save workflow</button>
       <button v-if="workflowId" class="danger" @click="remove">Delete</button>
@@ -365,7 +283,7 @@
 
 <script setup>
 import { reactive, computed, watch, ref, onMounted } from 'vue';
-import { saveWorkflow, deleteWorkflow, loadSkill, saveNotes, refreshSkill as apiRefreshSkill, loadLoras, activateSkillVersion, deleteSkillVersion, setSkillLocked } from '../stores/config.js';
+import { saveWorkflow, deleteWorkflow, loadLoras } from '../stores/config.js';
 
 const props = defineProps({
   workflowId: { type: String, default: null },
@@ -375,13 +293,6 @@ const props = defineProps({
   assets:     { type: Object, default: () => ({}) },
 });
 const emit = defineEmits(['saved', 'deleted']);
-
-const skillData      = ref(null);
-const localNotes     = ref([]);
-const addType        = ref('enforce');
-const addText        = ref('');
-const correctionNote = ref('');
-const refreshing     = ref(false);
 
 const upscaleModels = computed(() => {
   const list = props.assets?.comfyui?.upscaleModels;
@@ -402,6 +313,7 @@ function blankGenerateStep() {
     modelId: '', width: '', height: '', steps: '', cfgScale: '', guidance: '',
     sampler: '', scheduler: '', negativePrompt: '', refinerSwitchAt: '',
     maxIterations: '', humanReview: false, gracePeriod: '',
+    chainDenoise: '',
     visionNotes: false, refMode: 'txt2img', refDenoise: 0.6,
     loras: [], llmLoras: false,
     poseMode: 'off', cnStrength: 1.0,
@@ -468,6 +380,7 @@ function stepFromDef(s) {
     scheduler:      s.params?.scheduler    ?? '',
     negativePrompt: s.params?.negativePrompt ?? '',
     refinerSwitchAt: s.params?.refinerSwitchAt ?? '',
+    chainDenoise:   s.params?.chainDenoise   ?? '',
     maxIterations:  s.review?.maxIterations ?? '',
     humanReview:    s.review?.humanReview   ?? false,
     gracePeriod:    s.review?.gracePeriod   ?? '',
@@ -494,15 +407,6 @@ watch(() => props.workflow, wf => {
   form.label = wf.label ?? '';
   form.steps = (wf.steps ?? []).map(stepFromDef);
   if (!form.steps.length) form.steps = [blankGenerateStep()];
-}, { immediate: true });
-
-watch(() => props.workflowId, async id => {
-  skillData.value  = null;
-  localNotes.value = [];
-  if (id) {
-    skillData.value  = await loadSkill(id).catch(() => null);
-    localNotes.value = (skillData.value?.notes ?? []).map(n => ({ ...n }));
-  }
 }, { immediate: true });
 
 function stepArch(si) {
@@ -545,103 +449,6 @@ const videoModels = computed(() =>
     .filter(([, m]) => props.archMeta[m.architecture]?.videoArch)
     .map(([id, m]) => ({ id, label: m.label || id }))
 );
-
-const activeVersionId = computed(() => skillData.value?.activeVersionId ?? null);
-const activeVersion   = computed(() => (skillData.value?.versions ?? []).find(v => v.id === activeVersionId.value) ?? null);
-const activeSessions  = computed(() => { const o = activeVersion.value?.outcomes; return o ? o.accepts + o.rejects : 0; });
-const skillLocked     = computed(() => skillData.value?.skillLocked ?? false);
-const sortedVersions  = computed(() => [...(skillData.value?.versions ?? [])].sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt)));
-
-const outcomeRate = computed(() => {
-  if (!activeSessions.value) return 0;
-  return Math.round((activeVersion.value.outcomes.accepts / activeSessions.value) * 100);
-});
-
-function versionRateText(ver) {
-  const total = ver.outcomes.accepts + ver.outcomes.rejects;
-  if (!total) return 'no data';
-  return `${ver.outcomes.accepts}/${total} (${Math.round(ver.outcomes.accepts / total * 100)}%)`;
-}
-
-function versionRateColor(ver) {
-  const total = ver.outcomes.accepts + ver.outcomes.rejects;
-  if (!total) return 'var(--muted)';
-  const rate = ver.outcomes.accepts / total;
-  if (rate >= 0.60) return 'var(--accent)';
-  if (rate >= 0.30) return '#e6a817';
-  return 'var(--danger, #e05)';
-}
-
-async function toggleLock() {
-  const data = await setSkillLocked(props.workflowId, !skillLocked.value);
-  skillData.value = data;
-}
-
-async function doActivateVersion(versionId) {
-  const data = await activateSkillVersion(props.workflowId, versionId);
-  skillData.value = data;
-  localNotes.value = (data.notes ?? []).map(n => ({ ...n }));
-}
-
-async function doDeleteVersion(versionId) {
-  if (!confirm('Delete this skill version?')) return;
-  const data = await deleteSkillVersion(props.workflowId, versionId);
-  skillData.value = data;
-  localNotes.value = (data.notes ?? []).map(n => ({ ...n }));
-}
-
-function formatDate(iso) {
-  const d = new Date(iso);
-  return `${d.toLocaleDateString()} ${d.toLocaleTimeString()}`;
-}
-
-function genId() {
-  return Date.now().toString(36) + Math.random().toString(36).slice(2);
-}
-
-async function doRefreshSkill() {
-  if (refreshing.value || skillLocked.value) return;
-  refreshing.value = true;
-  try {
-    const data = await apiRefreshSkill(props.workflowId, correctionNote.value.trim());
-    skillData.value  = data;
-    localNotes.value = (data.notes ?? []).map(n => ({ ...n }));
-    correctionNote.value = '';
-  } catch (err) {
-    alert(`Skill refresh failed: ${err.message}`);
-  } finally {
-    refreshing.value = false;
-  }
-}
-
-async function persistNotes() {
-  const data = await saveNotes(props.workflowId, localNotes.value);
-  skillData.value = data;
-}
-
-async function toggleNote(id) {
-  const note = localNotes.value.find(n => n.id === id);
-  if (note) { note.enabled = !note.enabled; await persistNotes(); }
-}
-
-async function deleteNote(id) {
-  localNotes.value = localNotes.value.filter(n => n.id !== id);
-  await persistNotes();
-}
-
-async function addNote() {
-  const text = addText.value.trim();
-  if (!text) return;
-  if (addType.value === 'enforce') {
-    localNotes.value.push({ id: genId(), type: 'enforce', enabled: false, auto: false, text });
-  } else {
-    for (const word of text.split(',').map(w => w.trim()).filter(Boolean)) {
-      localNotes.value.push({ id: genId(), type: 'blacklist', words: [word], enabled: false, auto: false });
-    }
-  }
-  addText.value = '';
-  await persistNotes();
-}
 
 async function save() {
   if (!form.label.trim()) return alert('Enter a name for this workflow.');
@@ -724,6 +531,7 @@ async function save() {
         ...(s.scheduler            && { scheduler:       s.scheduler }),
         ...(s.negativePrompt       && { negativePrompt:  s.negativePrompt }),
         ...(s.refinerSwitchAt !== '' && { refinerSwitchAt: Number(s.refinerSwitchAt) }),
+        ...(s.chainDenoise   !== '' && { chainDenoise:   Number(s.chainDenoise) }),
       },
       review,
       referenceStrategy: {
