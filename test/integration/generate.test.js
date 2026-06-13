@@ -107,12 +107,13 @@ test('done event includes prompt so the frontend can populate the continue bar',
   });
 
   const done = events.find(e => e.event === 'done').data;
-  assert.equal(done.accepted, false);
+  // maxIterations=1 means the only iteration skips review and auto-accepts
+  assert.equal(done.accepted, true);
   assert.equal(done.prompt, 'a mountain landscape');
-  assert.ok(done.imageUrl, 'imageUrl should be set even on reject');
+  assert.ok(done.imageUrl, 'imageUrl should be set');
 });
 
-test('runs up to maxIterations when every iteration is rejected', async () => {
+test('runs up to maxIterations; last iteration skips review and accepts', async () => {
   reviewVerdict = 'REJECT';
   const events = await collectSSE(`${base()}/api/generate`, {
     prompt: 'abstract art',
@@ -126,7 +127,8 @@ test('runs up to maxIterations when every iteration is rejected', async () => {
   );
 
   const done = events.find(e => e.event === 'done').data;
-  assert.equal(done.accepted,   false);
+  // iteration 1 rejected by LLM, iteration 2 (last) skips review and accepts
+  assert.equal(done.accepted,   true);
   assert.equal(done.iterations, 2);
 });
 
@@ -210,6 +212,12 @@ test('refuse-accepted returns 400 when no iteration has ACCEPT verdict', async (
   });
   const sessionId = events.find(e => e.event === 'session').data.id;
 
+  // The last iteration auto-accepts; exhaust it with the first call (204).
+  await fetch(`${base()}/api/generate/sessions/${sessionId}/refuse-accepted`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}',
+  });
+
+  // No ACCEPT iterations remain — second call must return 400.
   const res = await fetch(`${base()}/api/generate/sessions/${sessionId}/refuse-accepted`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}',
   });
@@ -225,14 +233,14 @@ test('refuse-accepted returns 404 for unknown session', async () => {
 
 // ── POST /api/generate/continue/:id ──────────────────────────────────────────
 
-test('POST /api/generate/continue/:id resumes an incomplete session and runs new iterations', async () => {
-  // First pass: reject so the session ends without acceptance.
+test('POST /api/generate/continue/:id resumes a session and runs new iterations', async () => {
+  // First pass: last iteration auto-accepts regardless of LLM verdict.
   reviewVerdict = 'REJECT';
   const events1   = await collectSSE(`${base()}/api/generate`, {
     prompt: 'a continuing scene', overrides: { maxIterations: 1 },
   });
   const sessionId = events1.find(e => e.event === 'session').data.id;
-  assert.equal(events1.find(e => e.event === 'done').data.accepted, false);
+  assert.equal(events1.find(e => e.event === 'done').data.accepted, true);
 
   // Second pass: accept.
   reviewVerdict = 'ACCEPT';

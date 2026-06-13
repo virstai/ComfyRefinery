@@ -139,11 +139,18 @@ async function _runIterativeLoop(stepType, stepDef, stepIndex, session, ctx, cfg
       // Deterministic steps (e.g. model upscales) skip the LLM review: the
       // same input always produces the same output, so a rejection could
       // never be fixed by re-running.
+      // Generate steps also skip review on the last allowed iteration:
+      // reviewing when no further retry is possible is wasteful.
+      const isLastIteration = i === maxNewIter - 1;
       let verdict, diagnosis;
       if (stepType.skipReview?.(stepDef)) {
         verdict   = 'ACCEPT';
         diagnosis = 'deterministic step — review skipped';
         console.log(`[${tag}] step ${stepIndex} iter ${iterNum}: review skipped (deterministic step)`);
+      } else if (stepDef.type === 'generate' && isLastIteration) {
+        verdict   = 'ACCEPT';
+        diagnosis = 'last iteration — review skipped';
+        console.log(`[${tag}] step ${stepIndex} iter ${iterNum}: review skipped (last iteration)`);
       } else {
         emit(res, 'phase', { step: stepIndex, phase: 'reviewing', iteration: iterNum });
         console.log(`[${tag}] step ${stepIndex} iter ${iterNum}: reviewing…`);
