@@ -118,5 +118,10 @@ async function onDeleted() {
 </script>
 
 <style scoped>
-.arch-filter { width: 100%; margin: 6px 0; }
+.arch-filter {
+  width: 100%; margin: 6px 0;
+  background: var(--bg); border: 1px solid var(--border); border-radius: 4px;
+  color: var(--text); padding: 6px 8px; font-size: 13px; font-family: inherit;
+}
+.arch-filter:focus { outline: none; border-color: var(--accent); }
 </style>
