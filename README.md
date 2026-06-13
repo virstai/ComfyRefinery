@@ -151,15 +151,17 @@ npm test        # all tests
 
 ### Image
 
-| Key | Name | Loader |
-|---|---|---|
-| `sd15` | SD 1.5 / SD 2.x | Checkpoint + optional external VAE |
-| `sdxl` | SDXL | Checkpoint + optional VAE + optional refiner |
-| `flux` | Flux.1 | Checkpoint, or split (UNet + CLIP-L + T5-XXL + VAE) |
-| `flux2` | Flux 2 (Dev / Klein) | Split only (UNet + CLIP/Mistral or Qwen-3 + VAE) |
-| `sd3` | SD 3 / SD 3.5 | Checkpoint + optional external VAE |
-| `chroma` | ChromaHD | Split only (UNet + T5 encoder + VAE); standard ComfyUI nodes |
-| `anima` | Anima | Split only (UNet + CLIP/Qwen-3 + Qwen-Image VAE); needs `er_sde` sampler |
+| Key | Name | Loader | LoRA | Adapter | Pose ControlNet |
+|---|---|---|---|---|---|
+| `sd15` | SD 1.5 / SD 2.x | Checkpoint + optional external VAE | ✓ | IPAdapter | — |
+| `sdxl` | SDXL | Checkpoint + optional VAE + optional refiner | ✓ | IPAdapter | — |
+| `flux` | Flux.1 | Checkpoint, or split (UNet + CLIP-L + T5-XXL + VAE) | ✓ | Redux | — |
+| `flux2` | Flux 2 (Dev / Klein) | Split only (UNet + CLIP/Mistral or Qwen-3 + VAE) | ✓ | ReferenceLatent | — |
+| `sd3` | SD 3 / SD 3.5 | Checkpoint + optional external VAE | ✓ | — | — |
+| `chroma` | ChromaHD | Split only (UNet + T5 encoder + VAE); standard ComfyUI nodes | ✓ | — | — |
+| `anima` | Anima | Split only (UNet + CLIP/Qwen-3 + Qwen-Image VAE); needs `er_sde` sampler | ✓ | — ¹ | LLLite |
+
+¹ Anima IP-Adapter is implemented but disabled — weights not yet publicly released.
 
 ### Video
 
