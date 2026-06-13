@@ -8,6 +8,7 @@
 // patches MODEL with a control image — no separate loader/apply pair.
 // Inputs verified against the pack's nodes.py; weights load from models/controlnet/.
 const LLLITE_NODE = 'AnimaLLLiteApply';
+const { applyLoraChain } = require('./lib/loraChain');
 const defaults = {
   width:          1024,
   height:         1024,
@@ -31,20 +32,7 @@ function build(params) {
   let modelRef = ["1", 0];
   let clipRef  = ["2", 0];
 
-  // LoRA chain: nodes 30+i. Each LoraLoader patches both model and clip;
-  // everything downstream hangs off the last link.
-  (p.loras ?? []).forEach((l, i) => {
-    const id = String(30 + i);
-    nodes[id] = { class_type: "LoraLoader", inputs: {
-      lora_name:      l.name,
-      strength_model: l.weight ?? 1.0,
-      strength_clip:  l.weight ?? 1.0,
-      model:          modelRef,
-      clip:           clipRef,
-    }};
-    modelRef = [id, 0];
-    clipRef  = [id, 1];
-  });
+  ({ modelRef, clipRef } = applyLoraChain(nodes, modelRef, clipRef, p.loras));
 
   nodes["4"] = { class_type: "CLIPTextEncode", inputs: { text: p.positivePrompt, clip: clipRef } };
   nodes["5"] = { class_type: "CLIPTextEncode", inputs: { text: p.negativePrompt, clip: clipRef } };
