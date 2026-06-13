@@ -122,26 +122,18 @@
               </select>
             </label>
             <template v-if="step.poseMode !== 'off'">
-              <label>Pose draft model
-                <select v-model="step.poseModelId">
-                  <option value="">— select model —</option>
-                  <template v-for="(m, id) in config.models" :key="id">
-                    <option v-if="!archMeta[m.architecture]?.videoArch" :value="id">{{ m.label || id }}</option>
-                  </template>
-                </select>
-              </label>
               <label>Strength
                 <input type="number" v-model.number="step.cnStrength" min="0" max="2" step="0.05">
               </label>
             </template>
           </div>
           <p v-if="step.poseMode !== 'off'" class="hint">
-            A pose draft is generated from a detection-friendly prompt (plain background, photo
-            rendering; supports any framing and multiple subjects), the skeleton is extracted with
-            DWPose, and the main generation follows it via ControlNet. The ControlNet weights are
-            selected in the generation model's settings (Models panel). Strength below ~1.0 lets
-            the prompt override the pose. If no pose can be extracted, the step fails rather
-            than continuing.
+            A pose draft is rendered with this step's model from a detection-friendly prompt
+            (plain background, photo rendering; supports any framing and multiple subjects), the
+            skeleton is extracted with DWPose, and the main generation follows it via ControlNet.
+            The ControlNet weights are selected in the generation model's settings (Models panel).
+            Strength below ~1.0 lets the prompt override the pose. If no pose can be extracted,
+            the step fails rather than continuing.
           </p>
         </div>
       </template>
@@ -381,7 +373,7 @@ function blankGenerateStep() {
     maxIterations: '', humanReview: false, gracePeriod: '',
     visionNotes: false, refMode: 'txt2img', refDenoise: 0.6,
     loras: [], llmLoras: false,
-    poseMode: 'off', poseModelId: '', cnStrength: 1.0,
+    poseMode: 'off', cnStrength: 1.0,
   };
 }
 
@@ -460,7 +452,6 @@ function stepFromDef(s) {
     loras:           (s.loras ?? []).map(l => ({ ...l })),
     llmLoras:        s.llmLoras ?? false,
     poseMode:        s.controlNet?.poseMode        ?? 'off',
-    poseModelId:     s.controlNet?.poseModelId     ?? '',
     cnStrength:      s.controlNet?.strength        ?? 1.0,
   };
 }
@@ -591,9 +582,6 @@ async function save() {
   if (videoIdx !== -1 && videoIdx !== form.steps.length - 1) {
     return alert('The video step must be the last step in the workflow.');
   }
-  if (form.steps.some(s => s.type === 'generate' && s.poseMode !== 'off' && !s.poseModelId)) {
-    return alert('Pose ControlNet needs a pose draft model selected.');
-  }
 
   const steps = form.steps.map(s => {
     const review = {
@@ -666,9 +654,8 @@ async function save() {
       llmLoras: s.llmLoras,
       ...(s.poseMode !== 'off' && {
         controlNet: {
-          poseMode:        s.poseMode,
-          poseModelId:     s.poseModelId,
-          strength:        Number(s.cnStrength) || 1.0,
+          poseMode: s.poseMode,
+          strength: Number(s.cnStrength) || 1.0,
         },
       }),
     };

@@ -45,14 +45,13 @@ before(async () => {
     loras: {},
     models: {
       'anima-base': { id: 'anima-base', label: 'Anima', architecture: 'anima', unetName: 'anima.safetensors', clipL: 'qwen.safetensors', vaeName: 'vae.safetensors', controlNetModel: 'anima_lllite_pose.safetensors' },
-      'pose-draft': { id: 'pose-draft', label: 'Pose Draft', architecture: 'sd15', checkpoint: 'fast.safetensors' },
     },
     workflows: {
       'wf-pose-always': {
         id: 'wf-pose-always', label: 'Pose Always',
         steps: [{
           type: 'generate', modelId: 'anima-base', params: {},
-          controlNet: { poseMode: 'always', poseModelId: 'pose-draft', strength: 0.8 },
+          controlNet: { poseMode: 'always', strength: 0.8 },
           review: { maxIterations: 1 },
         }],
       },

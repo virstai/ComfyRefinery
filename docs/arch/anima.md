@@ -49,9 +49,8 @@ an OpenPose skeleton from it, and the main generation follows that skeleton.
 2. Download LLLite weights from [kohya-ss/Anima-LLLite on Hugging Face](https://huggingface.co/kohya-ss/Anima-LLLite)
    — e.g. `anima-lllite-pose-1.safetensors` for pose — into `models/controlnet/`
 3. In the model editor, select the weights in the **ControlNet model** dropdown
-4. In a workflow step, set **Pose mode** to `auto` (LLM decides per prompt) or `always`,
-   and pick a **pose draft model** (any configured model; general-purpose/photoreal
-   models give the most reliable pose detection)
+4. In a workflow step, set **Pose mode** to `auto` (LLM decides per prompt) or `always`.
+   The pose draft is rendered with the step's own model from a detection-friendly prompt
 
 Notes:
 

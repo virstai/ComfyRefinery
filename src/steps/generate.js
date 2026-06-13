@@ -173,8 +173,6 @@ async function prePass(stepDef, prepResult, ctx, hooks = {}) {
   const wanted = cn.poseMode === 'always' || (cn.poseMode === 'auto' && prepResult.wantsPose);
   if (!wanted) return null;
 
-  const poseModelConfig = ctx.cfg.models?.[cn.poseModelId];
-  if (!poseModelConfig) throw new Error(`Pose generation failed: pose model "${cn.poseModelId}" not configured`);
   // ControlNet weights live on the generation model's settings (legacy configs
   // may still carry them on the workflow step).
   const controlNetModel = ctx.modelConfig?.controlNetModel ?? cn.controlNetModel;
@@ -183,9 +181,11 @@ async function prePass(stepDef, prepResult, ctx, hooks = {}) {
   }
 
   hooks.onStart?.();
+  // The draft is rendered with the step's own generation model — it's already
+  // loaded, and any model works since the output is only ever skeletonized.
   const { ref, imageUrl } = await pose.generatePose({
     cfg:    ctx.cfg,
-    poseModelConfig,
+    poseModelConfig: ctx.modelConfig,
     poseDescription: prepResult.poseDescription,
     width:  prepResult.params.width,
     height: prepResult.params.height,

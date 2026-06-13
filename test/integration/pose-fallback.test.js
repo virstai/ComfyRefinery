@@ -39,7 +39,6 @@ before(async () => {
     },
     models: {
       'anima-base': { id: 'anima-base', label: 'Anima', architecture: 'anima', unetName: 'anima.safetensors', clipL: 'qwen.safetensors', vaeName: 'vae.safetensors' },
-      'pose-draft': { id: 'pose-draft', label: 'Pose Draft', architecture: 'sd15', checkpoint: 'fast.safetensors' },
     },
     workflows: {
       'wf-pose-always': {
@@ -48,7 +47,7 @@ before(async () => {
           type: 'generate', modelId: 'anima-base', params: {},
           loras: [{ name: 'anima_turbo.safetensors', weight: 1.0 }],
           llmLoras: true,
-          controlNet: { poseMode: 'always', poseModelId: 'pose-draft', controlNetModel: 'anima_lllite_pose.safetensors', strength: 0.8 },
+          controlNet: { poseMode: 'always', controlNetModel: 'anima_lllite_pose.safetensors', strength: 0.8 },
           review: { maxIterations: 1 },
         }],
       },
