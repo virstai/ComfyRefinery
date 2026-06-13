@@ -27,13 +27,16 @@ const sharp    = require('sharp');
 const config   = require('../services/config');
 const comfyui  = require('../services/comfyui');
 const queue    = require('../services/queue');
-const { Agent } = require('undici');
+const { Agent, fetch: undicicFetch } = require('undici');
 
 // The internal SSE fetch to /api/generate/run can run for many minutes (per-image
 // generate+review loop).  Node's global fetch is undici-backed and has a default
 // bodyTimeout of 300 s — independent of any AbortSignal — which fires mid-stream
-// and kills the outer client connection.  Disable it for internal long-poll fetches.
+// and kills the outer client connection.  Use undici's own fetch+Agent so that the
+// dispatcher is guaranteed to be API-compatible (Node's built-in fetch bundles a
+// different internal undici copy that rejects npm undici Agents).
 const longPollAgent = new Agent({ headersTimeout: 0, bodyTimeout: 0 });
+const longFetch = (url, opts) => undicicFetch(url, { ...opts, dispatcher: longPollAgent });
 
 async function padToSquare(buffer) {
   const { width, height } = await sharp(buffer).metadata();
@@ -107,35 +110,25 @@ const SAMPLERS_LIST = [
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-function modelToA1111(id, m) {
+function workflowToA1111(id, wf) {
   return {
-    title:      `${m.label} [${id}]`,
-    model_name: m.label,
+    title:      `${wf.label} [${id}]`,
+    model_name: wf.label,
     hash:       null,
     sha256:     null,
-    filename:   m.unetName || m.checkpoint || '',
+    filename:   id,
     config:     null,
   };
 }
 
-// Find a model ID by A1111 title ("Label [id]"), bare id, or label (case-insensitive).
-function findModelId(cfg, sdModelCheckpoint) {
+// Find a workflow ID by A1111 title ("Label [id]"), bare id, or label (case-insensitive).
+function findWorkflowId(cfg, sdModelCheckpoint) {
   if (!sdModelCheckpoint) return null;
   const s = sdModelCheckpoint.toLowerCase().trim();
-  for (const [id, m] of Object.entries(cfg.models || {})) {
-    if (id.toLowerCase() === s)                            return id;
-    if ((m.label ?? '').toLowerCase() === s)               return id;
-    if (`${m.label} [${id}]`.toLowerCase() === s)          return id;
-  }
-  return null;
-}
-
-// Find the first workflow whose first generate step uses this model.
-function findWorkflowForModel(cfg, modelId) {
-  if (!modelId) return null;
-  for (const [id, workflow] of Object.entries(cfg.workflows || {})) {
-    const firstGen = (workflow.steps ?? []).find(s => s.type === 'generate');
-    if (firstGen?.modelId === modelId) return id;
+  for (const [id, wf] of Object.entries(cfg.workflows || {})) {
+    if (id.toLowerCase() === s)                             return id;
+    if ((wf.label ?? '').toLowerCase() === s)               return id;
+    if (`${wf.label} [${id}]`.toLowerCase() === s)          return id;
   }
   return null;
 }
@@ -164,7 +157,7 @@ async function consumeSSE(response, onEvent) {
 
 // Fetch a server-relative image path and return a base64-encoded string.
 async function fetchBase64(host, imageUrl) {
-  const res = await fetch(`http://${host}${imageUrl}`, { dispatcher: longPollAgent });
+  const res = await longFetch(`http://${host}${imageUrl}`);
   if (!res.ok) throw new Error(`Image fetch failed: ${res.status}`);
   return Buffer.from(await res.arrayBuffer()).toString('base64');
 }
@@ -194,20 +187,15 @@ async function handleGenerationRequest(req, res) {
 
   if (!prompt.trim()) return res.status(400).json({ error: 'prompt is required' });
 
-  let modelId;
-  if (override_settings.sd_model_checkpoint) {
-    modelId = findModelId(cfg, override_settings.sd_model_checkpoint);
-  }
-
-  const workflowId = (modelId && findWorkflowForModel(cfg, modelId)) || cfg.activeWorkflow;
+  const workflowId = (override_settings.sd_model_checkpoint
+    ? findWorkflowId(cfg, override_settings.sd_model_checkpoint)
+    : null) || cfg.activeWorkflow;
   if (!workflowId || !cfg.workflows?.[workflowId]) {
     return res.status(400).json({ error: 'No active workflow configured.' });
   }
 
-  if (!modelId) {
-    const firstGen = (cfg.workflows[workflowId].steps ?? []).find(s => s.type === 'generate');
-    modelId = firstGen?.modelId ?? null;
-  }
+  const firstGenStep = (cfg.workflows[workflowId].steps ?? []).find(s => s.type === 'generate');
+  let modelId = firstGenStep?.modelId ?? null;
 
   if (modelId && !cfg.models?.[modelId]) {
     return res.status(400).json({ error: `Model "${modelId}" not found in config.` });
@@ -305,11 +293,10 @@ async function handleGenerationRequest(req, res) {
           const iterSeed      = seed !== -1 ? Number(seed) + i : undefined;
           const iterOverrides = iterSeed != null ? { ...overrides, seed: iterSeed } : overrides;
 
-          const runRes = await fetch(`http://${host}/api/generate/run`, {
+          const runRes = await longFetch(`http://${host}/api/generate/run`, {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
             body:   JSON.stringify({ prompt, references, imageContext, overrides: iterOverrides, workflowId }),
             signal: pipelineSignal,
-            dispatcher: longPollAgent,
           });
 
           if (!runRes.ok) {
@@ -410,7 +397,7 @@ router.get('/progress', (req, res) => {
 
 router.get('/sd-models', (req, res) => {
   const cfg = config.load();
-  res.json(Object.entries(cfg.models || {}).map(([id, m]) => modelToA1111(id, m)));
+  res.json(Object.entries(cfg.workflows || {}).map(([id, wf]) => workflowToA1111(id, wf)));
 });
 
 // ── GET|POST /sdapi/v1/options ────────────────────────────────────────────────
@@ -419,11 +406,8 @@ router.get('/options', (req, res) => {
   const cfg      = config.load();
   const wfId     = cfg.activeWorkflow;
   const workflow = wfId ? cfg.workflows?.[wfId] : null;
-  const firstGen = (workflow?.steps ?? []).find(s => s.type === 'generate');
-  const modelId  = firstGen?.modelId ?? null;
-  const model    = modelId ? cfg.models?.[modelId] : null;
   res.json({
-    sd_model_checkpoint: model ? `${model.label} [${modelId}]` : '',
+    sd_model_checkpoint: workflow ? `${workflow.label} [${wfId}]` : '',
     sd_model_hash:       '',
   });
 });
@@ -432,11 +416,8 @@ router.post('/options', (req, res) => {
   const { sd_model_checkpoint } = req.body;
   if (sd_model_checkpoint) {
     const cfg = config.load();
-    const modelId = findModelId(cfg, sd_model_checkpoint);
-    if (!modelId) return res.status(400).json({ error: `Model "${sd_model_checkpoint}" not found` });
-    // Switch to the first workflow that uses this model
-    const workflowId = findWorkflowForModel(cfg, modelId);
-    if (!workflowId) return res.status(400).json({ error: `No workflow found for model "${sd_model_checkpoint}"` });
+    const workflowId = findWorkflowId(cfg, sd_model_checkpoint);
+    if (!workflowId) return res.status(400).json({ error: `Workflow "${sd_model_checkpoint}" not found` });
     config.save({ activeWorkflow: workflowId });
   }
   res.json({});

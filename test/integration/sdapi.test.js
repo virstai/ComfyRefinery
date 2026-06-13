@@ -169,11 +169,11 @@ test('POST /sdapi/v1/txt2img with override_settings.sd_model_checkpoint selects 
   assert.equal(info.model, 'test-sdxl', 'info.model should reflect the overridden model id');
 });
 
-test('POST /sdapi/v1/txt2img selects model by "Label [id]" format', async () => {
+test('POST /sdapi/v1/txt2img selects workflow by "Label [id]" format', async () => {
   reviewVerdict = 'ACCEPT';
   const res = await postJSON(sdapi('/txt2img'), {
     prompt:            'a whale',
-    override_settings: { sd_model_checkpoint: 'Test SDXL [test-sdxl]' },
+    override_settings: { sd_model_checkpoint: 'Test SDXL [test-wf-sdxl]' },
   });
   assert.equal(res.status, 200);
   const data = await res.json();
@@ -243,35 +243,35 @@ test('GET /sdapi/v1/sd-models returns all configured models in A1111 format', as
 
 // ── GET /POST /sdapi/v1/options ───────────────────────────────────────────────
 
-test('GET /sdapi/v1/options returns active workflow model as sd_model_checkpoint', async () => {
+test('GET /sdapi/v1/options returns active workflow as sd_model_checkpoint', async () => {
   const res  = await fetch(sdapi('/options'));
   assert.equal(res.status, 200);
   const data = await res.json();
 
   assert.ok('sd_model_checkpoint' in data, 'should have sd_model_checkpoint field');
-  assert.ok(data.sd_model_checkpoint.includes('Test SD1.5'), 'should reflect active workflow model label');
-  assert.ok(data.sd_model_checkpoint.includes('test-sd15'),  'should include model id in brackets');
+  assert.ok(data.sd_model_checkpoint.includes('Test SD1.5'),   'should reflect active workflow label');
+  assert.ok(data.sd_model_checkpoint.includes('test-wf-sd15'), 'should include workflow id in brackets');
 });
 
-test('POST /sdapi/v1/options switches active workflow by model id', async () => {
-  const set = await postJSON(sdapi('/options'), { sd_model_checkpoint: 'test-sdxl' });
+test('POST /sdapi/v1/options switches active workflow by workflow id', async () => {
+  const set = await postJSON(sdapi('/options'), { sd_model_checkpoint: 'test-wf-sdxl' });
   assert.equal(set.status, 200);
 
   const opts = await (await fetch(sdapi('/options'))).json();
   assert.ok(opts.sd_model_checkpoint.includes('Test SDXL'));
 
   // Restore original active workflow for subsequent tests.
-  await postJSON(sdapi('/options'), { sd_model_checkpoint: 'test-sd15' });
+  await postJSON(sdapi('/options'), { sd_model_checkpoint: 'test-wf-sd15' });
 });
 
-test('POST /sdapi/v1/options switches active workflow by model label', async () => {
+test('POST /sdapi/v1/options switches active workflow by workflow label', async () => {
   const set = await postJSON(sdapi('/options'), { sd_model_checkpoint: 'Test SDXL' });
   assert.equal(set.status, 200);
 
   const opts = await (await fetch(sdapi('/options'))).json();
-  assert.ok(opts.sd_model_checkpoint.includes('test-sdxl'));
+  assert.ok(opts.sd_model_checkpoint.includes('test-wf-sdxl'));
 
-  await postJSON(sdapi('/options'), { sd_model_checkpoint: 'test-sd15' });
+  await postJSON(sdapi('/options'), { sd_model_checkpoint: 'test-wf-sd15' });
 });
 
 test('POST /sdapi/v1/options returns 400 for unknown model', async () => {
