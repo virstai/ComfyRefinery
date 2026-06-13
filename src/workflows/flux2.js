@@ -1,5 +1,7 @@
 'use strict';
 
+const { applyLoraChain } = require('./lib/loraChain');
+
 // Flux 2 Dev / Klein workflow.
 // Single CLIPLoader (type "flux2") covers both Mistral 3 Small (Dev) and Qwen 3 4B (Klein).
 // Sampler is plain KSampler + FluxGuidance, not the SamplerCustomAdvanced pipeline used by Flux 1.
@@ -24,7 +26,12 @@ function build(params) {
   const unetId = nextId(); nodes[unetId] = { class_type: "UNETLoader",     inputs: { unet_name: p.unetName, weight_dtype: "default" } };
   const clipId = nextId(); nodes[clipId] = { class_type: "CLIPLoader",     inputs: { clip_name: p.clipName, type: "flux2" } };
   const vaeId  = nextId(); nodes[vaeId]  = { class_type: "VAELoader",      inputs: { vae_name: p.vaeName } };
-  const textId = nextId(); nodes[textId] = { class_type: "CLIPTextEncode", inputs: { text: p.positivePrompt, clip: [clipId, 0] } };
+
+  let modelRef = [unetId, 0];
+  let clipRef  = [clipId, 0];
+  ({ modelRef, clipRef } = applyLoraChain(nodes, modelRef, clipRef, p.loras, () => nextId()));
+
+  const textId = nextId(); nodes[textId] = { class_type: "CLIPTextEncode", inputs: { text: p.positivePrompt, clip: clipRef } };
   const guidId = nextId(); nodes[guidId] = { class_type: "FluxGuidance",   inputs: { conditioning: [textId, 0], guidance: p.guidance } };
 
   // Chain ReferenceLatent nodes for multi-reference conditioning (native to Flux 2).
@@ -60,7 +67,7 @@ function build(params) {
   const sampId = nextId(); nodes[sampId] = { class_type: "KSampler", inputs: {
     seed, steps: p.steps, cfg: 1, sampler_name: p.sampler, scheduler: p.scheduler,
     denoise: p.initImage ? (p.denoise ?? 0.6) : 1.0,
-    model: [unetId, 0], positive: condRef, negative: [zeroId, 0], latent_image: latentRef,
+    model: modelRef, positive: condRef, negative: [zeroId, 0], latent_image: latentRef,
   }};
   const decId  = nextId(); nodes[decId]  = { class_type: "VAEDecode", inputs: { samples: [sampId, 0], vae: [vaeId, 0] } };
   const saveId = nextId(); nodes[saveId] = { class_type: "SaveImage", inputs: { filename_prefix: "iterator", images: [decId, 0] } };

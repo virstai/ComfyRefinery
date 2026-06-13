@@ -2,6 +2,7 @@
 
 // Flux.1 workflow — uses FluxGuidance instead of CFG, dual text encoder (T5 + CLIP-L),
 // SamplerCustomAdvanced pipeline. Supports both checkpoint and UNet/CLIP/VAE split loading.
+const { applyLoraChain } = require('./lib/loraChain');
 const defaults = {
   width: 1024,
   height: 1024,
@@ -35,6 +36,8 @@ function build(params) {
 
 function _buildGraph(nodes, p, seed, modelRef, clipRef, vaeRef) {
   const nextId = () => String(Object.keys(nodes).length + 1);
+
+  ({ modelRef, clipRef } = applyLoraChain(nodes, modelRef, clipRef, p.loras, () => nextId()));
 
   const posId = nextId(); nodes[posId] = { class_type: "CLIPTextEncode", inputs: { text: p.positivePrompt, clip: clipRef } };
 
