@@ -2,6 +2,8 @@
 
 // ChromaHD workflow — all standard ComfyUI nodes, no custom node pack required.
 // Split loading: unetName + clipName (T5 encoder) + vaeName.
+const { applyLoraChain } = require('./lib/loraChain');
+
 const defaults = {
   width:          1152,
   height:         1152,
@@ -16,17 +18,22 @@ function build(params) {
   const seed = p.seed ?? Math.floor(Math.random() * 2 ** 32);
 
   const nodes = {
-    "1":  { class_type: "UNETLoader",           inputs: { unet_name: p.unetName, weight_dtype: "default" } },
-    "2":  { class_type: "CLIPLoader",            inputs: { clip_name: p.clipName, type: "chroma", device: "default" } },
-    "3":  { class_type: "VAELoader",             inputs: { vae_name: p.vaeName } },
-    "4":  { class_type: "ModelSamplingAuraFlow", inputs: { model: ["1", 0], shift: 1.0 } },
-    "5":  { class_type: "T5TokenizerOptions",    inputs: { clip: ["2", 0], min_padding: 0, min_length: 0 } },
-    "6":  { class_type: "CLIPTextEncode",        inputs: { text: p.positivePrompt, clip: ["5", 0] } },
-    "7":  { class_type: "CLIPTextEncode",        inputs: { text: p.negativePrompt, clip: ["5", 0] } },
-    "8":  { class_type: "CFGGuider",             inputs: { model: ["4", 0], positive: ["6", 0], negative: ["7", 0], cfg: p.guidance } },
-    "10": { class_type: "RandomNoise",           inputs: { noise_seed: seed } },
-    "11": { class_type: "KSamplerSelect",        inputs: { sampler_name: p.sampler } },
+    "1":  { class_type: "UNETLoader",  inputs: { unet_name: p.unetName, weight_dtype: "default" } },
+    "2":  { class_type: "CLIPLoader",  inputs: { clip_name: p.clipName, type: "chroma", device: "default" } },
+    "3":  { class_type: "VAELoader",   inputs: { vae_name: p.vaeName } },
   };
+
+  let modelRef = ["1", 0];
+  let clipRef  = ["2", 0];
+  ({ modelRef, clipRef } = applyLoraChain(nodes, modelRef, clipRef, p.loras));
+
+  nodes["4"]  = { class_type: "ModelSamplingAuraFlow", inputs: { model: modelRef, shift: 1.0 } };
+  nodes["5"]  = { class_type: "T5TokenizerOptions",    inputs: { clip: clipRef, min_padding: 0, min_length: 0 } };
+  nodes["6"]  = { class_type: "CLIPTextEncode",        inputs: { text: p.positivePrompt, clip: ["5", 0] } };
+  nodes["7"]  = { class_type: "CLIPTextEncode",        inputs: { text: p.negativePrompt, clip: ["5", 0] } };
+  nodes["8"]  = { class_type: "CFGGuider",             inputs: { model: ["4", 0], positive: ["6", 0], negative: ["7", 0], cfg: p.guidance } };
+  nodes["10"] = { class_type: "RandomNoise",           inputs: { noise_seed: seed } };
+  nodes["11"] = { class_type: "KSamplerSelect",        inputs: { sampler_name: p.sampler } };
 
   // img2img: swap EmptySD3LatentImage for LoadImage → VAEEncode;
   // replace BetaSamplingScheduler with BasicScheduler (which has a denoise param).

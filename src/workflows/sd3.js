@@ -1,6 +1,8 @@
 'use strict';
 
 // SD3 / SD3.5 workflow — triple text encoders (CLIP-L, CLIP-G, T5), MMDiT architecture
+const { applyLoraChain } = require('./lib/loraChain');
+
 const defaults = {
   width: 1024,
   height: 1024,
@@ -17,9 +19,14 @@ function build(params) {
 
   const nodes = {
     "1": { class_type: "CheckpointLoaderSimple", inputs: { ckpt_name: p.checkpoint } },
-    "2": { class_type: "CLIPTextEncodeSD3", inputs: { text: p.positivePrompt, clip: ["1", 1] } },
-    "3": { class_type: "CLIPTextEncodeSD3", inputs: { text: p.negativePrompt, clip: ["1", 1] } },
   };
+
+  let modelRef = ["1", 0];
+  let clipRef  = ["1", 1];
+  ({ modelRef, clipRef } = applyLoraChain(nodes, modelRef, clipRef, p.loras));
+
+  nodes["2"] = { class_type: "CLIPTextEncodeSD3", inputs: { text: p.positivePrompt, clip: clipRef } };
+  nodes["3"] = { class_type: "CLIPTextEncodeSD3", inputs: { text: p.negativePrompt, clip: clipRef } };
 
   let latentRef;
   let denoise;
@@ -42,7 +49,7 @@ function build(params) {
     inputs: {
       seed, steps: p.steps, cfg: p.cfgScale,
       sampler_name: p.sampler, scheduler: p.scheduler, denoise,
-      model: ["1", 0], positive: ["2", 0], negative: ["3", 0], latent_image: latentRef,
+      model: modelRef, positive: ["2", 0], negative: ["3", 0], latent_image: latentRef,
     },
   };
   nodes["6"] = { class_type: "VAEDecode", inputs: { samples: ["5", 0], vae: ["1", 2] } };
