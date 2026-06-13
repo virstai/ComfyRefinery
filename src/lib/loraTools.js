@@ -85,9 +85,10 @@ function requestPoseTool(state) {
     },
     guidance:
       'A pose ControlNet is available: when the description implies a specific human pose, gesture, ' +
-      'or framing, call the request_pose tool with a plain physical description of the pose ' +
-      '(e.g. "a woman facing the viewer, one arm raised and pointing directly at the camera, upper body leaning forward"). ' +
-      'Describe only the body and pose — no art style.',
+      'or framing, call the request_pose tool with a plain physical description of the pose. ' +
+      'Always describe the ENTIRE body stance from head to feet (e.g. "a woman standing facing the ' +
+      'viewer, one arm raised and pointing directly at the camera, the other arm relaxed at her side, ' +
+      'legs together"), even when the final image will be framed closer. No framing or art-style terms.',
     execute(args) {
       state.wantsPose   = true;
       state.description = args?.description || null;

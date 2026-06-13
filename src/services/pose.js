@@ -21,11 +21,13 @@ const POSE_ESTIMATOR = 'dw-ll_ucoco_384.onnx';
 // detector, not for the final artwork: subject fully in frame, plain backdrop,
 // photographic rendering (DWPose's detector is trained on photographs), and no
 // style/crop terms from the real prompt — those are what made detection fail.
+// Whole-body framing is non-negotiable: DWPose hallucinates keypoints for
+// out-of-frame limbs, which condition the generation with garbage lines.
 function draftPrompt(poseDescription) {
-  return `photorealistic photo, ${poseDescription}, entire body visible in frame, plain neutral background, natural lighting, sharp focus`;
+  return `photorealistic full-body photo, wide shot, ${poseDescription}, full figure, entire body visible in frame from head to feet, plain neutral background, natural lighting, sharp focus`;
 }
 
-const DRAFT_NEGATIVE = 'close-up, portrait, cropped, out of frame, face only, anime, cartoon, illustration, flat shading';
+const DRAFT_NEGATIVE = 'close-up, portrait, upper body, waist up, half body, bust shot, headshot, cropped, out of frame, face only, anime, cartoon, illustration, flat shading';
 
 function buildPoseGraph(poseModelConfig, poseDescription, { width, height }) {
   const { workflow } = buildArchWorkflow(poseModelConfig, {
