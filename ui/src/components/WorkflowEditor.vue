@@ -104,7 +104,11 @@
             <label>Weight
               <input type="number" v-model.number="l.weight" min="0" max="2" step="0.05">
             </label>
-            <button class="small danger" @click="step.loras.splice(li, 1)">×</button>
+            <button
+              class="small danger"
+              style="flex:0 0 auto; min-width:0; align-self:flex-end; margin-bottom:12px"
+              @click="step.loras.splice(li, 1)"
+            >Remove</button>
           </div>
           <button class="small secondary" style="margin-top:6px" @click="step.loras.push({ name: '', weight: 1.0 })">+ Add always-on LoRA</button>
           <p v-if="!lorasForStep(si).length" class="hint">No LoRAs registered for this model's architecture — see the LoRAs panel.</p>
