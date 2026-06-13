@@ -6,6 +6,12 @@ optionally pause for human review → repeat until accepted. Workflows are reusa
 configurable chains of steps (generate → upscale → video → …) that accumulate a learned
 **skill** — a short prompt-engineering guide the LLM uses to improve over time.
 
+The prompt builder runs as a tool-calling **agent**: based on the step's settings it can
+pick **LoRAs** from a registry (auto-detected per architecture, with trigger words and
+descriptions you curate) and request a **pose ControlNet** guide — a draft image is
+rendered from a pose description, a skeleton is extracted with DWPose, and the main
+generation follows it.
+
 > **Note:** This is a vibe-coded / AI-assisted project. Most features work, but many have not been fully human-tested — especially less common model architectures and more complex multi-step workflows. Expect rough edges and bugs.
 
 ## Prerequisites
@@ -90,6 +96,27 @@ Open **Workflows** (▶) and click **Add workflow**:
 2. Configure resolution, sampler, scheduler, and review settings.
 3. Optionally add an **upscale** or **video** step after the generate step.
 4. Click **Use** to make it the active workflow.
+
+### Optional — LoRAs
+
+Open **LoRAs** (✦) and click **Rescan ComfyUI** to discover LoRA files. Each entry's
+architecture is auto-detected from its training metadata where possible; assign it
+manually otherwise (untagged LoRAs are never offered to the LLM). Add trigger words and
+a description — the LLM uses these to decide when a LoRA helps.
+
+In a workflow generate step you can then pin **always-on LoRAs** (e.g. turbo LoRAs —
+remember to set the step's Steps/CFG to the LoRA's recommended values) and/or enable
+**LLM may add LoRAs**, which lets the prompt-builder agent apply catalog LoRAs per prompt.
+
+### Optional — Pose ControlNet
+
+Currently supported on the **anima** architecture (see the in-app Anima setup guide for
+the required custom nodes and weights). Select the ControlNet weights in the **model's**
+settings, then set a workflow step's **Pose mode** to `auto` (the LLM decides per prompt)
+or `always`. A pose draft is rendered with the step's model from a detection-friendly
+pose description, DWPose extracts the skeleton, and the generation follows it. If no
+pose can be extracted, the step fails rather than generating without pose control.
+Strength below ~1.0 lets the prompt override the pose.
 
 ### Step 4 — Generate
 
@@ -200,14 +227,16 @@ All three SSE endpoints emit:
 |---|---|
 | `session` | `{ id, prompt }` (or `{ id, resume: true }` when resuming) |
 | `step` | `{ index, type, label, total }` — start of each pipeline step |
-| `phase` | `{ step, phase, iteration }` |
+| `phase` | `{ step, phase, iteration }` — `prompt_building`, `posing`, `generating`, `reviewing` |
 | `token` | `{ step, iteration, phase, token }` — streaming LLM token |
 | `prompt` | `{ step, iteration, prompt }` — finalised prompt |
 | `progress` | `{ step, iteration, pct }` — ComfyUI progress 0–100 |
 | `preview` | `{ step, iteration, url }` — base64 data URL preview frame |
 | `image` | `{ step, iteration, url }` |
 | `video` | `{ step, url }` — final video URL for video steps |
-| `review` | `{ step, iteration, verdict, diagnosis }` |
+| `pose` | `{ step, iteration, url }` — extracted pose skeleton image |
+| `warning` | `{ step, iteration, message }` — non-fatal issue (e.g. unknown LoRA dropped) |
+| `review` | `{ step, iteration, verdict, diagnosis, loras?, poseUsed? }` |
 | `human_review` | `{ step, iteration, aiVerdict, aiDiagnosis }` |
 | `human_verdict` | `{ step, iteration, accepted, feedback }` |
 | `accepted_pending` | `{ step, iteration, gracePeriod, humanReview, maxIterations? }` |
@@ -278,6 +307,10 @@ DELETE /api/sessions/workflows/:id
 
 GET    /api/sessions/architectures
 GET    /api/sessions/assets
+
+GET    /api/sessions/loras          # LoRA registry
+POST   /api/sessions/loras/scan     # sync registry against ComfyUI's lora list
+PUT    /api/sessions/loras          # update one entry ({ filename, ...fields } in body)
 ```
 
 ### Skills

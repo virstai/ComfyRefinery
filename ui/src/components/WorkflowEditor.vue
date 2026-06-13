@@ -106,7 +106,7 @@
             </label>
             <button
               class="small danger"
-              style="flex:0 0 auto; min-width:0; align-self:flex-end; margin-bottom:12px"
+              style="flex:0 0 auto; min-width:0; align-self:flex-end; margin-bottom:15px"
               @click="step.loras.splice(li, 1)"
             >Remove</button>
           </div>
