@@ -5,9 +5,10 @@
 const http = require('http');
 const { WebSocketServer } = require('ws');
 
-// 1×1 transparent PNG returned by fake /view so base64 encoding works.
+// 1×1 white PNG returned by fake /view so base64 encoding works. White (not
+// transparent/black) so pose-skeleton blank-detection treats it as a valid pose.
 const TINY_PNG = Buffer.from(
-  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==',
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4////fwAJ+wP9KobjigAAAABJRU5ErkJggg==',
   'base64',
 );
 
@@ -22,7 +23,7 @@ function messageText(m) {
 }
 
 // getVerdict is called per review request so callers can change it at any time.
-function makeFakeOllama(getVerdict) {
+function makeFakeOllama(getVerdict, opts = {}) {
   return http.createServer((req, res) => {
     if (req.method !== 'POST' || req.url !== '/v1/chat/completions') {
       // Return empty model list for /v1/models
@@ -57,6 +58,26 @@ function makeFakeOllama(getVerdict) {
         text = 'a detailed landscape with mountains, high quality, sharp focus';
       }
 
+      // Tool-call emission: when the request offers tools and the test's
+      // getToolCalls callback returns calls, stream them as split deltas
+      // (exercising accumulation) and finish with no content.
+      if (stream !== false && parsed.tools && opts.getToolCalls) {
+        const calls = opts.getToolCalls(parsed) ?? [];
+        if (calls.length) {
+          res.writeHead(200, { 'Content-Type': 'text/event-stream' });
+          calls.forEach((c, i) => {
+            const argStr = JSON.stringify(c.args ?? {});
+            const mid    = Math.ceil(argStr.length / 2);
+            res.write(`data: ${JSON.stringify({ choices: [{ index: 0, delta: { tool_calls: [{ index: i, id: `call_${i}`, type: 'function', function: { name: c.name, arguments: argStr.slice(0, mid) } }] }, finish_reason: null }] })}\n\n`);
+            res.write(`data: ${JSON.stringify({ choices: [{ index: 0, delta: { tool_calls: [{ index: i, function: { arguments: argStr.slice(mid) } }] }, finish_reason: null }] })}\n\n`);
+          });
+          res.write(`data: ${JSON.stringify({ choices: [{ index: 0, delta: {}, finish_reason: 'tool_calls' }] })}\n\n`);
+          res.write('data: [DONE]\n\n');
+          res.end();
+          return;
+        }
+      }
+
       if (stream === false) {
         // Non-streaming OpenAI response
         res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -81,7 +102,7 @@ function makeFakeOllama(getVerdict) {
   });
 }
 
-function makeFakeComfyUI() {
+function makeFakeComfyUI(opts = {}) {
   const promptId = 'test-prompt-001';
   const uploads  = [];
   const prompts  = []; // each submitted ComfyUI /prompt body (parsed JSON)
@@ -115,15 +136,27 @@ function makeFakeComfyUI() {
       }));
       return;
     }
+    if (req.url.startsWith('/view_metadata/loras')) {
+      const u = new URL(req.url, 'http://x');
+      const meta = opts.loraMetadata?.[u.searchParams.get('filename')];
+      if (meta) {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify(meta));
+      }
+      res.writeHead(404); return res.end();
+    }
     if (req.url.startsWith('/view')) {
       res.writeHead(200, { 'Content-Type': 'image/png' });
-      res.end(TINY_PNG);
+      res.end(opts.viewImage ?? TINY_PNG);
       return;
     }
     if (req.url.startsWith('/object_info/')) {
+      const nodeType = req.url.split('/').pop();
       res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({}));
-      return;
+      if (opts.objectInfo?.[nodeType]) {
+        return res.end(JSON.stringify({ [nodeType]: opts.objectInfo[nodeType] }));
+      }
+      return res.end(JSON.stringify({}));
     }
     res.writeHead(404); res.end();
   });

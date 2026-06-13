@@ -8,6 +8,7 @@ const llm       = require('../services/llm');
 const skills    = require('../services/skills');
 const { refreshSkill } = require('../services/skillRefresher');
 const { architectures, archMeta, getDefaults } = require('../workflows');
+const loraRegistry = require('../services/loraRegistry');
 
 // GET /api/sessions/config
 router.get('/config', (req, res) => res.json(config.load()));
@@ -127,6 +128,30 @@ router.patch('/skills/:workflowId/notes', (req, res) => {
   }
 });
 
+// ── LoRA registry ──────────────────────────────────────────────────────────────
+
+// GET /api/sessions/loras — current registry
+router.get('/loras', (req, res) => {
+  res.json({ loras: config.load().loras ?? {} });
+});
+
+// POST /api/sessions/loras/scan — sync registry against ComfyUI's lora list
+router.post('/loras/scan', async (req, res) => {
+  try { res.json({ loras: await loraRegistry.scan() }); }
+  catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// PUT /api/sessions/loras — update one entry (filename in body: may contain "/")
+router.put('/loras', (req, res) => {
+  try {
+    const { filename, ...data } = req.body;
+    if (!filename) return res.status(400).json({ error: 'filename is required' });
+    res.json(loraRegistry.saveLora(filename, data));
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
 // ── Architecture metadata ──────────────────────────────────────────────────────
 
 // GET /api/sessions/architectures
@@ -148,7 +173,7 @@ router.get('/assets', async (req, res) => {
     llm.listModels(cfg),
   ]);
 
-  const comfy  = comfyAssets.status === 'fulfilled' ? comfyAssets.value : { checkpoints: [], vaes: [], clips: [], unets: [], upscaleModels: [], ipAdapterModels: [], clipVisionModels: [], reduxModels: [], errors: [comfyAssets.reason.message] };
+  const comfy  = comfyAssets.status === 'fulfilled' ? comfyAssets.value : { checkpoints: [], vaes: [], clips: [], unets: [], upscaleModels: [], ipAdapterModels: [], clipVisionModels: [], reduxModels: [], loras: [], controlNets: [], errors: [comfyAssets.reason.message] };
   const models = llmModels.status === 'fulfilled' ? llmModels.value : [];
 
   res.json({

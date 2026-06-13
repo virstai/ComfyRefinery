@@ -18,13 +18,14 @@ const GLOBAL_DEFAULTS = {
   acceptanceGracePeriod:  10, // seconds; 0 = disabled
   models:                 {},
   workflows:              {},
+  loras:                  {},
 };
 
 // Model loader fields only — sampling params live in workflow steps.
 const MODEL_LOADER_FIELDS = new Set([
   'id', 'label', 'architecture', 'checkpoint', 'unetName', 'unetName2', 'modelQuantization', 'vaePrecision', 'clipL', 't5xxl',
   'clipName', 'vaeName', 'vae', 'useRefiner', 'refinerCheckpoint',
-  'adapterModel', 'clipVisionModel', 'adapterWeight',
+  'adapterModel', 'clipVisionModel', 'adapterWeight', 'controlNetModel',
 ]);
 
 function load() {

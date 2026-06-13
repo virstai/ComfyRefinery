@@ -16,9 +16,12 @@ function authHeaders(cfg) {
 }
 
 // Convert internal message format to OpenAI format.
-// When a message has an `images` array, content becomes an array of parts.
+// - `images: [...]` → content-array with image_url parts
+// - role 'tool' and assistant `tool_calls` pass through unchanged (tool loop)
 function toOpenAIMessages(messages) {
   return messages.map(m => {
+    if (m.role === 'tool') return { role: 'tool', tool_call_id: m.tool_call_id, content: m.content };
+    if (m.tool_calls) return { role: m.role, content: m.content ?? null, tool_calls: m.tool_calls };
     if (!m.images?.length) return { role: m.role, content: m.content };
     return {
       role: m.role,
@@ -43,12 +46,16 @@ async function chat(cfg, messages, options = {}) {
   return (await res.json()).choices[0].message.content;
 }
 
+// Returns a plain string when options.tools is absent/empty; { text, toolCalls: [{ id, name, args }] } otherwise.
 async function chatStream(cfg, messages, onToken, options = {}) {
-  const { signal, ...bodyOptions } = options;
+  const { signal, tools, ...bodyOptions } = options;
+  const body = { model: cfg.llmModel, messages: toOpenAIMessages(messages), stream: true, ...bodyOptions };
+  if (tools?.length) body.tools = tools;
+
   const res = await fetch(`${baseUrl(cfg)}/chat/completions`, {
     method:  'POST',
     headers: authHeaders(cfg),
-    body:    JSON.stringify({ model: cfg.llmModel, messages: toOpenAIMessages(messages), stream: true, ...bodyOptions }),
+    body:    JSON.stringify(body),
     signal,
   });
   if (!res.ok) throw new Error(`LLM error ${res.status}: ${await res.text()}`);
@@ -57,6 +64,7 @@ async function chatStream(cfg, messages, onToken, options = {}) {
   const decoder = new TextDecoder();
   let full = '';
   let buf  = '';
+  const toolCallAcc = new Map(); // stream index → { id, name, args (json string) }
 
   while (true) {
     const { done, value } = await reader.read();
@@ -70,12 +78,31 @@ async function chatStream(cfg, messages, onToken, options = {}) {
       if (payload === '[DONE]') continue;
       try {
         const obj   = JSON.parse(payload);
-        const token = obj.choices?.[0]?.delta?.content ?? '';
+        const delta = obj.choices?.[0]?.delta;
+        const token = delta?.content ?? '';
         if (token) { full += token; onToken?.(token); }
+        for (const tc of delta?.tool_calls ?? []) {
+          const cur = toolCallAcc.get(tc.index) ?? { id: '', name: '', args: '' };
+          if (tc.id)                  cur.id   = tc.id;
+          if (tc.function?.name)      cur.name += tc.function.name;
+          if (tc.function?.arguments) cur.args += tc.function.arguments;
+          toolCallAcc.set(tc.index, cur);
+        }
       } catch { /* skip malformed chunks */ }
     }
   }
-  return full;
+
+  if (!tools?.length) return full;
+
+  const toolCalls = [];
+  for (const cur of toolCallAcc.values()) {
+    try {
+      toolCalls.push({ id: cur.id, name: cur.name, args: JSON.parse(cur.args || '{}') });
+    } catch {
+      console.warn(`[llm] dropping tool call "${cur.name}": malformed arguments`);
+    }
+  }
+  return { text: full, toolCalls };
 }
 
 async function listModels(cfg) {

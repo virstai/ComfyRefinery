@@ -88,6 +88,29 @@ async function _runIterativeLoop(stepType, stepDef, stepIndex, session, ctx, cfg
         emit(res, 'prompt', { step: stepIndex, iteration: iterNum, prompt: prepResult.prompt });
       }
 
+      // Tool-interpretation warnings from prepare (unknown loras etc.)
+      for (const w of prepResult.warnings ?? []) {
+        console.log(`[${tag}] step ${stepIndex} iter ${iterNum}: ${w}`);
+        emit(res, 'warning', { step: stepIndex, iteration: iterNum, message: w });
+      }
+
+      // ── Phase 1.5: pre-pass (pose ControlNet) ─────────────────────
+      // A wanted-but-failed pose throws here and fails the step: a workflow
+      // that asked for pose control must not silently generate without it.
+      if (typeof stepType.prePass === 'function') {
+        const pre = await stepType.prePass(stepDef, prepResult, ctx, {
+          onStart: () => {
+            emit(res, 'phase', { step: stepIndex, phase: 'posing', iteration: iterNum });
+            console.log(`[${tag}] step ${stepIndex} iter ${iterNum}: generating pose guide…`);
+          },
+          onProgress: pct => emit(res, 'progress', { step: stepIndex, iteration: iterNum, pct }),
+        });
+        if (isKilled()) throw new Error('Generation stopped by user');
+        if (pre?.poseImageUrl) {
+          emit(res, 'pose', { step: stepIndex, iteration: iterNum, url: pre.poseImageUrl });
+        }
+      }
+
       // ── Phase 2: generate ─────────────────────────────────────────
       emit(res, 'phase', { step: stepIndex, phase: 'generating', iteration: iterNum });
       console.log(`[${tag}] step ${stepIndex} iter ${iterNum}: queuing ComfyUI job…`);
@@ -110,29 +133,48 @@ async function _runIterativeLoop(stepType, stepDef, stepIndex, session, ctx, cfg
       console.log(`[${tag}] step ${stepIndex} iter ${iterNum}: image ready — ${image.filename}`);
       emit(res, 'image', { step: stepIndex, iteration: iterNum, url: imageUrl });
 
-      // Fetch image as base64 for vision review
       const imgFetchUrl = `${cfg.comfyuiUrl}/view?filename=${encodeURIComponent(image.filename)}&subfolder=${encodeURIComponent(image.subfolder ?? '')}&type=${encodeURIComponent(image.type ?? 'output')}`;
-      const imgRes = await fetch(imgFetchUrl);
-      if (!imgRes.ok) throw new Error(`Failed to fetch image for review: ${imgRes.status}`);
-      const imageBase64 = Buffer.from(await imgRes.arrayBuffer()).toString('base64');
 
       // ── Phase 3: review ───────────────────────────────────────────
-      emit(res, 'phase', { step: stepIndex, phase: 'reviewing', iteration: iterNum });
-      console.log(`[${tag}] step ${stepIndex} iter ${iterNum}: reviewing…`);
+      // Deterministic steps (e.g. model upscales) skip the LLM review: the
+      // same input always produces the same output, so a rejection could
+      // never be fixed by re-running.
+      let verdict, diagnosis;
+      if (stepType.skipReview?.(stepDef)) {
+        verdict   = 'ACCEPT';
+        diagnosis = 'deterministic step — review skipped';
+        console.log(`[${tag}] step ${stepIndex} iter ${iterNum}: review skipped (deterministic step)`);
+      } else {
+        emit(res, 'phase', { step: stepIndex, phase: 'reviewing', iteration: iterNum });
+        console.log(`[${tag}] step ${stepIndex} iter ${iterNum}: reviewing…`);
 
-      const reviewMsgs = stepType.reviewMessages(stepDef, prepResult, ctx, imageBase64, stepData.iterations);
-      const reviewRaw  = await llm.chatStream(cfg, reviewMsgs, token => {
-        emit(res, 'token', { step: stepIndex, iteration: iterNum, phase: 'review', token });
-        process.stdout.write(token);
-      }, { signal: ctx.signal });
-      process.stdout.write('\n');
+        // Fetch image as base64 for vision review
+        const imgRes = await fetch(imgFetchUrl);
+        if (!imgRes.ok) throw new Error(`Failed to fetch image for review: ${imgRes.status}`);
+        const imageBase64 = Buffer.from(await imgRes.arrayBuffer()).toString('base64');
 
-      if (isKilled()) throw new Error('Generation stopped by user');
-      const { verdict, diagnosis } = parseReview(reviewRaw);
+        const reviewMsgs = stepType.reviewMessages(stepDef, prepResult, ctx, imageBase64, stepData.iterations);
+        const reviewRaw  = await llm.chatStream(cfg, reviewMsgs, token => {
+          emit(res, 'token', { step: stepIndex, iteration: iterNum, phase: 'review', token });
+          process.stdout.write(token);
+        }, { signal: ctx.signal });
+        process.stdout.write('\n');
+
+        if (isKilled()) throw new Error('Generation stopped by user');
+        ({ verdict, diagnosis } = parseReview(reviewRaw));
+      }
       console.log(`[${tag}] step ${stepIndex} iter ${iterNum}: verdict=${verdict} — ${diagnosis}`);
-      emit(res, 'review', { step: stepIndex, iteration: iterNum, verdict, diagnosis });
+      emit(res, 'review', { step: stepIndex, iteration: iterNum, verdict, diagnosis,
+        ...(prepResult.loras?.length ? { loras: prepResult.loras } : {}),
+        ...(prepResult.poseImageUrl  ? { poseUsed: true }          : {}) });
 
       const iteration = { prompt: prepResult.prompt, imageUrl, verdict, diagnosis };
+      if (prepResult.loras?.length) iteration.loras = prepResult.loras;
+      if (prepResult.poseImageUrl) {
+        iteration.poseUsed     = true;
+        iteration.poseImageUrl = prepResult.poseImageUrl;
+      }
+      if (prepResult.warnings?.length) iteration.warnings = [...prepResult.warnings];
       stepData.iterations.push(iteration);
       accepted = verdict === 'ACCEPT';
 

@@ -83,6 +83,7 @@ const navItems = [
   { view: 'queue',     icon: '⇌', label: 'Queue'     },
   { view: 'workflows', icon: '⬡', label: 'Workflows' },
   { view: 'models',    icon: '⬡', label: 'Models'    },
+  { view: 'loras',     icon: '✦', label: 'LoRAs'     },
   { view: 'history',   icon: '☰', label: 'History'   },
   { view: 'settings',  icon: '⚙', label: 'Settings'  },
 ];

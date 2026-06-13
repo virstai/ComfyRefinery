@@ -87,6 +87,59 @@
             </p>
           </div>
         </div>
+
+        <!-- LoRAs -->
+        <div class="review-block">
+          <strong>LoRAs</strong>
+          <label class="checkbox-label">
+            <input type="checkbox" v-model="step.llmLoras"> LLM may add LoRAs (tool calling)
+          </label>
+          <div v-for="(l, li) in step.loras" :key="li" class="row" style="margin-top:6px">
+            <label>Always-on LoRA
+              <select v-model="l.name">
+                <option value="">— select —</option>
+                <option v-for="lr in lorasForStep(si)" :key="lr.filename" :value="lr.filename">{{ lr.label }} ({{ lr.filename }})</option>
+              </select>
+            </label>
+            <label>Weight
+              <input type="number" v-model.number="l.weight" min="0" max="2" step="0.05">
+            </label>
+            <button
+              class="small danger"
+              style="flex:0 0 auto; min-width:0; align-self:flex-end; margin-bottom:15px"
+              @click="step.loras.splice(li, 1)"
+            >Remove</button>
+          </div>
+          <button class="small secondary" style="margin-top:6px" @click="step.loras.push({ name: '', weight: 1.0 })">+ Add always-on LoRA</button>
+          <p v-if="!lorasForStep(si).length" class="hint">No LoRAs registered for this model's architecture — see the LoRAs panel.</p>
+        </div>
+
+        <!-- Pose ControlNet -->
+        <div class="review-block">
+          <strong>Pose ControlNet</strong>
+          <div class="row" style="margin-top:6px">
+            <label>Pose mode
+              <select v-model="step.poseMode">
+                <option value="off">Off</option>
+                <option value="auto">Auto (LLM decides)</option>
+                <option value="always">Always</option>
+              </select>
+            </label>
+            <template v-if="step.poseMode !== 'off'">
+              <label>Strength
+                <input type="number" v-model.number="step.cnStrength" min="0" max="2" step="0.05">
+              </label>
+            </template>
+          </div>
+          <p v-if="step.poseMode !== 'off'" class="hint">
+            A pose draft is rendered with this step's model from a detection-friendly prompt
+            (plain background, photo rendering; supports any framing and multiple subjects), the
+            skeleton is extracted with DWPose, and the main generation follows it via ControlNet.
+            The ControlNet weights are selected in the generation model's settings (Models panel).
+            Strength below ~1.0 lets the prompt override the pose. If no pose can be extracted,
+            the step fails rather than continuing.
+          </p>
+        </div>
       </template>
 
       <!-- ── Upscale step ───────────────────────────────────────────────── -->
@@ -284,8 +337,8 @@
 </template>
 
 <script setup>
-import { reactive, computed, watch, ref } from 'vue';
-import { saveWorkflow, deleteWorkflow, loadSkill, saveNotes, refreshSkill as apiRefreshSkill } from '../stores/config.js';
+import { reactive, computed, watch, ref, onMounted } from 'vue';
+import { saveWorkflow, deleteWorkflow, loadSkill, saveNotes, refreshSkill as apiRefreshSkill, loadLoras } from '../stores/config.js';
 
 const props = defineProps({
   workflowId: { type: String, default: null },
@@ -308,6 +361,14 @@ const upscaleModels = computed(() => {
   return Array.isArray(list) ? list : [];
 });
 
+const loraRegistry = ref({});
+onMounted(async () => { loraRegistry.value = await loadLoras().catch(() => ({})); });
+
+function lorasForStep(si) {
+  const arch = stepArch(si);
+  return Object.values(loraRegistry.value).filter(l => l.architecture === arch);
+}
+
 function blankGenerateStep() {
   return {
     type: 'generate',
@@ -315,6 +376,8 @@ function blankGenerateStep() {
     sampler: '', scheduler: '', negativePrompt: '', refinerSwitchAt: '',
     maxIterations: '', humanReview: false, gracePeriod: '',
     visionNotes: false, refMode: 'txt2img', refDenoise: 0.6,
+    loras: [], llmLoras: false,
+    poseMode: 'off', cnStrength: 1.0,
   };
 }
 
@@ -390,6 +453,10 @@ function stepFromDef(s) {
                    ?? s.referenceStrategy?.diffusion?.one?.denoise  // back-compat
                    ?? s.referenceStrategy?.diffusion?.many?.denoise // back-compat
                    ?? 0.6,
+    loras:           (s.loras ?? []).map(l => ({ ...l })),
+    llmLoras:        s.llmLoras ?? false,
+    poseMode:        s.controlNet?.poseMode        ?? 'off',
+    cnStrength:      s.controlNet?.strength        ?? 1.0,
   };
 }
 
@@ -587,6 +654,14 @@ async function save() {
           ...(s.refMode === 'init-image' && { denoise: Number(s.refDenoise) || 0.6 }),
         },
       },
+      ...(s.loras.some(l => l.name) && { loras: s.loras.filter(l => l.name).map(l => ({ name: l.name, weight: Number(l.weight) || 1.0 })) }),
+      llmLoras: s.llmLoras,
+      ...(s.poseMode !== 'off' && {
+        controlNet: {
+          poseMode: s.poseMode,
+          strength: Number(s.cnStrength) || 1.0,
+        },
+      }),
     };
   });
 

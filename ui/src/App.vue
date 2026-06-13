@@ -56,6 +56,11 @@
         @changed="onConfigChanged"
       />
 
+      <LorasPanel
+        v-else-if="activeView === 'loras'"
+        :arch-meta="configState.archMeta"
+      />
+
       <QueuePanel
         v-else-if="activeView === 'queue'"
       />
@@ -82,6 +87,7 @@ import GenerateSection from './components/GenerateSection.vue';
 import RunSection      from './components/RunSection.vue';
 import WorkflowsPanel  from './components/WorkflowsPanel.vue';
 import ModelsPanel     from './components/ModelsPanel.vue';
+import LorasPanel      from './components/LorasPanel.vue';
 import HistoryPanel    from './components/HistoryPanel.vue';
 import SettingsPanel   from './components/SettingsPanel.vue';
 import QueuePanel      from './components/QueuePanel.vue';

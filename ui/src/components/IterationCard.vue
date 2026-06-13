@@ -21,6 +21,7 @@
       </div>
       <div v-if="iteration.humanPending"    class="thumb-badge">Review</div>
       <div v-if="iteration.acceptedPending" class="thumb-badge">Pending</div>
+      <div v-if="iteration.poseImageUrl"    class="thumb-badge thumb-badge--pose" title="Pose guide used">Pose</div>
     </div>
     <div class="thumb-footer">
       <span class="thumb-num">#{{ iteration.n }}</span>

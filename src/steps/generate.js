@@ -1,10 +1,12 @@
 'use strict';
 
-const llm    = require('../services/llm');
 const skills = require('../services/skills');
+const agent  = require('../services/agent');
 const { buildWorkflow: buildArchWorkflow, getDefaults } = require('../workflows');
 const { parsePromptResponse } = require('../lib/parsers');
 const { LOCAL_PREAMBLE } = require('../services/skillRefresher');
+const pose = require('../services/pose');
+const { catalogForArch, alwaysOnSection, addLoraTool, requestPoseTool, mergeLoras } = require('../lib/loraTools');
 
 function label(stepDef, cfg) {
   return cfg?.models?.[stepDef.modelId]?.label ?? stepDef.modelId ?? 'Generate';
@@ -28,6 +30,8 @@ function buildInitialMessages(userPrompt, architecture, archDefaults, skillSumma
 function buildRefinementMessages(userPrompt, iterations, architecture, skillSummary) {
   const history = iterations.map((it, i) => {
     let entry = `Iteration ${i + 1}:\n  Prompt: ${it.prompt}\n  Verdict: ${it.verdict}\n  Diagnosis: ${it.diagnosis}`;
+    if (it.loras?.length) entry += `\n  LoRAs used: ${it.loras.map(l => `${l.name}@${l.weight}`).join(', ')}`;
+    if (it.poseUsed)      entry += `\n  Pose guide: used`;
     if (it.humanFeedback) entry += `\n  Human feedback: ${it.humanFeedback}`;
     return entry;
   }).join('\n\n');
@@ -115,8 +119,37 @@ async function prepare(stepDef, ctx, previousIterations, onToken) {
     }
   }
 
-  const raw    = await llm.chatStream(cfg, messages, onToken, { signal: ctx.signal });
-  const prompt = parsePromptResponse(raw);
+  // ── Agent tools, assembled from the step's settings ─────────────────
+  // Each tool carries its own system-prompt guidance, so the prompt only
+  // mentions capabilities this step actually enables.
+  const registry = cfg.loras ?? {};
+  const alwaysOn = stepDef.loras ?? [];
+  const catalog  = stepDef.llmLoras
+    ? catalogForArch(registry, architecture, alwaysOn.map(l => l.name))
+    : [];
+
+  const llmChosen = [];
+  const poseState = { wantsPose: false, description: null };
+  const warnings  = [];
+  const tools     = [];
+  const poseMode  = stepDef.controlNet?.poseMode;
+  if (catalog.length) tools.push(addLoraTool(catalog, llmChosen, warnings));
+  // Offered in 'always' mode too: the agent supplies the pose description
+  // even though the pose itself runs unconditionally.
+  if (poseMode === 'auto' || poseMode === 'always') tools.push(requestPoseTool(poseState));
+
+  const alwaysOnText = alwaysOnSection(alwaysOn, registry);
+  if (alwaysOnText) messages[0].content += `\n\n${alwaysOnText}`;
+
+  const result = await agent.run(cfg, messages, tools, { onToken, signal: ctx.signal });
+  warnings.push(...result.warnings);
+
+  const prompt = parsePromptResponse(result.text);
+  const loras  = mergeLoras(alwaysOn, llmChosen);
+  const wantsPose = poseMode === 'always' || poseState.wantsPose;
+  // Fall back to the raw user description (never the styled prompt — style
+  // and crop terms are what break pose detection in the draft).
+  const poseDescription = poseState.description ?? ctx.userPrompt;
 
   const params = {
     ...archDefaults,
@@ -125,7 +158,42 @@ async function prepare(stepDef, ctx, previousIterations, onToken) {
     positivePrompt: prompt,
   };
 
-  return { prompt, params };
+  return { prompt, params, loras, wantsPose, poseDescription, warnings };
+}
+
+// Optional pre-pass between prepare() and the main generation: pose ControlNet.
+// When a pose is wanted (mode 'always', or 'auto' + the LLM requested one) and
+// cannot be produced, this THROWS — a workflow that asked for pose control must
+// not silently generate without it.
+// hooks.onStart fires once the pose run actually begins (drives the 'posing'
+// phase event); hooks.onProgress forwards ComfyUI sampling progress.
+async function prePass(stepDef, prepResult, ctx, hooks = {}) {
+  const cn = stepDef.controlNet;
+  if (!cn || !cn.poseMode || cn.poseMode === 'off') return null;
+  const wanted = cn.poseMode === 'always' || (cn.poseMode === 'auto' && prepResult.wantsPose);
+  if (!wanted) return null;
+
+  // ControlNet weights live on the generation model's settings (legacy configs
+  // may still carry them on the workflow step).
+  const controlNetModel = ctx.modelConfig?.controlNetModel ?? cn.controlNetModel;
+  if (!controlNetModel) {
+    throw new Error(`Pose generation failed: no ControlNet model set on model "${ctx.modelConfig?.label ?? ctx.modelConfig?.id}" — select one in its model settings`);
+  }
+
+  hooks.onStart?.();
+  // The draft is rendered with the step's own generation model — it's already
+  // loaded, and any model works since the output is only ever skeletonized.
+  const { ref, imageUrl } = await pose.generatePose({
+    cfg:    ctx.cfg,
+    poseModelConfig: ctx.modelConfig,
+    poseDescription: prepResult.poseDescription,
+    width:  prepResult.params.width,
+    height: prepResult.params.height,
+    onProgress: hooks.onProgress,
+  });
+  prepResult.poseRef      = ref;
+  prepResult.poseImageUrl = imageUrl;
+  return { poseImageUrl: imageUrl };
 }
 
 // Build the ComfyUI workflow graph for this iteration.
@@ -163,10 +231,20 @@ function buildComfyWorkflow(stepDef, prepareResult, ctx) {
     // Other archs: no adapter defined, falls through to txt2img
   }
 
+  const cn = stepDef.controlNet;
+  // Weights come from the generation model's settings; legacy configs may
+  // still carry them on the step.
+  const cnModel = ctx.modelConfig?.controlNetModel ?? cn?.controlNetModel;
+  const controlNetParams = (prepareResult.poseRef && cnModel)
+    ? { controlNet: { image: prepareResult.poseRef, model: cnModel, strength: cn?.strength ?? 1.0 } }
+    : {};
+
   const { workflow } = buildArchWorkflow(ctx.modelConfig, {
     ...prepareResult.params,
     ...(initImage ? { initImage, denoise } : {}),
     ...adapterParams,
+    ...(prepareResult.loras?.length ? { loras: prepareResult.loras } : {}),
+    ...controlNetParams,
   });
   return workflow;
 }
@@ -181,4 +259,4 @@ function reviewMessages(stepDef, prepareResult, ctx, imageBase64, previousIterat
   );
 }
 
-module.exports = { label, prepare, buildComfyWorkflow, reviewMessages };
+module.exports = { label, prepare, prePass, buildComfyWorkflow, reviewMessages };

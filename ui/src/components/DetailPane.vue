@@ -105,6 +105,30 @@
             <div class="val">{{ displayPrompt }}</div>
           </div>
 
+          <!-- Applied LoRAs -->
+          <div v-if="displayed.iteration.loras?.length" class="detail-field">
+            <label>LoRAs</label>
+            <div class="val">
+              <span v-for="l in displayed.iteration.loras" :key="l.name" class="lora-chip" :class="`lora-chip--${l.source}`">
+                {{ l.name }} @ {{ l.weight }}<template v-if="l.source === 'llm'"> · LLM</template>
+              </span>
+            </div>
+          </div>
+
+          <!-- Pose guide -->
+          <div v-if="displayed.iteration.poseImageUrl" class="detail-field">
+            <label>Pose guide</label>
+            <img :src="displayed.iteration.poseImageUrl" alt="Pose skeleton" style="max-width:120px;border-radius:4px">
+          </div>
+
+          <!-- Warnings -->
+          <div v-if="displayed.iteration.warnings?.length" class="detail-field">
+            <label>Warnings</label>
+            <div class="val" style="color:var(--warning, #d97706)">
+              <div v-for="(w, i) in displayed.iteration.warnings" :key="i">{{ w }}</div>
+            </div>
+          </div>
+
           <!-- Review / diagnosis -->
           <div class="detail-field">
             <label>Review</label>
@@ -260,3 +284,11 @@ async function refuse() {
   }
 }
 </script>
+
+<style scoped>
+.lora-chip {
+  display: inline-block; font-size: 10px; padding: 1px 6px; margin: 0 4px 4px 0;
+  border-radius: 8px; background: color-mix(in srgb, var(--accent, #7c3aed) 18%, transparent);
+}
+.lora-chip--llm { background: color-mix(in srgb, #0ea5e9 20%, transparent); }
+</style>

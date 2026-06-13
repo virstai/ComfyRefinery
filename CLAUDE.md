@@ -13,7 +13,7 @@ OpenAI, LM Studio, etc.) can be pointed at via `llmBaseUrl` in settings.
 ```bash
 npm start              # production (serve public/)
 npm run dev            # API --watch + Vite hot-reload UI
-npm test               # all 130 tests
+npm test               # all 188 tests
 npm run ui:build       # compile Vue → public/
 ```
 
@@ -51,6 +51,7 @@ All planned phases complete. Ready to merge to main.
   // split-load archs (flux, flux2): unetName, clipL, t5xxl, clipName, vaeName
   // sdxl: useRefiner, refinerCheckpoint
   // sd15/sdxl with adapter: adapterModel, clipVisionModel, adapterWeight
+  // anima with pose controlnet: controlNetModel (LLLite weights from models/controlnet/)
   // flux with adapter: adapterModel (redux model), clipVisionModel
   // flux2: no adapter fields (native ReferenceLatent, no external model needed)
 }
@@ -71,6 +72,9 @@ reference strategy, ordered steps, per-step review. **Active-selected entity.**
         "visionNotes": true,
         "diffusion": { "mode": "init-image", "denoise": 0.6 }
       },
+      "loras":    [{ "name": "anima_turbo.safetensors", "weight": 1.0 }],
+      "llmLoras": true,
+      "controlNet": { "poseMode": "auto", "strength": 1.0 },
       "review": { "maxIterations": 4, "humanReview": false, "gracePeriod": 10 }
     },
     {
@@ -81,6 +85,11 @@ reference strategy, ordered steps, per-step review. **Active-selected entity.**
   ]
 }
 ```
+
+Generate step LoRA / ControlNet fields:
+- `loras` — always-on LoRA list applied to every iteration: `[{ name, weight }]`.
+- `llmLoras` — `true` enables LLM tool calling; LLM may call `add_lora` / `request_pose` via the agent loop (`src/services/agent.js`, bounded 3 rounds). Each tool carries its own system-prompt guidance, so the prompt adapts to whichever tools the step's settings enable — local models won't call tools from schemas alone. Selected LoRAs are recorded on the iteration.
+- `controlNet` — `{ poseMode, strength }`. The ControlNet weights file lives on the generation model's settings (`models[id].controlNetModel`; legacy step-level `controlNetModel` still read as fallback) — the workflow step only enables and tunes the pose. `poseMode`: `"off"` (disabled), `"auto"` (LLM-triggered via `request_pose`), `"always"` (unconditional). When active, a pose pre-pass runs (`src/services/pose.js`): a draft is rendered with the step's own generation model **from a detection-friendly prompt** — the `request_pose` tool supplies a plain physical pose description (fallback: the raw user prompt) which is wrapped in a template adding plain background and photographic rendering with an anti-crop/anti-flat-style negative. Framing follows the description (upper-body and multi-subject poses are supported); the agent's guidance prefers head-to-toe stances since they extract most reliably. The styled image prompt is never used for the draft (style terms defeat the detector). Strength below ~1.0 lets the prompt's own composition override the pose — default is 1.0. DWPreprocessor extracts the skeleton in the same ComfyUI graph; it's re-uploaded as input for the main generation. The pre-pass is architecture-agnostic (any model can draft; the skeleton suits any pose ControlNet). **Failure is fatal**: when a pose is wanted but cannot be produced (missing nodes/config, or an all-black skeleton, checked via `src/lib/png.js`), the step errors out rather than silently generating without pose control. ControlNet apply is anima-only for now (other archs ignore this field).
 
 `referenceStrategy.diffusion` — `{ mode, denoise? }`:
 - `mode: "txt2img"` — ignore refs for diffusion (still used for vision notes)
@@ -99,7 +108,10 @@ Skill + notes live in `data/skills/<workflowId>.json`, keyed by workflow ID.
   "references": [{ "filename": "ref.png", "subfolder": "", "type": "input" }],
   "steps": [
     { "type": "generate", "label": "SDXL Base", "modelId": "sdxl-base",
-      "iterations": [ { "prompt": "...", "imageUrl": "...", "verdict": "ACCEPT", "diagnosis": "..." } ],
+      "iterations": [ { "prompt": "...", "imageUrl": "...", "verdict": "ACCEPT", "diagnosis": "...",
+                        "loras": [{ "name": "anima_turbo.safetensors", "weight": 1.0, "source": "step" }],  // source: "step" | "llm"
+                        "poseUsed": true, "poseImageUrl": "/api/image?...",
+                        "warnings": ["DWPreprocessor not found — skipping pose"] } ],  // optional, only when non-empty
       "outputImageUrl": "/api/image?..." },
     { "type": "upscale", "label": "4x-UltraSharp.pth ×4",
       "iterations": [ { "imageUrl": "...", "verdict": "ACCEPT", "diagnosis": "..." } ],
@@ -116,17 +128,19 @@ All events carry `step` (0-indexed). Full event list:
 |---|---|---|
 | `session` | `{ id, prompt, resume? }` | First event; client sets sessionId |
 | `step` | `{ index, type, label, total }` | Start of each pipeline step |
-| `phase` | `{ step, phase, iteration }` | `prompt_building`, `generating`, `reviewing` |
+| `phase` | `{ step, phase, iteration }` | `prompt_building`, `posing`, `generating`, `reviewing` |
 | `token` | `{ step, iteration, phase, token }` | LLM streaming token |
 | `prompt` | `{ step, iteration, prompt }` | Final built prompt |
 | `progress` | `{ step, iteration, pct }` | ComfyUI sampling progress 0–100 |
 | `preview` | `{ step, iteration, url }` | Base64 data URL from ComfyUI WS binary frame |
 | `image` | `{ step, iteration, url }` | Final image URL after generation |
-| `review` | `{ step, iteration, verdict, diagnosis }` | AI review result |
+| `review` | `{ step, iteration, verdict, diagnosis, loras?, poseUsed? }` | AI review result; `loras`/`poseUsed` present when LLM chose them |
 | `human_review` | `{ step, iteration, aiVerdict, aiDiagnosis }` | Awaiting human decision |
 | `human_verdict` | `{ step, iteration, accepted, feedback }` | Human decision received |
 | `accepted_pending` | `{ step, iteration, gracePeriod, humanReview, maxIterations? }` | Grace period started |
 | `acceptance_refused` | `{ step, iteration }` | User refused during grace period |
+| `pose` | `{ step, iteration, url }` | Extracted pose skeleton image URL (DWPreprocessor output) |
+| `warning` | `{ step, iteration, message }` | Non-fatal warning (e.g. pose pre-pass failed) |
 | `video` | `{ step, url }` | Final video URL for video steps |
 | `step_complete` | `{ step, imageUrl?, videoUrl?, accepted }` | Step finished; pipeline stops if `!accepted` |
 | `done` | `{ accepted, imageUrl?, videoUrl?, sessionId, prompt, iterations }` | Pipeline complete |
@@ -138,7 +152,7 @@ All events carry `step` (0-indexed). Full event list:
 
 ### LLM abstraction
 All LLM calls through `src/services/llm.js`:
-- `llm.chatStream(cfg, messages, onToken, options?)` — streaming; `options.signal` aborts the fetch
+- `llm.chatStream(cfg, messages, onToken, options?)` — streaming; `options.signal` aborts the fetch; `options.tools` passes an OpenAI-format tool array. When `tools` are present the call returns `{ text, toolCalls }` (where `toolCalls` is an array of `{ id, name, args }` objects with `args` JSON-parsed) rather than a plain string.
 - `llm.chat(cfg, messages)` — non-streaming (skill refresh)
 - `llm.listModels(cfg)` → `string[]` — enumerate model IDs
 
@@ -160,7 +174,13 @@ label(stepDef, cfg)
 prepare(stepDef, ctx, previousIterations, onToken)     // → { prompt?, params?, ... }
 buildComfyWorkflow(stepDef, prepareResult, ctx)        // → ComfyUI node graph
 reviewMessages(stepDef, prepareResult, ctx, imageBase64, previousIterations)
+prePass?(stepDef, prepResult, ctx, hooks)              // optional; throws on failure
+skipReview?(stepDef)                                   // optional; true → no LLM review, auto-ACCEPT
 ```
+
+`prePass` is an optional export. When present it is called before `buildComfyWorkflow`. `hooks` provides `{ onStart(), onProgress(pct) }`. Returns `null` (not wanted) or `{ poseImageUrl: string }` (skeleton uploaded to ComfyUI; passed into the main graph as ControlNet conditioning). When a pose is wanted but cannot be produced it **throws**, failing the step — a workflow that asked for pose control must not silently continue without it.
+
+`skipReview` is an optional export: when it returns `true` for a step def, the LLM review is skipped and the iteration auto-ACCEPTs (used by deterministic model-type upscales, where re-running after a rejection could never change the result). Human review, if configured, still applies.
 
 `ctx` shape: `{ userPrompt, modelConfig, skillId, inputImage, chainedInputRef, references, cfg, signal }`.
 - `skillId` = `session.workflowId`
@@ -193,6 +213,7 @@ When `refs.length > 0 && mode === 'adapter'`:
   "review": { "maxIterations": 1, "humanReview": true } }
 ```
 `model` type: `UpscaleModelLoader → ImageUpscaleWithModel → (ImageScaleBy if factor < native) → SaveImage`.
+Model upscales are deterministic, so they run once with **no LLM review** (auto-ACCEPT; `skipReview`). Hires upscales re-diffuse with a fresh seed and keep their review loop.
 `hires` type: calls arch workflow builder with `initImage`, injects `LatentUpscaleBy` between VAEEncode and KSampler.
 
 ### Flux 2 architecture (`flux2.js`)
@@ -268,6 +289,12 @@ Notes have `auto: bool` and `enabled: bool`:
   },
   "workflows": {
     "portrait-4x": { "id": "portrait-4x", "label": "Portrait → 4x", "steps": [ ... ] }
+  },
+  "loras": {
+    "anima_turbo": { "filename": "anima_turbo.safetensors", "label": "Anima Turbo",
+                     "architecture": "anima", "triggerWords": ["anima turbo"],
+                     "description": "Speed-up LoRA for Anima", "defaultWeight": 1.0,
+                     "autoDetected": true }
   }
 }
 ```
@@ -289,9 +316,12 @@ src/
     skills.js         — skill/notes read/write (data/skills/<workflowId>.json)
     skillRefresher.js — LLM-driven skill synthesis; locked notes preserved
     llm.js            — provider router
+    agent.js          — generic tool-calling agent loop (guidance injection, execute handlers, bounded rounds)
     comfyui.js        — ComfyUI HTTP + WebSocket client; preview frame handling
+    loraRegistry.js   — cfg.loras CRUD; scan via /api/sessions/loras/scan (reads ComfyUI LoRA list + auto-detects arch via loraMeta.js)
+    pose.js           — pose pre-pass: draft gen + DWPreprocessor extraction in one ComfyUI graph; returns skeleton image ref
     providers/
-      openai.js       — OpenAI-compat LLM driver; supports AbortSignal via options.signal
+      openai.js       — OpenAI-compat LLM driver; supports AbortSignal via options.signal; tool_calls response handling
   steps/
     index.js          — step-type registry (generate, upscale, video)
     generate.js       — generate step: vision notes, adapter/img2img routing, chain input, review
@@ -307,6 +337,9 @@ src/
     sd3.js / chroma.js / anima.js
   lib/
     parsers.js        — parsePromptResponse, parseReview
+    loraMeta.js       — auto-detect LoRA architecture from ComfyUI /view_metadata response
+    png.js            — dependency-free PNG pixel inspector (blank-skeleton detection)
+    loraTools.js      — lora catalog helpers + agent tool factories (add_lora, request_pose) with per-tool guidance
 ui/src/
   stores/
     config.js         — configState, loadConfig, saveConfig, model/workflow CRUD
@@ -323,9 +356,10 @@ ui/src/
     ModelsPanel.vue     — model building-blocks list
     ModelEditor.vue     — loader fields, data-driven from archMeta.fields
     WorkflowsPanel.vue  — workflow list + active selector
-    WorkflowEditor.vue  — step builder: generate (with adapter picker) + upscale (model/hires)
+    WorkflowEditor.vue  — step builder: generate (with adapter picker, LoRA list, ControlNet) + upscale (model/hires)
     SettingsPanel.vue   — global settings (llmBaseUrl, llmApiKey, comfyuiUrl, llmModel)
     HistoryPanel.vue    — past sessions list
+    LorasPanel.vue      — LoRA registry: scan, list, edit label/description/defaultWeight/triggerWords
 data/
   config.json         — models, workflows, activeWorkflow, global settings
   sessions/*.json     — one file per session
@@ -337,7 +371,7 @@ data/
 ## Testing
 
 ```bash
-npm test               # all 130 tests
+npm test               # all 188 tests
 npm run test:unit      # unit tests only
 npm run test:int       # integration tests only
 ```
@@ -355,3 +389,31 @@ Integration tests write to a tmpDir; set `DATA_DIR` / `SESSIONS_DIR` / `SKILLS_D
 ## Known limitations
 
 - **Preview images**: ComfyUI's `latent2rgb` preview method does not emit binary WS frames for Flux/Flux 2 (16-channel latent space). Use `--preview-method taesd` with a Flux-compatible TAESD model for previews on those architectures. SD1.5/SDXL previews work with `latent2rgb`.
+- **Pose pre-pass**: requires the `comfyui_controlnet_aux` custom node pack
+  (`DWPreprocessor`). Install on the ComfyUI host:
+  `cd ComfyUI/custom_nodes && git clone https://github.com/Fannovel16/comfyui_controlnet_aux && ComfyUI/venv/bin/pip install -r comfyui_controlnet_aux/requirements.txt`
+  (~43 packages; verified no conflicts with the existing torch stack via pip dry-run).
+  The DWPose detector models (`yolox_l.onnx`, `dw-ll_ucoco_384.onnx`) auto-download
+  from huggingface on first use.
+- **Pose detection limits**: DWPose's person detector is trained on photographs, so
+  the pose draft is prompted toward photographic rendering on a plain background
+  (see the `controlNet` docs above). Head-to-toe stances extract most reliably;
+  partial-body framings work but DWPose may add low-confidence keypoints for
+  out-of-frame limbs. If detection finds no person, the skeleton comes back all
+  black and the step fails with "no person detected in the draft" — by design,
+  never silently.
+  ControlNet strength below ~1.0 may be overridden by the prompt.
+- **LLLite pose adherence**: `anima-lllite-pose-1.safetensors` (v1, "minimal
+  reference implementation" weights) reliably influences global composition —
+  stance, framing, body orientation — but cannot enforce precise gestures (e.g.
+  an arm extended toward the camera) at any strength/schedule, on base or
+  finetuned anima models (verified by fixed-seed A/B sweeps). Watch the
+  kohya-ss/Anima-LLLite HF repo for stronger pose weight releases.
+- **Anima-LLLite**: ControlNet on anima needs `kohya-ss/ComfyUI-Anima-LLLite`
+  (`cd ComfyUI/custom_nodes && git clone https://github.com/kohya-ss/ComfyUI-Anima-LLLite`,
+  no pip deps). The node is `AnimaLLLiteApply` (verified against the pack:
+  `model, lllite_name, image, strength, start_percent, end_percent, preserve_wrapper`);
+  LLLite `.safetensors` weights go in `ComfyUI/models/controlnet/` and are picked
+  up by the editor's ControlNet-model dropdown. Restart ComfyUI after installing.
+- **ControlNet scope**: ControlNet (pose) is anima-only for now; other architecture builders ignore the `controlNet` step field.
+- **LoRA builder scope**: the `loras` / `llmLoras` step fields inject a LoraLoader chain in anima.js only; other architecture builders currently ignore them.
