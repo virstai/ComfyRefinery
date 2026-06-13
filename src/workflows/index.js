@@ -49,7 +49,7 @@ const ARCH_META = {
   anima: {
     label:       'Anima',
     loadingMode: 'split',
-    fields:      { unetName: true, clipL: true, vaeName: true, cfgScale: true, adapterModel: 'ipa', adapterWeight: true },
+    fields:      { unetName: true, clipL: true, vaeName: true, cfgScale: true, adapterModel: 'ipa', adapterWeight: true, controlNetModel: 'controlnet' },
     notes:       'Requires Qwen-3 text encoder (qwen_3_06b_base.safetensors) and Qwen-Image VAE. The er_sde sampler is available in recent ComfyUI builds or via the RES4LYF custom node pack. IP-Adapter support is implemented but the adapter weights are not yet publicly released (still in training) — check the comfyui-anima-ipadapter repo for release announcements. ControlNet via Anima-LLLite is supported on generate steps (pose pre-pass); it needs two custom node packs cloned into custom_nodes/: kohya-ss/ComfyUI-Anima-LLLite (no extra deps; LLLite .safetensors weights go in models/controlnet/) and Fannovel16/comfyui_controlnet_aux (pip install -r requirements.txt; DWPose detector models auto-download on first use).',
   },
   wanvideo: {

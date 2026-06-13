@@ -89,11 +89,15 @@ function requestPoseTool(state) {
       '(e.g. "a woman standing facing the viewer, one arm raised pointing directly at the camera, the ' +
       'other relaxed at her side"). Head-to-toe stance descriptions extract the most reliable pose ' +
       'guides — prefer them unless the image really calls for closer framing. Multiple subjects are ' +
-      'supported: describe each one. No art-style terms.',
+      'supported: describe each one. No art-style terms. Once a pose guide is requested, the pose is ' +
+      'CONTROLLED BY THE GUIDE — leave pose, gesture, framing, and camera terms OUT of the image ' +
+      'prompt (describe subject, appearance, style, and mood only) so the prompt does not fight the guide.',
     execute(args) {
       state.wantsPose   = true;
       state.description = args?.description || null;
-      return 'Pose guide will be generated and applied via ControlNet.';
+      return 'Pose guide accepted — it now controls pose, framing, and composition. ' +
+        'Write the image prompt WITHOUT pose, gesture, framing, or camera terms: ' +
+        'subject, appearance, style, and mood only.';
     },
   };
 }

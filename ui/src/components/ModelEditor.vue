@@ -164,6 +164,22 @@
       </label>
     </div>
 
+    <!-- ControlNet (pose) -->
+    <div v-if="hasField('controlNetModel')">
+      <hr>
+      <strong>ControlNet</strong>
+      <span class="hint"> — used when a workflow step enables the pose ControlNet</span>
+      <label style="margin-top:8px">ControlNet model
+        <select v-model="form.controlNetModel">
+          <option value="">— none —</option>
+          <option v-for="m in assets.comfyui?.controlNets ?? []" :key="m" :value="m">{{ m }}</option>
+        </select>
+        <span v-if="!(assets.comfyui?.controlNets ?? []).length" class="hint">
+          No ControlNet models found in ComfyUI's models/controlnet folder.
+        </span>
+      </label>
+    </div>
+
     <div class="panel-actions">
       <button class="primary"               @click="save">Save model</button>
       <button class="secondary"             @click="$emit('cancel')">Cancel</button>
@@ -196,7 +212,7 @@ const form = reactive({
   label: '', architecture: '', splitLoad: false,
   checkpoint: '', unetName: '', unetName2: '', clipL: '', t5xxl: '', clipName: '', vaeName: '',
   vae: '', useRefiner: false, refinerCheckpoint: '',
-  adapterModel: '', clipVisionModel: '', adapterWeight: '',
+  adapterModel: '', clipVisionModel: '', adapterWeight: '', controlNetModel: '',
   modelQuantization: '', vaePrecision: '',
 });
 
@@ -218,6 +234,7 @@ watch(() => props.model, m => {
   form.useRefiner        = !!m.refinerCheckpoint;
   form.refinerCheckpoint = m.refinerCheckpoint ?? '';
   form.adapterModel      = m.adapterModel      ?? '';
+  form.controlNetModel   = m.controlNetModel   ?? '';
   form.clipVisionModel   = m.clipVisionModel   ?? '';
   form.adapterWeight     = m.adapterWeight     ?? '';
 }, { immediate: true });
@@ -278,6 +295,7 @@ async function save() {
     vae:               form.vae              || null,
     refinerCheckpoint: (form.useRefiner && form.refinerCheckpoint) ? form.refinerCheckpoint : null,
     adapterModel:      form.adapterModel    || null,
+    controlNetModel:   form.controlNetModel || null,
     clipVisionModel:   form.clipVisionModel || null,
     adapterWeight:     form.adapterWeight !== '' ? Number(form.adapterWeight) : null,
   };

@@ -174,8 +174,13 @@ async function prePass(stepDef, prepResult, ctx, hooks = {}) {
   if (!wanted) return null;
 
   const poseModelConfig = ctx.cfg.models?.[cn.poseModelId];
-  if (!poseModelConfig)    throw new Error(`Pose generation failed: pose model "${cn.poseModelId}" not configured`);
-  if (!cn.controlNetModel) throw new Error('Pose generation failed: no ControlNet model configured on this step');
+  if (!poseModelConfig) throw new Error(`Pose generation failed: pose model "${cn.poseModelId}" not configured`);
+  // ControlNet weights live on the generation model's settings (legacy configs
+  // may still carry them on the workflow step).
+  const controlNetModel = ctx.modelConfig?.controlNetModel ?? cn.controlNetModel;
+  if (!controlNetModel) {
+    throw new Error(`Pose generation failed: no ControlNet model set on model "${ctx.modelConfig?.label ?? ctx.modelConfig?.id}" — select one in its model settings`);
+  }
 
   hooks.onStart?.();
   const { ref, imageUrl } = await pose.generatePose({
@@ -227,8 +232,11 @@ function buildComfyWorkflow(stepDef, prepareResult, ctx) {
   }
 
   const cn = stepDef.controlNet;
-  const controlNetParams = (prepareResult.poseRef && cn?.controlNetModel)
-    ? { controlNet: { image: prepareResult.poseRef, model: cn.controlNetModel, strength: cn.strength ?? 1.0 } }
+  // Weights come from the generation model's settings; legacy configs may
+  // still carry them on the step.
+  const cnModel = ctx.modelConfig?.controlNetModel ?? cn?.controlNetModel;
+  const controlNetParams = (prepareResult.poseRef && cnModel)
+    ? { controlNet: { image: prepareResult.poseRef, model: cnModel, strength: cn?.strength ?? 1.0 } }
     : {};
 
   const { workflow } = buildArchWorkflow(ctx.modelConfig, {
