@@ -2,7 +2,7 @@
 
 const skills = require('../services/skills');
 const agent  = require('../services/agent');
-const { buildWorkflow: buildArchWorkflow, getDefaults } = require('../workflows');
+const { buildWorkflow: buildArchWorkflow, getDefaults, archMeta } = require('../workflows');
 const { parsePromptResponse } = require('../lib/parsers');
 const { LOCAL_PREAMBLE } = require('../services/skillRefresher');
 const pose = require('../services/pose');
@@ -124,7 +124,8 @@ async function prepare(stepDef, ctx, previousIterations, onToken) {
   // mentions capabilities this step actually enables.
   const registry = cfg.loras ?? {};
   const alwaysOn = stepDef.loras ?? [];
-  const catalog  = stepDef.llmLoras
+  const caps     = archMeta[architecture]?.capabilities ?? {};
+  const catalog  = (stepDef.llmLoras && caps.lora)
     ? catalogForArch(registry, architecture, alwaysOn.map(l => l.name))
     : [];
 
@@ -170,6 +171,10 @@ async function prepare(stepDef, ctx, previousIterations, onToken) {
 async function prePass(stepDef, prepResult, ctx, hooks = {}) {
   const cn = stepDef.controlNet;
   if (!cn || !cn.poseMode || cn.poseMode === 'off') return null;
+  const arch = ctx.modelConfig?.architecture;
+  if (!archMeta[arch]?.capabilities?.controlNet) {
+    throw new Error(`Pose ControlNet is not supported on the "${arch}" architecture — set this step's pose mode to Off or use a model that supports it`);
+  }
   const wanted = cn.poseMode === 'always' || (cn.poseMode === 'auto' && prepResult.wantsPose);
   if (!wanted) return null;
 
@@ -221,14 +226,16 @@ function buildComfyWorkflow(stepDef, prepareResult, ctx) {
   let adapterParams = {};
   if (refs.length > 0 && mode === 'adapter') {
     const arch = ctx.modelConfig?.architecture;
-    if (arch === 'sd15' || arch === 'sdxl' || arch === 'anima') {
-      adapterParams = { ipAdapterImages: refs };
-    } else if (arch === 'flux') {
-      adapterParams = { reduxImages: refs };
-    } else if (arch === 'flux2') {
-      adapterParams = { referenceImages: refs }; // native ReferenceLatent, no adapter model needed
+    if (archMeta[arch]?.capabilities?.adapter) {
+      if (arch === 'sd15' || arch === 'sdxl' || arch === 'anima') {
+        adapterParams = { ipAdapterImages: refs };
+      } else if (arch === 'flux') {
+        adapterParams = { reduxImages: refs };
+      } else if (arch === 'flux2') {
+        adapterParams = { referenceImages: refs }; // native ReferenceLatent, no adapter model needed
+      }
     }
-    // Other archs: no adapter defined, falls through to txt2img
+    // Capability disabled or unknown arch: falls through to txt2img
   }
 
   const cn = stepDef.controlNet;
