@@ -76,7 +76,7 @@
               <select v-model="step.refMode">
                 <option value="txt2img">Ignore (txt2img)</option>
                 <option value="init-image">Use as init image (img2img)</option>
-                <option value="adapter">Adapter conditioning</option>
+                <option v-if="archCap(si, 'adapter')" value="adapter">Adapter conditioning</option>
               </select>
             </label>
             <label v-if="step.refMode === 'init-image'">Denoise strength
@@ -89,7 +89,7 @@
         </div>
 
         <!-- LoRAs -->
-        <div class="review-block">
+        <div class="review-block" v-if="archCap(si, 'lora')">
           <strong>LoRAs</strong>
           <label class="checkbox-label">
             <input type="checkbox" v-model="step.llmLoras"> LLM may add LoRAs (tool calling)
@@ -115,7 +115,7 @@
         </div>
 
         <!-- Pose ControlNet -->
-        <div class="review-block">
+        <div class="review-block" v-if="archCap(si, 'controlNet')">
           <strong>Pose ControlNet</strong>
           <div class="row" style="margin-top:6px">
             <label>Pose mode
@@ -489,9 +489,22 @@ function archDefault(si, key) {
   return d?.[key] != null ? String(d[key]) : 'default';
 }
 
-function showCfg(si)      { return ['sd15','sdxl','sd3','anima'].includes(stepArch(si)); }
-function showGuidance(si) { return ['flux','flux2','chroma'].includes(stepArch(si)); }
-function showNegative(si) { return ['sd15','sdxl','sd3','anima','chroma'].includes(stepArch(si)); }
+function archCap(si, name) {
+  return !!props.archMeta[stepArch(si)]?.capabilities?.[name];
+}
+
+function capsForModel(modelId) {
+  const arch = props.config.models?.[modelId]?.architecture;
+  return props.archMeta[arch]?.capabilities ?? {};
+}
+
+function archField(si, name) {
+  return !!props.archMeta[stepArch(si)]?.fields?.[name];
+}
+
+function showCfg(si)      { return archField(si, 'cfgScale'); }
+function showGuidance(si) { return archField(si, 'guidance'); }
+function showNegative(si) { return archField(si, 'negativePrompt'); }
 
 function addGenerateStep() { form.steps.push(blankGenerateStep()); }
 function addUpscaleStep()  { form.steps.push(blankUpscaleStep()); }
@@ -632,6 +645,8 @@ async function save() {
       };
     }
 
+    const caps    = capsForModel(s.modelId);
+    const refMode = (s.refMode === 'adapter' && !caps.adapter) ? 'txt2img' : s.refMode;
     return {
       type:    'generate',
       modelId: s.modelId,
@@ -650,13 +665,13 @@ async function save() {
       referenceStrategy: {
         visionNotes: s.visionNotes,
         diffusion: {
-          mode: s.refMode,
-          ...(s.refMode === 'init-image' && { denoise: Number(s.refDenoise) || 0.6 }),
+          mode: refMode,
+          ...(refMode === 'init-image' && { denoise: Number(s.refDenoise) || 0.6 }),
         },
       },
-      ...(s.loras.some(l => l.name) && { loras: s.loras.filter(l => l.name).map(l => ({ name: l.name, weight: Number(l.weight) || 1.0 })) }),
-      llmLoras: s.llmLoras,
-      ...(s.poseMode !== 'off' && {
+      ...(caps.lora && s.loras.some(l => l.name) && { loras: s.loras.filter(l => l.name).map(l => ({ name: l.name, weight: Number(l.weight) || 1.0 })) }),
+      llmLoras: caps.lora ? s.llmLoras : false,
+      ...(caps.controlNet && s.poseMode !== 'off' && {
         controlNet: {
           poseMode: s.poseMode,
           strength: Number(s.cnStrength) || 1.0,
