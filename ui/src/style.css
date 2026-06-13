@@ -294,6 +294,45 @@ button:disabled  { opacity: .45; cursor: not-allowed; }
 .detail-block .value { font-size: 13px; line-height: 1.6; white-space: pre-wrap; word-break: break-word; }
 
 /* ── Model skill ──────────────────────────────────────────────────────────── */
+.skill-header {
+  display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px;
+}
+.skill-header h3 { margin: 0; }
+
+.skill-lock {
+  display: flex; align-items: center; gap: 6px; cursor: pointer;
+  font-size: 12px; color: var(--muted); user-select: none;
+}
+.skill-lock input[type="checkbox"] { accent-color: var(--accent); }
+.skill-lock-active { color: var(--text); font-weight: 600; }
+
+.skill-lock-banner {
+  font-size: 12px; color: var(--muted);
+  background: var(--surface2); border: 1px solid var(--border);
+  border-radius: 4px; padding: 7px 10px; margin-bottom: 8px;
+}
+
+.ver-row {
+  border: 1px solid var(--border); border-radius: 4px;
+  padding: 8px 10px; margin-bottom: 6px;
+}
+.ver-row.ver-active { border-color: var(--accent); }
+.ver-meta {
+  display: flex; align-items: center; gap: 8px;
+  font-size: 11px; margin-bottom: 4px;
+}
+.ver-date { color: var(--muted); }
+.ver-source {
+  background: var(--surface2); border: 1px solid var(--border);
+  border-radius: 3px; padding: 1px 5px; font-size: 10px; color: var(--muted);
+}
+.ver-preview {
+  font-size: 12px; color: var(--muted); line-height: 1.4;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  margin-bottom: 6px;
+}
+.ver-actions { display: flex; gap: 6px; justify-content: flex-end; }
+
 .skill-text {
   font-size: 13px; line-height: 1.65; color: var(--text);
   background: var(--bg); border: 1px solid var(--border); border-radius: 4px;

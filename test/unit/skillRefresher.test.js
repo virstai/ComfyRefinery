@@ -91,24 +91,25 @@ test('correction note appears in the user message with priority wording', async 
 });
 
 test('no correction note section when note is empty', async () => {
-  seedModel('no-note', 2, 1);
+  seedModel('no-note', 8, 2); // ≥10 sessions so auto-refresh runs
   await refreshSkill('no-note', 'NoNote', 'sd15');
   const userMsg = lastReceivedMessages.find(m => m.role === 'user');
   assert.ok(!userMsg.content.includes('takes priority'), 'should not have correction note section');
 });
 
 test('updates skill text from SKILL section of response', async () => {
-  seedModel('skill-parse', 5, 2);
+  seedModel('skill-parse', 8, 2); // ≥10 sessions
   skillResponse = 'SKILL\nThis is the updated skill text.';
   await refreshSkill('skill-parse', 'SkillParse', 'sd15');
-  const data = skills.get('skill-parse');
-  assert.equal(data.skill, 'This is the updated skill text.');
-  assert.ok(data.skillUpdatedAt, 'should set skillUpdatedAt');
+  const data   = skills.get('skill-parse');
+  const actVer = data.versions?.find(v => v.id === data.activeVersionId);
+  assert.equal(actVer.skill, 'This is the updated skill text.');
+  assert.ok(actVer.createdAt, 'version should have a createdAt timestamp');
   skillResponse = 'SKILL\nUse short descriptive tags.\n\nENFORCE\nAlways adapt to model style.\n\nBLACKLIST\nbad-word, another-word';
 });
 
 test('parses ENFORCE lines into auto notes (disabled by default)', async () => {
-  seedModel('enforce-parse', 3, 1);
+  seedModel('enforce-parse', 8, 2); // ≥10 sessions
   skillResponse = 'SKILL\nSome skill.\n\nENFORCE\nAlways use danbooru tags.\nAvoid natural language.';
   await refreshSkill('enforce-parse', 'EnforceParse', 'sd15');
   const data = skills.get('enforce-parse');
@@ -121,7 +122,7 @@ test('parses ENFORCE lines into auto notes (disabled by default)', async () => {
 });
 
 test('parses BLACKLIST into one auto note per word', async () => {
-  seedModel('blacklist-parse', 2, 1);
+  seedModel('blacklist-parse', 8, 2); // ≥10 sessions
   skillResponse = 'SKILL\nSome skill.\n\nBLACKLIST\nfoo, bar, baz';
   await refreshSkill('blacklist-parse', 'BlacklistParse', 'sd15');
   const data = skills.get('blacklist-parse');
@@ -133,7 +134,7 @@ test('parses BLACKLIST into one auto note per word', async () => {
 });
 
 test('preserves per-word enabled state across blacklist refreshes', async () => {
-  seedModel('blacklist-preserve', 3, 1);
+  seedModel('blacklist-preserve', 8, 2); // ≥10 sessions for first auto-refresh
   skillResponse = 'SKILL\nSome skill.\n\nBLACKLIST\nfoo, bar';
   await refreshSkill('blacklist-preserve', 'BlacklistPreserve', 'sd15');
 
@@ -143,9 +144,9 @@ test('preserves per-word enabled state across blacklist refreshes', async () => 
   fooNote.enabled = true;
   skills.saveNotes('blacklist-preserve', data.notes);
 
-  // Re-refresh with same words plus a new one
+  // Second refresh: new active version has 0 sessions, use correction note to force it
   skillResponse = 'SKILL\nSome skill.\n\nBLACKLIST\nfoo, bar, baz';
-  await refreshSkill('blacklist-preserve', 'BlacklistPreserve', 'sd15');
+  await refreshSkill('blacklist-preserve', 'BlacklistPreserve', 'sd15', 'keep same blacklist words');
   const updated = skills.get('blacklist-preserve');
   const blNotes = updated.notes.filter(n => n.type === 'blacklist');
   const foo = blNotes.find(n => n.words?.[0] === 'foo');
@@ -160,7 +161,7 @@ test('preserves per-word enabled state across blacklist refreshes', async () => 
 });
 
 test('preserves enabled state of existing auto notes across refreshes', async () => {
-  seedModel('preserve-enabled', 4, 1);
+  seedModel('preserve-enabled', 8, 2); // ≥10 sessions for first auto-refresh
   // First refresh — creates auto enforce note (disabled)
   skillResponse = 'SKILL\nSome skill.\n\nENFORCE\nDo something specific.';
   await refreshSkill('preserve-enabled', 'PreserveEnabled', 'sd15');
@@ -171,8 +172,8 @@ test('preserves enabled state of existing auto notes across refreshes', async ()
   note.enabled = true;
   skills.saveNotes('preserve-enabled', data.notes);
 
-  // Second refresh with same ENFORCE line — should keep enabled: true
-  await refreshSkill('preserve-enabled', 'PreserveEnabled', 'sd15');
+  // Second refresh: new active version has 0 sessions, use correction note to force it
+  await refreshSkill('preserve-enabled', 'PreserveEnabled', 'sd15', 'same enforce rules apply');
   const updated = skills.get('preserve-enabled');
   const updatedNote = updated.notes.find(n => n.type === 'enforce' && n.auto && n.text === 'Do something specific.');
   assert.ok(updatedNote, 'auto note should still exist');
@@ -181,7 +182,7 @@ test('preserves enabled state of existing auto notes across refreshes', async ()
 });
 
 test('user-created notes are not overwritten by refresh', async () => {
-  seedModel('user-notes', 3, 1);
+  seedModel('user-notes', 8, 2); // ≥10 sessions so refresh actually runs
   // Add a user note directly
   const data = skills.get('user-notes');
   const userId = 'user-note-id';

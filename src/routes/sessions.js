@@ -106,6 +106,9 @@ router.post('/skills/:workflowId/refresh', async (req, res) => {
   if (!workflow) return res.status(404).json({ error: 'Workflow not found' });
   if (!cfg.llmModel) return res.status(400).json({ error: 'No LLM model configured' });
 
+  const skillData = skills.get(req.params.workflowId);
+  if (skillData?.skillLocked) return res.status(400).json({ error: 'Skill is locked. Unlock it before refreshing.' });
+
   const firstGenStep = (workflow.steps ?? []).find(s => s.type === 'generate');
   const modelConfig  = cfg.models?.[firstGenStep?.modelId];
   const arch = modelConfig?.architecture ?? 'unknown';
@@ -126,6 +129,31 @@ router.patch('/skills/:workflowId/notes', (req, res) => {
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
+});
+
+// POST /api/sessions/skills/:workflowId/versions/:versionId/activate
+router.post('/skills/:workflowId/versions/:versionId/activate', (req, res) => {
+  const data = skills.activateVersion(req.params.workflowId, req.params.versionId);
+  if (!data) return res.status(404).json({ error: 'Version not found' });
+  res.json(data);
+});
+
+// DELETE /api/sessions/skills/:workflowId/versions/:versionId
+router.delete('/skills/:workflowId/versions/:versionId', (req, res) => {
+  try {
+    const data = skills.deleteVersion(req.params.workflowId, req.params.versionId);
+    if (!data) return res.status(404).json({ error: 'Version not found' });
+    res.json(data);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// PATCH /api/sessions/skills/:workflowId/lock
+router.patch('/skills/:workflowId/lock', (req, res) => {
+  const data = skills.setLocked(req.params.workflowId, req.body.locked);
+  if (!data) return res.status(404).json({ error: 'Skill not found' });
+  res.json(data);
 });
 
 // ── LoRA registry ──────────────────────────────────────────────────────────────

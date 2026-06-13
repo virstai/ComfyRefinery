@@ -273,12 +273,23 @@
     <!-- Skill section -->
     <div v-if="workflowId && skillData" class="skill-section">
       <hr>
-      <h3>Workflow Skill</h3>
-      <div v-if="skillData.skill" class="skill-text">{{ skillData.skill }}</div>
-      <div v-else class="skill-text" style="color:var(--muted)">No skill synthesised yet — will be generated after the first session.</div>
-      <div v-if="skillData.skillUpdatedAt" class="hint">Last updated {{ formatDate(skillData.skillUpdatedAt) }}</div>
+      <div class="skill-header">
+        <h3>Workflow Skill</h3>
+        <label class="skill-lock">
+          <input type="checkbox" :checked="skillLocked" @change="toggleLock">
+          <span :class="{ 'skill-lock-active': skillLocked }">{{ skillLocked ? 'Locked' : 'Lock updates' }}</span>
+        </label>
+      </div>
 
-      <div class="skill-correction">
+      <div v-if="skillLocked" class="skill-lock-banner">
+        Auto-updates paused — unlock to allow skill refreshes.
+      </div>
+
+      <div v-if="activeVersion?.skill" class="skill-text">{{ activeVersion.skill }}</div>
+      <div v-else class="skill-text" style="color:var(--muted)">No skill synthesised yet — will be generated after the first session.</div>
+      <div v-if="activeVersion" class="hint">{{ formatDate(activeVersion.createdAt) }} · {{ activeVersion.source }}</div>
+
+      <div v-if="!skillLocked" class="skill-correction">
         <textarea
           v-model="correctionNote"
           rows="3"
@@ -290,12 +301,28 @@
         </button>
       </div>
 
-      <template v-if="skillData.outcomes && (skillData.outcomes.accepts + skillData.outcomes.rejects) > 0">
+      <template v-if="activeVersion && activeSessions > 0">
         <h3 style="margin-top:14px">Outcomes</h3>
         <div class="ln-header">
-          <span class="ln-rate">{{ skillData.outcomes.accepts }}/{{ skillData.outcomes.accepts + skillData.outcomes.rejects }} accepted</span>
+          <span class="ln-rate">{{ activeVersion.outcomes.accepts }}/{{ activeSessions }} accepted</span>
           <div class="ln-bar"><div class="ln-fill" :style="{ width: outcomeRate + '%' }"></div></div>
           <span class="ln-pct">{{ outcomeRate }}%</span>
+        </div>
+      </template>
+
+      <template v-if="sortedVersions.length > 1">
+        <h3 style="margin-top:14px">Version History</h3>
+        <div v-for="ver in sortedVersions" :key="ver.id" class="ver-row" :class="{ 'ver-active': ver.id === activeVersionId }">
+          <div class="ver-meta">
+            <span class="ver-date">{{ formatDate(ver.createdAt) }}</span>
+            <span class="ver-source">{{ ver.source }}</span>
+            <span class="ver-rate" :style="{ color: versionRateColor(ver) }">{{ versionRateText(ver) }}</span>
+          </div>
+          <div class="ver-preview">{{ ver.skill ? ver.skill.slice(0, 90) + (ver.skill.length > 90 ? '…' : '') : 'No skill text' }}</div>
+          <div class="ver-actions">
+            <button class="small secondary" :disabled="ver.id === activeVersionId" @click="doActivateVersion(ver.id)">Use</button>
+            <button class="small danger"    :disabled="ver.id === activeVersionId" @click="doDeleteVersion(ver.id)">×</button>
+          </div>
         </div>
       </template>
     </div>
@@ -338,7 +365,7 @@
 
 <script setup>
 import { reactive, computed, watch, ref, onMounted } from 'vue';
-import { saveWorkflow, deleteWorkflow, loadSkill, saveNotes, refreshSkill as apiRefreshSkill, loadLoras } from '../stores/config.js';
+import { saveWorkflow, deleteWorkflow, loadSkill, saveNotes, refreshSkill as apiRefreshSkill, loadLoras, activateSkillVersion, deleteSkillVersion, setSkillLocked } from '../stores/config.js';
 
 const props = defineProps({
   workflowId: { type: String, default: null },
@@ -519,12 +546,49 @@ const videoModels = computed(() =>
     .map(([id, m]) => ({ id, label: m.label || id }))
 );
 
+const activeVersionId = computed(() => skillData.value?.activeVersionId ?? null);
+const activeVersion   = computed(() => (skillData.value?.versions ?? []).find(v => v.id === activeVersionId.value) ?? null);
+const activeSessions  = computed(() => { const o = activeVersion.value?.outcomes; return o ? o.accepts + o.rejects : 0; });
+const skillLocked     = computed(() => skillData.value?.skillLocked ?? false);
+const sortedVersions  = computed(() => [...(skillData.value?.versions ?? [])].sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt)));
+
 const outcomeRate = computed(() => {
-  const o = skillData.value?.outcomes;
-  if (!o) return 0;
-  const total = o.accepts + o.rejects;
-  return total ? Math.round((o.accepts / total) * 100) : 0;
+  if (!activeSessions.value) return 0;
+  return Math.round((activeVersion.value.outcomes.accepts / activeSessions.value) * 100);
 });
+
+function versionRateText(ver) {
+  const total = ver.outcomes.accepts + ver.outcomes.rejects;
+  if (!total) return 'no data';
+  return `${ver.outcomes.accepts}/${total} (${Math.round(ver.outcomes.accepts / total * 100)}%)`;
+}
+
+function versionRateColor(ver) {
+  const total = ver.outcomes.accepts + ver.outcomes.rejects;
+  if (!total) return 'var(--muted)';
+  const rate = ver.outcomes.accepts / total;
+  if (rate >= 0.60) return 'var(--accent)';
+  if (rate >= 0.30) return '#e6a817';
+  return 'var(--danger, #e05)';
+}
+
+async function toggleLock() {
+  const data = await setSkillLocked(props.workflowId, !skillLocked.value);
+  skillData.value = data;
+}
+
+async function doActivateVersion(versionId) {
+  const data = await activateSkillVersion(props.workflowId, versionId);
+  skillData.value = data;
+  localNotes.value = (data.notes ?? []).map(n => ({ ...n }));
+}
+
+async function doDeleteVersion(versionId) {
+  if (!confirm('Delete this skill version?')) return;
+  const data = await deleteSkillVersion(props.workflowId, versionId);
+  skillData.value = data;
+  localNotes.value = (data.notes ?? []).map(n => ({ ...n }));
+}
 
 function formatDate(iso) {
   const d = new Date(iso);
@@ -536,7 +600,7 @@ function genId() {
 }
 
 async function doRefreshSkill() {
-  if (refreshing.value) return;
+  if (refreshing.value || skillLocked.value) return;
   refreshing.value = true;
   try {
     const data = await apiRefreshSkill(props.workflowId, correctionNote.value.trim());

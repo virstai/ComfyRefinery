@@ -70,6 +70,18 @@ export async function refreshSkill(workflowId, note = '') {
   return api('POST', `/api/sessions/skills/${encodeURIComponent(workflowId)}/refresh`, { note });
 }
 
+export async function activateSkillVersion(workflowId, versionId) {
+  return api('POST', `/api/sessions/skills/${encodeURIComponent(workflowId)}/versions/${encodeURIComponent(versionId)}/activate`);
+}
+
+export async function deleteSkillVersion(workflowId, versionId) {
+  return api('DELETE', `/api/sessions/skills/${encodeURIComponent(workflowId)}/versions/${encodeURIComponent(versionId)}`);
+}
+
+export async function setSkillLocked(workflowId, locked) {
+  return api('PATCH', `/api/sessions/skills/${encodeURIComponent(workflowId)}/lock`, { locked });
+}
+
 export async function loadLoras() {
   return (await api('GET', '/api/sessions/loras')).loras ?? {};
 }

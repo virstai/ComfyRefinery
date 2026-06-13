@@ -16,28 +16,55 @@ function genId() {
 }
 
 async function refreshSkill(workflowId, workflowLabel, arch, correctionNote = '') {
-  const cfg = config.load();
+  const cfg  = config.load();
   const data = skills.get(workflowId);
   if (!data) return;
 
-  const o = data.outcomes;
-  const hasOutcomes = o && (o.accepts + o.rejects) > 0;
-  if (!hasOutcomes && !correctionNote) return;
+  // Lock is absolute — cannot refresh when locked (manual or auto).
+  if (data.skillLocked) return;
 
-  const statsText = hasOutcomes
-    ? `${o.accepts}/${o.accepts + o.rejects} accepted`
+  const activeVer     = (data.versions ?? []).find(v => v.id === data.activeVersionId);
+  const activeSessions = activeVer ? (activeVer.outcomes.accepts + activeVer.outcomes.rejects) : 0;
+
+  // Minimum data guard: need ≥10 sessions on the active version unless user supplied a note.
+  if (activeSessions < 10 && !correctionNote) return;
+
+  // Regression guard: if active version is meaningfully worse than its predecessor, auto-revert
+  // and lock so the user can review before any further updates.
+  if (!correctionNote && activeVer && activeSessions >= 10) {
+    const byDate = [...(data.versions ?? [])].sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+    const prevVer = byDate.find(v => v.id !== data.activeVersionId);
+    if (prevVer) {
+      const prevTotal = prevVer.outcomes.accepts + prevVer.outcomes.rejects;
+      if (prevTotal >= 3) {
+        const prevRate   = prevVer.outcomes.accepts / prevTotal;
+        const activeRate = activeVer.outcomes.accepts / activeSessions;
+        if (activeRate < prevRate - 0.20) {
+          skills.activateVersion(workflowId, prevVer.id);
+          skills.setLocked(workflowId, true);
+          console.log(`[skills] auto-reverted ${workflowId}: active ${Math.round(activeRate * 100)}% vs prev ${Math.round(prevRate * 100)}% (>20pp drop)`);
+          return;
+        }
+      }
+    }
+  }
+
+  const statsText = activeSessions > 0
+    ? `${activeVer.outcomes.accepts}/${activeSessions} accepted`
     : 'No session data yet.';
 
-  const autoNotes        = (data.notes ?? []).filter(n => n.auto);
-  const lockedEnforce    = autoNotes.filter(n => n.enabled  && n.type === 'enforce').map(n => n.text);
-  const lockedBlacklist  = autoNotes.filter(n => n.enabled  && n.type === 'blacklist').flatMap(n => n.words ?? []);
-  const pendingEnforce   = autoNotes.filter(n => !n.enabled && n.type === 'enforce').map(n => n.text);
+  const autoNotes       = (data.notes ?? []).filter(n => n.auto);
+  const lockedEnforce   = autoNotes.filter(n =>  n.enabled && n.type === 'enforce').map(n => n.text);
+  const lockedBlacklist = autoNotes.filter(n =>  n.enabled && n.type === 'blacklist').flatMap(n => n.words ?? []);
+  const pendingEnforce  = autoNotes.filter(n => !n.enabled && n.type === 'enforce').map(n => n.text);
   const pendingBlacklist = autoNotes.filter(n => !n.enabled && n.type === 'blacklist').flatMap(n => n.words ?? []);
+
+  const currentSkill = activeVer?.skill ?? null;
 
   const userContent =
     `Workflow: ${workflowLabel} (architecture: ${arch})\n\n` +
     `Outcome data:\n${statsText}\n\n` +
-    `Current skill text:\n${data.skill ?? 'None yet — write a fresh one.'}\n\n` +
+    `Current skill text:\n${currentSkill ?? 'None yet — write a fresh one.'}\n\n` +
     (lockedEnforce.length
       ? `User-approved enforce rules (locked — do NOT re-suggest these):\n${lockedEnforce.map(t => `- ${t}`).join('\n')}\n\n`
       : '') +
@@ -84,7 +111,7 @@ async function refreshSkill(workflowId, workflowLabel, arch, correctionNote = ''
   }
 
   const newSkill = (sections.SKILL ?? []).join('\n').trim() || raw.trim();
-  skills.setSkill(workflowId, newSkill);
+  skills.addVersion(workflowId, newSkill, correctionNote ? 'manual' : 'auto');
 
   const enforceLines   = sections.ENFORCE ?? [];
   const blacklistWords = (sections.BLACKLIST ?? []).join(',').split(',').map(w => w.trim()).filter(Boolean);
@@ -92,25 +119,23 @@ async function refreshSkill(workflowId, workflowLabel, arch, correctionNote = ''
   if (enforceLines.length || blacklistWords.length) {
     const latest     = skills.get(workflowId);
     const userNotes  = (latest.notes ?? []).filter(n => !n.auto);
-    const autoNotes  = (latest.notes ?? []).filter(n => n.auto);
-    // Enabled (user-approved) notes are locked — AI must never remove or overwrite them.
-    const lockedAuto = autoNotes.filter(n => n.enabled);
+    const latestAuto = (latest.notes ?? []).filter(n => n.auto);
+    const lockedAuto = latestAuto.filter(n => n.enabled);
 
-    const lockedEnforceTexts = new Set(lockedAuto.filter(n => n.type === 'enforce').map(n => n.text));
+    const lockedEnforceTexts   = new Set(lockedAuto.filter(n => n.type === 'enforce').map(n => n.text));
     const lockedBlacklistWords = new Set(lockedAuto.filter(n => n.type === 'blacklist').flatMap(n => n.words ?? []));
 
-    // New AI suggestions start disabled; skip any that duplicate a locked note.
     const newEnforce = enforceLines
       .filter(text => !lockedEnforceTexts.has(text))
       .map(text => {
-        const prev = autoNotes.find(n => !n.enabled && n.type === 'enforce' && n.text === text);
+        const prev = latestAuto.find(n => !n.enabled && n.type === 'enforce' && n.text === text);
         return { id: prev?.id ?? genId(), type: 'enforce', text, enabled: false, auto: true };
       });
 
     const newBlacklist = [...new Set(blacklistWords)]
       .filter(word => !lockedBlacklistWords.has(word))
       .map(word => {
-        const prev = autoNotes.find(n => !n.enabled && n.type === 'blacklist' && n.words?.length === 1 && n.words[0] === word);
+        const prev = latestAuto.find(n => !n.enabled && n.type === 'blacklist' && n.words?.length === 1 && n.words[0] === word);
         return { id: prev?.id ?? genId(), type: 'blacklist', words: [word], enabled: false, auto: true };
       });
 

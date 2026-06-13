@@ -293,19 +293,17 @@ test('DELETE /api/generate/sessions/:id removes the session', async () => {
 // ── POST /api/sessions/skills/:workflowId/refresh ────────────────────────────────
 
 test('POST /api/sessions/skills/test-wf-sd15/refresh returns updated skill data', async () => {
-  // Run a session first so outcome data exists for the workflow
-  reviewVerdict = 'ACCEPT';
-  await collectSSE(`${base()}/api/generate`, { prompt: 'skill refresh seed' });
-
+  // Use a correction note so the refresh runs regardless of session count.
   const res = await fetch(`${base()}/api/sessions/skills/test-wf-sd15/refresh`, {
     method:  'POST',
     headers: { 'Content-Type': 'application/json' },
-    body:    JSON.stringify({}),
+    body:    JSON.stringify({ note: 'Seed refresh for test.' }),
   });
   assert.equal(res.status, 200);
   const data = await res.json();
-  assert.ok(data.skill,          'should contain updated skill text');
-  assert.ok(data.skillUpdatedAt, 'should have a skillUpdatedAt timestamp');
+  const actVer = (data.versions ?? []).find(v => v.id === data.activeVersionId);
+  assert.ok(actVer?.skill,      'should contain updated skill text in active version');
+  assert.ok(actVer?.createdAt,  'active version should have a createdAt timestamp');
 });
 
 test('POST /api/sessions/skills/test-wf-sd15/refresh with correction note updates skill', async () => {
@@ -316,7 +314,8 @@ test('POST /api/sessions/skills/test-wf-sd15/refresh with correction note update
   });
   assert.equal(res.status, 200);
   const data = await res.json();
-  assert.ok(data.skill, 'should return updated skill data after correction note');
+  const actVer = (data.versions ?? []).find(v => v.id === data.activeVersionId);
+  assert.ok(actVer?.skill, 'should return updated skill data in active version');
 });
 
 test('POST /api/sessions/skills/unknown-workflow/refresh returns 404', async () => {
