@@ -6,9 +6,13 @@
         <span class="two-pane-header-title">Models</span>
         <button class="primary small" @click="startNew">+ New</button>
       </div>
+      <select v-model="archFilter" class="arch-filter">
+        <option value="">All architectures</option>
+        <option v-for="(meta, arch) in usedArchs" :key="arch" :value="arch">{{ meta.label }}</option>
+      </select>
       <div class="two-pane-list-body">
         <div
-          v-for="(m, id) in config.models"
+          v-for="(m, id) in filteredModels"
           :key="id"
           class="list-row"
           :class="{ selected: selectedId === id }"
@@ -17,8 +21,8 @@
           <div class="list-row-name">{{ m.label || id }}</div>
           <div class="list-row-meta">{{ archMeta[m.architecture]?.label || m.architecture || '—' }}</div>
         </div>
-        <div v-if="!Object.keys(config.models ?? {}).length" style="font-size:12px;color:var(--muted);padding:8px 4px">
-          No models yet.
+        <div v-if="!Object.keys(filteredModels).length" style="font-size:12px;color:var(--muted);padding:8px 4px">
+          {{ Object.keys(config.models ?? {}).length ? 'No models match this filter.' : 'No models yet.' }}
         </div>
       </div>
     </div>
@@ -48,7 +52,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue';
+import { ref, computed, onMounted } from 'vue';
 import ModelEditor from './ModelEditor.vue';
 import { deleteModel, loadAssets } from '../stores/config.js';
 
@@ -62,6 +66,18 @@ const emit = defineEmits(['changed']);
 const selectedId = ref(null);
 const isAdding   = ref(false);
 const saving     = ref(false);
+const archFilter = ref('');
+
+const usedArchs = computed(() => {
+  const archs = new Set(Object.values(props.config.models ?? {}).map(m => m.architecture).filter(Boolean));
+  return Object.fromEntries(Object.entries(props.archMeta).filter(([arch]) => archs.has(arch)));
+});
+
+const filteredModels = computed(() => {
+  const models = props.config.models ?? {};
+  if (!archFilter.value) return models;
+  return Object.fromEntries(Object.entries(models).filter(([, m]) => m.architecture === archFilter.value));
+});
 
 onMounted(() => { loadAssets().catch(() => {}); });
 
@@ -100,3 +116,7 @@ async function onDeleted() {
   emit('changed');
 }
 </script>
+
+<style scoped>
+.arch-filter { width: 100%; margin: 6px 0; }
+</style>
