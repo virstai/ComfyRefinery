@@ -1,5 +1,7 @@
 'use strict';
 
+const { applyLoraChain } = require('./lib/loraChain');
+
 const defaults = {
   width:              1024,
   height:             1024,
@@ -18,9 +20,15 @@ function build(params) {
 
   const nodes = {
     "1":  { class_type: "CheckpointLoaderSimple", inputs: { ckpt_name: p.checkpoint } },
-    "2":  { class_type: "CLIPTextEncodeSDXL", inputs: { text_g: p.positivePrompt, text_l: p.positivePrompt, width: p.width, height: p.height, crop_w: 0, crop_h: 0, target_width: p.width, target_height: p.height, clip: ["1", 1] } },
-    "3":  { class_type: "CLIPTextEncodeSDXL", inputs: { text_g: p.negativePrompt, text_l: p.negativePrompt, width: p.width, height: p.height, crop_w: 0, crop_h: 0, target_width: p.width, target_height: p.height, clip: ["1", 1] } },
   };
+
+  // LoRA chain: threads model + clip through LoraLoader nodes 30, 31, ...
+  let modelRef = ["1", 0];
+  let clipRef  = ["1", 1];
+  ({ modelRef, clipRef } = applyLoraChain(nodes, modelRef, clipRef, p.loras));
+
+  nodes["2"] = { class_type: "CLIPTextEncodeSDXL", inputs: { text_g: p.positivePrompt, text_l: p.positivePrompt, width: p.width, height: p.height, crop_w: 0, crop_h: 0, target_width: p.width, target_height: p.height, clip: clipRef } };
+  nodes["3"] = { class_type: "CLIPTextEncodeSDXL", inputs: { text_g: p.negativePrompt, text_l: p.negativePrompt, width: p.width, height: p.height, crop_w: 0, crop_h: 0, target_width: p.width, target_height: p.height, clip: clipRef } };
 
   if (p.vae) {
     nodes["20"] = { class_type: "VAELoader", inputs: { vae_name: p.vae } };
@@ -31,14 +39,13 @@ function build(params) {
   //   49 = IPAdapterModelLoader (load the specific file)
   //   50 = IPAdapterUnifiedLoader (patches model pipeline + auto-selects clip_vision via preset)
   //   51+i*2 = LoadImage, 52+i*2 = IPAdapter per ref image
-  let modelRef = ["1", 0];
   if (p.ipAdapterImages?.length && p.adapterModel) {
     const f = p.adapterModel.toLowerCase();
     const preset = f.includes('face') ? 'PLUS FACE (portraits)'
                  : f.includes('vit-g') || f.includes('vit_g') ? 'VIT-G (medium strength)'
                  : 'PLUS (high strength)';
     nodes["49"] = { class_type: "IPAdapterModelLoader",  inputs: { ipadapter_file: p.adapterModel } };
-    nodes["50"] = { class_type: "IPAdapterUnifiedLoader", inputs: { model: ["1", 0], preset, ipadapter: ["49", 0] } };
+    nodes["50"] = { class_type: "IPAdapterUnifiedLoader", inputs: { model: modelRef, preset, ipadapter: ["49", 0] } };
     modelRef = ["50", 0];
     const perWeight = (p.adapterWeight ?? 0.6) / p.ipAdapterImages.length;
     p.ipAdapterImages.forEach((ref, i) => {

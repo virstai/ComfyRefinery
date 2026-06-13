@@ -1,5 +1,7 @@
 'use strict';
 
+const { applyLoraChain } = require('./lib/loraChain');
+
 const defaults = {
   width:          512,
   height:         512,
@@ -16,9 +18,15 @@ function build(params) {
 
   const nodes = {
     "1": { class_type: "CheckpointLoaderSimple", inputs: { ckpt_name: p.checkpoint } },
-    "2": { class_type: "CLIPTextEncode",         inputs: { text: p.positivePrompt, clip: ["1", 1] } },
-    "3": { class_type: "CLIPTextEncode",         inputs: { text: p.negativePrompt, clip: ["1", 1] } },
   };
+
+  // LoRA chain: threads model + clip through LoraLoader nodes 30, 31, ...
+  let modelRef = ["1", 0];
+  let clipRef  = ["1", 1];
+  ({ modelRef, clipRef } = applyLoraChain(nodes, modelRef, clipRef, p.loras));
+
+  nodes["2"] = { class_type: "CLIPTextEncode", inputs: { text: p.positivePrompt, clip: clipRef } };
+  nodes["3"] = { class_type: "CLIPTextEncode", inputs: { text: p.negativePrompt, clip: clipRef } };
 
   if (p.vae) {
     nodes["8"] = { class_type: "VAELoader", inputs: { vae_name: p.vae } };
@@ -29,14 +37,13 @@ function build(params) {
   //   49 = IPAdapterModelLoader (load the specific file)
   //   50 = IPAdapterUnifiedLoader (patches model pipeline + auto-selects clip_vision via preset)
   //   51+i*2 = LoadImage, 52+i*2 = IPAdapter per ref image
-  let modelRef = ["1", 0];
   if (p.ipAdapterImages?.length && p.adapterModel) {
     const f = p.adapterModel.toLowerCase();
     const preset = f.includes('face') ? 'PLUS FACE (portraits)'
                  : f.includes('vit-g') || f.includes('vit_g') ? 'VIT-G (medium strength)'
                  : 'PLUS (high strength)';
     nodes["49"] = { class_type: "IPAdapterModelLoader",  inputs: { ipadapter_file: p.adapterModel } };
-    nodes["50"] = { class_type: "IPAdapterUnifiedLoader", inputs: { model: ["1", 0], preset, ipadapter: ["49", 0] } };
+    nodes["50"] = { class_type: "IPAdapterUnifiedLoader", inputs: { model: modelRef, preset, ipadapter: ["49", 0] } };
     modelRef = ["50", 0];
     const perWeight = (p.adapterWeight ?? 0.6) / p.ipAdapterImages.length;
     p.ipAdapterImages.forEach((ref, i) => {
