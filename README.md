@@ -108,6 +108,9 @@ In a workflow generate step you can then pin **always-on LoRAs** (e.g. turbo LoR
 remember to set the step's Steps/CFG to the LoRA's recommended values) and/or enable
 **LLM may add LoRAs**, which lets the prompt-builder agent apply catalog LoRAs per prompt.
 
+LoRAs are supported on every image architecture (SD 1.5, SDXL, SD3, Flux, Flux 2,
+ChromaHD, Anima) — the LoRA chain is injected right after the model loader.
+
 ### Optional — Pose ControlNet
 
 Currently supported on the **anima** architecture (see the in-app Anima setup guide for
@@ -117,6 +120,11 @@ or `always`. A pose draft is rendered with the step's model from a detection-fri
 pose description, DWPose extracts the skeleton, and the generation follows it. If no
 pose can be extracted, the step fails rather than generating without pose control.
 Strength below ~1.0 lets the prompt override the pose.
+
+**Anima IP-Adapter** is implemented but currently **disabled**: the adapter weights
+from the comfyui-anima-ipadapter project are still in training and not publicly
+released. The "Adapter conditioning" reference mode is therefore not offered for
+anima steps; it will be re-enabled (one capability flag) once the weights ship.
 
 ### Step 4 — Generate
 

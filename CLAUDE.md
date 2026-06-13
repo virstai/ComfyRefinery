@@ -90,6 +90,10 @@ Generate step LoRA / ControlNet fields:
 - `loras` — always-on LoRA list applied to every iteration: `[{ name, weight }]`.
 - `llmLoras` — `true` enables LLM tool calling; LLM may call `add_lora` / `request_pose` via the agent loop (`src/services/agent.js`, bounded 3 rounds). Each tool carries its own system-prompt guidance, so the prompt adapts to whichever tools the step's settings enable — local models won't call tools from schemas alone. Selected LoRAs are recorded on the iteration.
 - `controlNet` — `{ poseMode, strength }`. The ControlNet weights file lives on the generation model's settings (`models[id].controlNetModel`; legacy step-level `controlNetModel` still read as fallback) — the workflow step only enables and tunes the pose. `poseMode`: `"off"` (disabled), `"auto"` (LLM-triggered via `request_pose`), `"always"` (unconditional). When active, a pose pre-pass runs (`src/services/pose.js`): a draft is rendered with the step's own generation model **from a detection-friendly prompt** — the `request_pose` tool supplies a plain physical pose description (fallback: the raw user prompt) which is wrapped in a template adding plain background and photographic rendering with an anti-crop/anti-flat-style negative. Framing follows the description (upper-body and multi-subject poses are supported); the agent's guidance prefers head-to-toe stances since they extract most reliably. The styled image prompt is never used for the draft (style terms defeat the detector). Strength below ~1.0 lets the prompt's own composition override the pose — default is 1.0. DWPreprocessor extracts the skeleton in the same ComfyUI graph; it's re-uploaded as input for the main generation. The pre-pass is architecture-agnostic (any model can draft; the skeleton suits any pose ControlNet). **Failure is fatal**: when a pose is wanted but cannot be produced (missing nodes/config, or an all-black skeleton, checked via `src/lib/png.js`), the step errors out rather than silently generating without pose control. ControlNet apply is anima-only for now (other archs ignore this field).
+- Per-arch support for LoRA / adapter / ControlNet is declared in `ARCH_META[arch].capabilities`
+  (`src/workflows/index.js`) — the workflow editor hides unsupported sections, `generate.js` gates
+  adapter routing + the `add_lora` tool on it, and pose mode on a non-controlNet arch fails the
+  step with an error. Anima's `adapter` is `false` until the IP-Adapter weights are released.
 
 `referenceStrategy.diffusion` — `{ mode, denoise? }`:
 - `mode: "txt2img"` — ignore refs for diffusion (still used for vision notes)
@@ -328,7 +332,8 @@ src/
     upscale.js        — upscale step: model (ESRGAN) + hires (re-diffusion) types
     video.js          — video step: T2V / I2V, uploads init image, routes to video arch builder
   workflows/
-    index.js          — buildWorkflow(modelConfig, params) + getDefaults(arch) + archMeta
+    index.js          — buildWorkflow(modelConfig, params) + getDefaults(arch) + archMeta (incl. per-arch capabilities)
+    lib/loraChain.js  — shared LoraLoader chain helper used by all image arch builders
     sd15.js           — SD1.5; supports initImage, ipAdapterImages
     sdxl.js           — SDXL + refiner; supports initImage, ipAdapterImages
     flux.js           — Flux 1 (SamplerCustomAdvanced); supports initImage, reduxImages
@@ -416,4 +421,6 @@ Integration tests write to a tmpDir; set `DATA_DIR` / `SESSIONS_DIR` / `SKILLS_D
   LLLite `.safetensors` weights go in `ComfyUI/models/controlnet/` and are picked
   up by the editor's ControlNet-model dropdown. Restart ComfyUI after installing.
 - **ControlNet scope**: ControlNet (pose) is anima-only for now; other architecture builders ignore the `controlNet` step field.
-- **LoRA builder scope**: the `loras` / `llmLoras` step fields inject a LoraLoader chain in anima.js only; other architecture builders currently ignore them.
+- **Anima IP-Adapter disabled**: builder support exists (`AnimaIPAdapterApply`), but
+  `capabilities.adapter` is `false` for anima because the adapter weights are not yet
+  publicly released — flip the flag in `src/workflows/index.js` when they ship.
