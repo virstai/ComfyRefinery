@@ -42,6 +42,7 @@
           :model="isAdding ? null : config.models[selectedId]"
           :arch-meta="archMeta"
           :assets="assets"
+          :config="config"
           @saved="onSaved"
           @deleted="onDeleted"
         />

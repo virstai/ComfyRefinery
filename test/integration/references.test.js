@@ -28,9 +28,6 @@ before(async () => {
   const ollamaPort = ollamaServer.address().port;
   const comfyPort  = comfyServer.address().port;
 
-  process.env.OLLAMA_URL  = `http://127.0.0.1:${ollamaPort}`;
-  process.env.COMFYUI_URL = `http://127.0.0.1:${comfyPort}`;
-
   fs.mkdirSync(tmpDir, { recursive: true });
   fs.writeFileSync(path.join(tmpDir, 'config.json'), JSON.stringify({
     llmBaseUrl:            `http://127.0.0.1:${ollamaPort}/v1`,
@@ -74,8 +71,6 @@ after(async () => {
   delete process.env.DATA_DIR;
   delete process.env.SESSIONS_DIR;
   delete process.env.SKILLS_DIR;
-  delete process.env.OLLAMA_URL;
-  delete process.env.COMFYUI_URL;
 });
 
 test('POST /api/references/upload calls ComfyUI /upload/image and returns ref array', async () => {

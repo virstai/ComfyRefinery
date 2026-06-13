@@ -93,7 +93,7 @@ async function prepare(stepDef, ctx, previousIterations, onToken) {
   const { userPrompt, modelConfig, skillId, cfg } = ctx;
   const { architecture } = modelConfig;
   const archDefaults = getDefaults(architecture);
-  const skillSummary = skills.getSummary(skillId);
+  const skillSummary = cfg.skillRefinement !== false ? skills.getSummary(skillId) : null;
 
   const messages = previousIterations.length === 0
     ? buildInitialMessages(userPrompt, architecture, archDefaults, skillSummary)
@@ -105,7 +105,7 @@ async function prepare(stepDef, ctx, previousIterations, onToken) {
   // ctx.references  — ComfyUI input refs that must be fetched from ComfyUI first.
   // Both sources are combined; either can be empty.
   const refs = ctx.references ?? [];
-  if (stepDef.referenceStrategy?.visionNotes && (refs.length > 0 || ctx.imageContext?.length > 0)) {
+  if (cfg.llmExtras !== false && stepDef.referenceStrategy?.visionNotes && (refs.length > 0 || ctx.imageContext?.length > 0)) {
     const direct  = ctx.imageContext ?? [];
     const fetched = await Promise.all(refs.map(async ref => {
       const url = `${cfg.comfyuiUrl}/view?filename=${encodeURIComponent(ref.filename)}&subfolder=${encodeURIComponent(ref.subfolder ?? '')}&type=${encodeURIComponent(ref.type ?? 'input')}`;
@@ -125,7 +125,7 @@ async function prepare(stepDef, ctx, previousIterations, onToken) {
   const registry = cfg.loras ?? {};
   const alwaysOn = stepDef.loras ?? [];
   const caps     = archMeta[architecture]?.capabilities ?? {};
-  const catalog  = (stepDef.llmLoras && caps.lora)
+  const catalog  = (cfg.llmExtras !== false && stepDef.llmLoras && caps.lora)
     ? catalogForArch(registry, architecture, alwaysOn.map(l => l.name))
     : [];
 
@@ -138,6 +138,19 @@ async function prepare(stepDef, ctx, previousIterations, onToken) {
   // Offered in 'always' mode too: the agent supplies the pose description
   // even though the pose itself runs unconditionally.
   if (poseMode === 'auto' || poseMode === 'always') tools.push(requestPoseTool(poseState));
+
+  // Prompt refinement disabled: pass the user prompt as-is, no LLM call.
+  if (cfg.promptRefinement === false) {
+    const params = { ...archDefaults, ...modelConfig, ...(stepDef.params ?? {}), positivePrompt: userPrompt };
+    return {
+      prompt: userPrompt,
+      params,
+      loras:           mergeLoras(alwaysOn, []),
+      wantsPose:       poseMode === 'always',
+      poseDescription: userPrompt,
+      warnings:        [],
+    };
+  }
 
   const alwaysOnText = alwaysOnSection(alwaysOn, registry);
   if (alwaysOnText) messages[0].content += `\n\n${alwaysOnText}`;
@@ -206,40 +219,70 @@ function buildComfyWorkflow(stepDef, prepareResult, ctx) {
   const rs   = stepDef.referenceStrategy?.diffusion;
   const refs = ctx.references ?? [];
   const mode = rs?.mode;
+  const arch = ctx.modelConfig?.architecture;
 
-  let initImage = null;
-  let denoise   = 0.6;
+  let initImage            = null;
+  let denoise              = 0.6;
+  let adapterParams        = {};
+  let tileControlNetParams = {};
 
+  // Reference-based routing
   if (refs.length > 0 && mode === 'init-image') {
     initImage = refs[0];
     denoise   = rs.denoise ?? prepareResult.params.denoise ?? 0.6;
+  } else if (refs.length > 0 && mode === 'adapter' && archMeta[arch]?.capabilities?.adapter) {
+    // adapterModel/clipVisionModel come from ctx.modelConfig via buildArchWorkflow
+    if (arch === 'sd15' || arch === 'sdxl' || arch === 'anima') {
+      adapterParams = { ipAdapterImages: refs };
+    } else if (arch === 'flux') {
+      adapterParams = { reduxImages: refs };
+    } else if (arch === 'flux2') {
+      adapterParams = { referenceImages: refs };
+    }
+    // Unknown arch: falls through to txt2img
   }
 
-  // Chain previous step's output as init-image when no reference override is active
+  // Chain input routing — how to use the previous step's output.
+  // Only activates when there's a chained image and no ref init-image has already claimed initImage.
   if (!initImage && ctx.chainedInputRef) {
-    initImage = ctx.chainedInputRef;
-    denoise   = stepDef.params?.chainDenoise ?? 0.5;
-  }
+    const cs     = stepDef.chainStrategy;
+    const csMode = cs?.mode ?? 'init-image';
 
-  // Adapter mode: pass refs to the arch builder. adapterModel/clipVisionModel come from
-  // ctx.modelConfig (already spread by buildArchWorkflow), so only the images are explicit.
-  let adapterParams = {};
-  if (refs.length > 0 && mode === 'adapter') {
-    const arch = ctx.modelConfig?.architecture;
-    if (archMeta[arch]?.capabilities?.adapter) {
+    if (csMode === 'init-image') {
+      initImage = ctx.chainedInputRef;
+      denoise   = cs?.denoise ?? stepDef.params?.chainDenoise ?? 0.5; // back-compat: chainDenoise in params
+    } else if (csMode === 'adapter' && archMeta[arch]?.capabilities?.adapter) {
       if (arch === 'sd15' || arch === 'sdxl' || arch === 'anima') {
-        adapterParams = { ipAdapterImages: refs };
+        adapterParams = { ipAdapterImages: [ctx.chainedInputRef, ...(adapterParams.ipAdapterImages ?? [])] };
       } else if (arch === 'flux') {
-        adapterParams = { reduxImages: refs };
+        adapterParams = { reduxImages: [ctx.chainedInputRef, ...(adapterParams.reduxImages ?? [])] };
       } else if (arch === 'flux2') {
-        adapterParams = { referenceImages: refs }; // native ReferenceLatent, no adapter model needed
+        adapterParams = { referenceImages: [ctx.chainedInputRef, ...(adapterParams.referenceImages ?? [])] };
+      }
+    } else if (csMode === 'tile' && archMeta[arch]?.capabilities?.tileControlNet) {
+      const tileModel = cs?.tileModel || ctx.modelConfig?.tileControlNetModel;
+      if (tileModel) {
+        tileControlNetParams = {
+          tileControlNet: { image: ctx.chainedInputRef, model: tileModel, strength: cs?.tileStrength ?? 0.5 },
+        };
       }
     }
-    // Capability disabled or unknown arch: falls through to txt2img
+    // csMode === 'txt2img': chained image is dropped
+  }
+
+  // Step-level tile ControlNet from references (independent of chaining)
+  const cnTile = stepDef.controlNet?.tile;
+  if (!tileControlNetParams.tileControlNet && cnTile?.enabled && refs.length > 0 && archMeta[arch]?.capabilities?.tileControlNet) {
+    const tileModel = cnTile.model || ctx.modelConfig?.tileControlNetModel;
+    if (tileModel) {
+      tileControlNetParams = {
+        tileControlNet: { image: refs[0], model: tileModel, strength: cnTile.strength ?? 0.5 },
+      };
+    }
   }
 
   const cn = stepDef.controlNet;
-  // Weights come from the generation model's settings; legacy configs may
+  // Pose ControlNet weights come from the generation model's settings; legacy configs may
   // still carry them on the step.
   const cnModel = ctx.modelConfig?.controlNetModel ?? cn?.controlNetModel;
   const controlNetParams = (prepareResult.poseRef && cnModel)
@@ -252,14 +295,15 @@ function buildComfyWorkflow(stepDef, prepareResult, ctx) {
     ...adapterParams,
     ...(prepareResult.loras?.length ? { loras: prepareResult.loras } : {}),
     ...controlNetParams,
+    ...tileControlNetParams,
   });
   return workflow;
 }
 
 // Return the LLM review messages for this iteration.
 function reviewMessages(stepDef, prepareResult, ctx, imageBase64, previousIterations) {
-  const { userPrompt, modelConfig, skillId } = ctx;
-  const skillSummary = skills.getSummary(skillId);
+  const { userPrompt, modelConfig, skillId, cfg } = ctx;
+  const skillSummary = cfg?.skillRefinement !== false ? skills.getSummary(skillId) : null;
   return buildReviewMessages(
     userPrompt, prepareResult.prompt, modelConfig.architecture,
     previousIterations, imageBase64, skillSummary,

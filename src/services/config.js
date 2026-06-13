@@ -16,6 +16,10 @@ const GLOBAL_DEFAULTS = {
   maxIterations:          3,
   humanReview:            false,
   acceptanceGracePeriod:  10, // seconds; 0 = disabled
+  skillRefinement:        true,
+  reviewEnabled:          true,
+  promptRefinement:       true,
+  llmExtras:              true,
   models:                 {},
   workflows:              {},
   loras:                  {},
@@ -25,7 +29,7 @@ const GLOBAL_DEFAULTS = {
 const MODEL_LOADER_FIELDS = new Set([
   'id', 'label', 'architecture', 'checkpoint', 'unetName', 'unetName2', 'modelQuantization', 'vaePrecision', 'clipL', 't5xxl',
   'clipName', 'vaeName', 'vae', 'useRefiner', 'refinerCheckpoint',
-  'adapterModel', 'clipVisionModel', 'adapterWeight', 'controlNetModel',
+  'adapterModel', 'clipVisionModel', 'adapterWeight', 'controlNetModel', 'tileControlNetModel',
 ]);
 
 function load() {
@@ -35,10 +39,6 @@ function load() {
   const merged = {
     ...GLOBAL_DEFAULTS,
     ...saved,
-    // OLLAMA_URL env var: append /v1 to get the OpenAI-compat base URL
-    ...(process.env.OLLAMA_URL   && { llmBaseUrl: process.env.OLLAMA_URL.replace(/\/+$/, '') + '/v1' }),
-    ...(process.env.COMFYUI_URL  && { comfyuiUrl: process.env.COMFYUI_URL }),
-    ...(process.env.OLLAMA_MODEL && { llmModel:   process.env.OLLAMA_MODEL }),
   };
 
   // Back-compat: ollamaUrl → llmBaseUrl (configs written before this refactor)

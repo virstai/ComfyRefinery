@@ -3,10 +3,16 @@
 const { test, before, after } = require('node:test');
 const assert = require('node:assert/strict');
 const http   = require('http');
+const fs     = require('fs');
+const os     = require('os');
+const path   = require('path');
 
-let server, port;
+let server, port, tmpDir;
 
 before(async () => {
+  tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ii-comfyui-assets-test-'));
+  process.env.DATA_DIR = tmpDir;
+
   server = http.createServer((req, res) => {
     if (req.url === '/object_info/LoraLoader') {
       res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -34,11 +40,14 @@ before(async () => {
   });
   await new Promise(r => server.listen(0, r));
   port = server.address().port;
-  process.env.COMFYUI_URL = `http://127.0.0.1:${port}`;
+  fs.writeFileSync(path.join(tmpDir, 'config.json'), JSON.stringify({
+    comfyuiUrl: `http://127.0.0.1:${port}`,
+  }));
 });
 
 after(() => {
-  delete process.env.COMFYUI_URL;
+  delete process.env.DATA_DIR;
+  fs.rmSync(tmpDir, { recursive: true, force: true });
   return new Promise(r => server.close(r));
 });
 

@@ -180,72 +180,99 @@
       </label>
     </div>
 
+    <!-- Tile ControlNet (sd15/sdxl) -->
+    <div v-if="hasField('tileControlNetModel')">
+      <hr>
+      <strong>Tile ControlNet</strong>
+      <span class="hint"> — used when a workflow step uses tile mode for chain input or reference guidance</span>
+      <label style="margin-top:8px">Tile ControlNet model
+        <select v-model="form.tileControlNetModel">
+          <option value="">— none —</option>
+          <option v-for="m in assets.comfyui?.controlNets ?? []" :key="m" :value="m">{{ m }}</option>
+        </select>
+        <span v-if="!(assets.comfyui?.controlNets ?? []).length" class="hint">
+          No ControlNet models found in ComfyUI's models/controlnet folder.
+        </span>
+      </label>
+    </div>
+
     <!-- Skill section -->
     <div v-if="modelId && skillData" class="skill-section">
       <hr>
-      <div class="skill-header">
-        <h3>Model Skill</h3>
-        <label class="skill-lock">
-          <input type="checkbox" :checked="skillLocked" @change="toggleLock">
-          <span :class="{ 'skill-lock-active': skillLocked }">{{ skillLocked ? 'Locked' : 'Lock updates' }}</span>
-        </label>
-      </div>
 
-      <div v-if="skillLocked" class="skill-lock-banner">
-        Auto-updates paused — unlock to allow skill refreshes.
-      </div>
-
-      <div v-if="usingDefault && defaultSkill" class="skill-text">{{ defaultSkill }}</div>
-      <div v-else-if="activeVersion?.skill" class="skill-text">{{ activeVersion.skill }}</div>
-      <div v-else class="skill-text" style="color:var(--muted)">No skill synthesised yet — will be generated after the first session.</div>
-      <div v-if="usingDefault && defaultSkill" class="hint">Architecture default — used until a custom skill is generated</div>
-      <div v-else-if="activeVersion" class="hint">{{ formatDate(activeVersion.createdAt) }} · {{ activeVersion.source }}</div>
-
-      <div v-if="!skillLocked" class="skill-correction">
-        <textarea
-          v-model="correctionNote"
-          rows="3"
-          placeholder="Describe what the agent got wrong or should change (optional)…"
-          :disabled="refreshing"
-        ></textarea>
-        <button class="small primary" :disabled="refreshing" @click="doRefreshSkill">
-          {{ refreshing ? 'Refreshing…' : 'Refresh skill' }}
-        </button>
-      </div>
-
-      <template v-if="activeVersion && activeSessions > 0">
-        <h3 style="margin-top:14px">Outcomes</h3>
-        <div class="ln-header">
-          <span class="ln-rate">{{ activeVersion.outcomes.accepts }}/{{ activeSessions }} accepted</span>
-          <div class="ln-bar"><div class="ln-fill" :style="{ width: outcomeRate + '%' }"></div></div>
-          <span class="ln-pct">{{ outcomeRate }}%</span>
-        </div>
+      <!-- Simplified view when skill refinement is globally disabled -->
+      <template v-if="config.skillRefinement === false">
+        <h3>Model Skill <span class="hint" style="font-weight:normal">(refinement disabled — architecture default)</span></h3>
+        <div v-if="defaultSkill" class="skill-text">{{ defaultSkill }}</div>
+        <div v-else class="hint">No default skill for this architecture.</div>
       </template>
 
-      <template v-if="sortedVersions.length > 0 || defaultSkill">
-        <h3 style="margin-top:14px">Version History</h3>
-        <div v-if="defaultSkill" class="ver-row ver-default" :class="{ 'ver-active': usingDefault }">
-          <div class="ver-meta">
-            <span class="ver-date">Built-in default</span>
-            <span class="ver-source">architecture baseline</span>
-          </div>
-          <div class="ver-preview">{{ defaultSkill.slice(0, 90) + (defaultSkill.length > 90 ? '…' : '') }}</div>
-          <div class="ver-actions">
-            <button class="small secondary" :disabled="usingDefault" @click="doResetToDefault">Use</button>
-          </div>
+      <!-- Full skill panel when refinement is enabled -->
+      <template v-else>
+        <div class="skill-header">
+          <h3>Model Skill</h3>
+          <label class="skill-lock">
+            <input type="checkbox" :checked="skillLocked" @change="toggleLock">
+            <span :class="{ 'skill-lock-active': skillLocked }">{{ skillLocked ? 'Locked' : 'Lock updates' }}</span>
+          </label>
         </div>
-        <div v-for="ver in sortedVersions" :key="ver.id" class="ver-row" :class="{ 'ver-active': ver.id === activeVersionId }">
-          <div class="ver-meta">
-            <span class="ver-date">{{ formatDate(ver.createdAt) }}</span>
-            <span class="ver-source">{{ ver.source }}</span>
-            <span class="ver-rate" :style="{ color: versionRateColor(ver) }">{{ versionRateText(ver) }}</span>
-          </div>
-          <div class="ver-preview">{{ ver.skill ? ver.skill.slice(0, 90) + (ver.skill.length > 90 ? '…' : '') : 'No skill text' }}</div>
-          <div class="ver-actions">
-            <button class="small secondary" :disabled="ver.id === activeVersionId" @click="doActivateVersion(ver.id)">Use</button>
-            <button class="small danger"    :disabled="ver.id === activeVersionId" @click="doDeleteVersion(ver.id)">×</button>
-          </div>
+
+        <div v-if="skillLocked" class="skill-lock-banner">
+          Auto-updates paused — unlock to allow skill refreshes.
         </div>
+
+        <div v-if="activeVersion?.skill && !usingDefault" class="skill-text">{{ activeVersion.skill }}</div>
+        <div v-else-if="defaultSkill" class="skill-text">{{ defaultSkill }}</div>
+
+        <div v-if="usingDefault && defaultSkill" class="hint">Architecture default — will be refined after the first session</div>
+        <div v-else-if="activeVersion" class="hint">{{ formatDate(activeVersion.createdAt) }} · {{ activeVersion.source }}</div>
+
+        <div v-if="!skillLocked" class="skill-correction">
+          <textarea
+            v-model="correctionNote"
+            rows="3"
+            placeholder="Describe what the agent got wrong or should change (optional)…"
+            :disabled="refreshing"
+          ></textarea>
+          <button class="small primary" :disabled="refreshing" @click="doRefreshSkill">
+            {{ refreshing ? 'Refreshing…' : 'Refresh skill' }}
+          </button>
+        </div>
+
+        <template v-if="activeVersion && activeSessions > 0">
+          <h3 style="margin-top:14px">Outcomes</h3>
+          <div class="ln-header">
+            <span class="ln-rate">{{ activeVersion.outcomes.accepts }}/{{ activeSessions }} accepted</span>
+            <div class="ln-bar"><div class="ln-fill" :style="{ width: outcomeRate + '%' }"></div></div>
+            <span class="ln-pct">{{ outcomeRate }}%</span>
+          </div>
+        </template>
+
+        <template v-if="sortedVersions.length > 0 || defaultSkill">
+          <h3 style="margin-top:14px">Version History</h3>
+          <div v-if="defaultSkill" class="ver-row ver-default" :class="{ 'ver-active': usingDefault }">
+            <div class="ver-meta">
+              <span class="ver-date">Built-in default</span>
+              <span class="ver-source">architecture baseline</span>
+            </div>
+            <div class="ver-preview">{{ defaultSkill.slice(0, 90) + (defaultSkill.length > 90 ? '…' : '') }}</div>
+            <div class="ver-actions">
+              <button class="small secondary" :disabled="usingDefault" @click="doResetToDefault">Use</button>
+            </div>
+          </div>
+          <div v-for="ver in sortedVersions" :key="ver.id" class="ver-row" :class="{ 'ver-active': ver.id === activeVersionId }">
+            <div class="ver-meta">
+              <span class="ver-date">{{ formatDate(ver.createdAt) }}</span>
+              <span class="ver-source">{{ ver.source }}</span>
+              <span class="ver-rate" :style="{ color: versionRateColor(ver) }">{{ versionRateText(ver) }}</span>
+            </div>
+            <div class="ver-preview">{{ ver.skill ? ver.skill.slice(0, 90) + (ver.skill.length > 90 ? '…' : '') : 'No skill text' }}</div>
+            <div class="ver-actions">
+              <button class="small secondary" :disabled="ver.id === activeVersionId" @click="doActivateVersion(ver.id)">Use</button>
+              <button class="small danger"    :disabled="ver.id === activeVersionId" @click="doDeleteVersion(ver.id)">×</button>
+            </div>
+          </div>
+        </template>
       </template>
     </div>
 
@@ -303,6 +330,7 @@ const props = defineProps({
   model:    { type: Object, default: null },
   archMeta: { type: Object, default: () => ({}) },
   assets:   { type: Object, default: () => ({}) },
+  config:   { type: Object, default: () => ({}) },
 });
 const emit = defineEmits(['saved', 'deleted', 'cancel']);
 
@@ -434,7 +462,7 @@ const form = reactive({
   label: '', architecture: '', splitLoad: false,
   checkpoint: '', unetName: '', unetName2: '', clipL: '', t5xxl: '', clipName: '', vaeName: '',
   vae: '', useRefiner: false, refinerCheckpoint: '',
-  adapterModel: '', clipVisionModel: '', adapterWeight: '', controlNetModel: '',
+  adapterModel: '', clipVisionModel: '', adapterWeight: '', controlNetModel: '', tileControlNetModel: '',
   modelQuantization: '', vaePrecision: '',
 });
 
@@ -455,9 +483,10 @@ watch(() => props.model, m => {
   form.vae               = m.vae               ?? '';
   form.useRefiner        = !!m.refinerCheckpoint;
   form.refinerCheckpoint = m.refinerCheckpoint ?? '';
-  form.adapterModel      = m.adapterModel      ?? '';
-  form.controlNetModel   = m.controlNetModel   ?? '';
-  form.clipVisionModel   = m.clipVisionModel   ?? '';
+  form.adapterModel          = m.adapterModel          ?? '';
+  form.controlNetModel       = m.controlNetModel       ?? '';
+  form.tileControlNetModel   = m.tileControlNetModel   ?? '';
+  form.clipVisionModel       = m.clipVisionModel       ?? '';
   form.adapterWeight     = m.adapterWeight     ?? '';
 }, { immediate: true });
 
@@ -516,9 +545,10 @@ async function save() {
     clipName:          (isSplit.value  && form.clipName)    ? form.clipName    : null,
     vae:               form.vae              || null,
     refinerCheckpoint: (form.useRefiner && form.refinerCheckpoint) ? form.refinerCheckpoint : null,
-    adapterModel:      form.adapterModel    || null,
-    controlNetModel:   form.controlNetModel || null,
-    clipVisionModel:   form.clipVisionModel || null,
+    adapterModel:          form.adapterModel          || null,
+    controlNetModel:       form.controlNetModel       || null,
+    tileControlNetModel:   form.tileControlNetModel   || null,
+    clipVisionModel:       form.clipVisionModel       || null,
     adapterWeight:     form.adapterWeight !== '' ? Number(form.adapterWeight) : null,
   };
 

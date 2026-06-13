@@ -65,37 +65,56 @@
           <input type="number" v-model.number="step.refinerSwitchAt" min="0" max="1" step="0.05" placeholder="0.8">
         </label>
 
-        <label v-if="si > 0">Chain denoise <span class="hint">(img2img strength when using previous step's output; default 0.5)</span>
-          <input type="number" v-model.number="step.chainDenoise" min="0.01" max="1" step="0.05" placeholder="0.5">
-        </label>
-
-        <!-- Reference strategy -->
+        <!-- Image inputs: previous step + user references -->
         <div class="review-block">
-          <strong>References</strong>
-          <label class="checkbox-label">
-            <input type="checkbox" v-model="step.visionNotes"> Pass all references to LLM for composition guidance
+          <strong>Image inputs</strong>
+
+          <template v-if="si > 0">
+            <p class="hint" style="margin:8px 0 4px;font-weight:600;color:var(--text)">Previous step output</p>
+            <div class="row">
+              <label>Mode
+                <select v-model="step.chainMode">
+                  <option value="init-image">Init-image (img2img)</option>
+                  <option value="txt2img">Ignore</option>
+                  <option v-if="archCap(si, 'adapter')" value="adapter">Adapter</option>
+                  <option v-if="archCap(si, 'tileControlNet')" value="tile">Tile ControlNet</option>
+                </select>
+              </label>
+              <label v-if="step.chainMode === 'init-image'">Denoise
+                <input type="number" v-model.number="step.chainDenoise" min="0.01" max="1" step="0.05" placeholder="0.5">
+              </label>
+              <label v-if="step.chainMode === 'tile'">Strength
+                <input type="number" v-model.number="step.chainTileStrength" min="0" max="2" step="0.05" placeholder="0.5">
+              </label>
+            </div>
+          </template>
+
+          <p class="hint" style="margin:8px 0 4px;font-weight:600;color:var(--text)">References</p>
+          <label v-if="config.llmExtras !== false" class="checkbox-label">
+            <input type="checkbox" v-model="step.visionNotes"> Pass to LLM for composition guidance
           </label>
-          <div class="row" style="margin-top:6px">
-            <label>Reference mode
+          <div class="row" style="margin-top:4px">
+            <label>Diffusion mode
               <select v-model="step.refMode">
-                <option value="txt2img">Ignore (txt2img)</option>
-                <option value="init-image">Use as init image (img2img)</option>
-                <option v-if="archCap(si, 'adapter')" value="adapter">Adapter conditioning</option>
+                <option value="txt2img">Ignore</option>
+                <option value="init-image">Init-image (img2img)</option>
+                <option v-if="archCap(si, 'adapter')" value="adapter">Adapter</option>
+                <option v-if="archCap(si, 'tileControlNet')" value="tile">Tile ControlNet</option>
               </select>
             </label>
-            <label v-if="step.refMode === 'init-image'">Denoise strength
+            <label v-if="step.refMode === 'init-image'">Denoise
               <input type="number" v-model.number="step.refDenoise" min="0.01" max="1" step="0.05" placeholder="0.6">
             </label>
-            <p v-if="step.refMode === 'adapter'" class="hint">
-              Adapter model and CLIP Vision model are configured in the model's settings. Works with any number of references.
-            </p>
+            <label v-if="step.refMode === 'tile'">Strength
+              <input type="number" v-model.number="step.refTileStrength" min="0" max="2" step="0.05" placeholder="0.5">
+            </label>
           </div>
         </div>
 
         <!-- LoRAs -->
         <div class="review-block" v-if="archCap(si, 'lora')">
           <strong>LoRAs</strong>
-          <label class="checkbox-label">
+          <label v-if="config.llmExtras !== false" class="checkbox-label">
             <input type="checkbox" v-model="step.llmLoras"> LLM may add LoRAs (tool calling)
           </label>
           <div v-for="(l, li) in step.loras" :key="li" class="row" style="margin-top:6px">
@@ -144,6 +163,7 @@
             the step fails rather than continuing.
           </p>
         </div>
+
       </template>
 
       <!-- ── Upscale step ───────────────────────────────────────────────── -->
@@ -249,8 +269,8 @@
         </p>
       </template>
 
-      <!-- ── Review (generate and upscale steps only) ─────────────────── -->
-      <div v-if="step.type !== 'video'" class="review-block">
+      <!-- ── Review (generate and upscale steps only; hidden when review is globally disabled) ── -->
+      <div v-if="step.type !== 'video' && config.reviewEnabled !== false" class="review-block">
         <strong>Review</strong>
         <div class="row">
           <label>Max iterations
@@ -299,6 +319,11 @@ const upscaleModels = computed(() => {
   return Array.isArray(list) ? list : [];
 });
 
+const controlNetModels = computed(() => {
+  const list = props.assets?.comfyui?.controlNets;
+  return Array.isArray(list) ? list : [];
+});
+
 const loraRegistry = ref({});
 onMounted(async () => { loraRegistry.value = await loadLoras().catch(() => ({})); });
 
@@ -313,8 +338,8 @@ function blankGenerateStep() {
     modelId: '', width: '', height: '', steps: '', cfgScale: '', guidance: '',
     sampler: '', scheduler: '', negativePrompt: '', refinerSwitchAt: '',
     maxIterations: '', humanReview: false, gracePeriod: '',
-    chainDenoise: '',
-    visionNotes: false, refMode: 'txt2img', refDenoise: 0.6,
+    chainMode: 'init-image', chainDenoise: '', chainTileStrength: '',
+    visionNotes: false, refMode: 'txt2img', refDenoise: 0.6, refTileStrength: '',
     loras: [], llmLoras: false,
     poseMode: 'off', cnStrength: 1.0,
   };
@@ -380,23 +405,29 @@ function stepFromDef(s) {
     scheduler:      s.params?.scheduler    ?? '',
     negativePrompt: s.params?.negativePrompt ?? '',
     refinerSwitchAt: s.params?.refinerSwitchAt ?? '',
-    chainDenoise:   s.params?.chainDenoise   ?? '',
-    maxIterations:  s.review?.maxIterations ?? '',
-    humanReview:    s.review?.humanReview   ?? false,
-    gracePeriod:    s.review?.gracePeriod   ?? '',
+    chainMode:       s.chainStrategy?.mode          ?? (s.params?.chainDenoise != null ? 'init-image' : 'init-image'),
+    chainDenoise:    s.chainStrategy?.denoise       ?? s.params?.chainDenoise ?? '',
+    chainTileStrength: s.chainStrategy?.tileStrength ?? '',
+    maxIterations:   s.review?.maxIterations ?? '',
+    humanReview:     s.review?.humanReview   ?? false,
+    gracePeriod:     s.review?.gracePeriod   ?? '',
     visionNotes: s.referenceStrategy?.visionNotes ?? false,
-    refMode:     s.referenceStrategy?.diffusion?.mode
-                   ?? s.referenceStrategy?.diffusion?.many?.mode   // back-compat
-                   ?? s.referenceStrategy?.diffusion?.one?.mode    // back-compat
-                   ?? 'txt2img',
+    // If tile is configured for references, show it as 'tile' diffusion mode
+    refMode:     s.controlNet?.tile?.enabled
+                   ? 'tile'
+                   : (s.referenceStrategy?.diffusion?.mode
+                      ?? s.referenceStrategy?.diffusion?.many?.mode   // back-compat
+                      ?? s.referenceStrategy?.diffusion?.one?.mode    // back-compat
+                      ?? 'txt2img'),
     refDenoise:  s.referenceStrategy?.diffusion?.denoise
                    ?? s.referenceStrategy?.diffusion?.one?.denoise  // back-compat
                    ?? s.referenceStrategy?.diffusion?.many?.denoise // back-compat
                    ?? 0.6,
+    refTileStrength: s.controlNet?.tile?.strength ?? '',
     loras:           (s.loras ?? []).map(l => ({ ...l })),
     llmLoras:        s.llmLoras ?? false,
-    poseMode:        s.controlNet?.poseMode        ?? 'off',
-    cnStrength:      s.controlNet?.strength        ?? 1.0,
+    poseMode:        s.controlNet?.poseMode  ?? 'off',
+    cnStrength:      s.controlNet?.strength  ?? 1.0,
   };
 }
 
@@ -471,7 +502,7 @@ async function save() {
     return alert('The video step must be the last step in the workflow.');
   }
 
-  const steps = form.steps.map(s => {
+  const steps = form.steps.map((s, si) => {
     const review = {
       ...(s.maxIterations !== '' && { maxIterations: Number(s.maxIterations) }),
       ...(s.gracePeriod   !== '' && { gracePeriod:   Number(s.gracePeriod) }),
@@ -516,8 +547,33 @@ async function save() {
       };
     }
 
-    const caps    = capsForModel(s.modelId);
-    const refMode = (s.refMode === 'adapter' && !caps.adapter) ? 'txt2img' : s.refMode;
+    const caps = capsForModel(s.modelId);
+    // Fall back to txt2img if the chosen mode requires a capability the model lacks
+    const refMode = (s.refMode === 'adapter' && !caps.adapter) ? 'txt2img'
+                  : (s.refMode === 'tile' && !caps.tileControlNet) ? 'txt2img'
+                  : s.refMode;
+
+    // Chain strategy (only meaningful when not the first step)
+    const chainMode = s.chainMode || 'init-image';
+    const chainStrategy = si > 0 ? {
+      mode: chainMode,
+      ...(chainMode === 'init-image' && s.chainDenoise !== '' && { denoise: Number(s.chainDenoise) }),
+      ...(chainMode === 'tile' && s.chainTileStrength !== '' && { tileStrength: Number(s.chainTileStrength) }),
+    } : undefined;
+
+    // ControlNet: pose and/or tile-from-references
+    const controlNetOut = {};
+    if (caps.controlNet && s.poseMode !== 'off') {
+      controlNetOut.poseMode = s.poseMode;
+      controlNetOut.strength = Number(s.cnStrength) || 1.0;
+    }
+    if (caps.tileControlNet && refMode === 'tile') {
+      controlNetOut.tile = {
+        enabled: true,
+        ...(s.refTileStrength !== '' && { strength: Number(s.refTileStrength) }),
+      };
+    }
+
     return {
       type:    'generate',
       modelId: s.modelId,
@@ -531,24 +587,20 @@ async function save() {
         ...(s.scheduler            && { scheduler:       s.scheduler }),
         ...(s.negativePrompt       && { negativePrompt:  s.negativePrompt }),
         ...(s.refinerSwitchAt !== '' && { refinerSwitchAt: Number(s.refinerSwitchAt) }),
-        ...(s.chainDenoise   !== '' && { chainDenoise:   Number(s.chainDenoise) }),
       },
+      ...(chainStrategy && { chainStrategy }),
       review,
       referenceStrategy: {
         visionNotes: s.visionNotes,
         diffusion: {
-          mode: refMode,
-          ...(refMode === 'init-image' && { denoise: Number(s.refDenoise) || 0.6 }),
+          // tile mode uses controlNet.tile, not diffusion; store as txt2img
+          mode: refMode === 'tile' ? 'txt2img' : refMode,
+          ...((refMode === 'init-image') && { denoise: Number(s.refDenoise) || 0.6 }),
         },
       },
       ...(caps.lora && s.loras.some(l => l.name) && { loras: s.loras.filter(l => l.name).map(l => ({ name: l.name, weight: Number(l.weight) || 1.0 })) }),
       llmLoras: caps.lora ? s.llmLoras : false,
-      ...(caps.controlNet && s.poseMode !== 'off' && {
-        controlNet: {
-          poseMode: s.poseMode,
-          strength: Number(s.cnStrength) || 1.0,
-        },
-      }),
+      ...(Object.keys(controlNetOut).length && { controlNet: controlNetOut }),
     };
   });
 

@@ -50,10 +50,11 @@ async function _runIterativeLoop(stepType, stepDef, stepIndex, session, ctx, cfg
   const tag      = session.id.slice(0, 8);
 
   // Per-step review settings, falling back to global config
-  const review      = stepDef.review ?? {};
-  const maxNewIter  = review.maxIterations ?? cfg.maxIterations ?? 4;
-  const humanReview = review.humanReview   ?? cfg.humanReview   ?? false;
-  const gracePeriod = cfg.bypassGracePeriod ? 0
+  const review          = stepDef.review ?? {};
+  const reviewEnabled   = cfg.reviewEnabled !== false;
+  const maxNewIter      = !reviewEnabled ? 1 : (review.maxIterations ?? cfg.maxIterations ?? 4);
+  const humanReview     = !reviewEnabled ? false : (review.humanReview ?? cfg.humanReview ?? false);
+  const gracePeriod     = !reviewEnabled ? 0 : cfg.bypassGracePeriod ? 0
     : review.gracePeriod !== undefined ? review.gracePeriod : (cfg.acceptanceGracePeriod ?? 0);
   const pendingKey  = `${session.id}:${stepIndex}`;
 
@@ -143,10 +144,10 @@ async function _runIterativeLoop(stepType, stepDef, stepIndex, session, ctx, cfg
       // reviewing when no further retry is possible is wasteful.
       const isLastIteration = i === maxNewIter - 1;
       let verdict, diagnosis;
-      if (stepType.skipReview?.(stepDef)) {
+      if (stepType.skipReview?.(stepDef) || !reviewEnabled) {
         verdict   = 'ACCEPT';
-        diagnosis = 'deterministic step — review skipped';
-        console.log(`[${tag}] step ${stepIndex} iter ${iterNum}: review skipped (deterministic step)`);
+        diagnosis = !reviewEnabled ? 'review disabled in settings' : 'deterministic step — review skipped';
+        console.log(`[${tag}] step ${stepIndex} iter ${iterNum}: review skipped (${!reviewEnabled ? 'disabled' : 'deterministic'})`);
       } else if (stepDef.type === 'generate' && isLastIteration) {
         verdict   = 'ACCEPT';
         diagnosis = 'last iteration — review skipped';
@@ -403,15 +404,17 @@ async function runPipeline(session, pipelineDef, cfg, res, imageContext = []) {
     activeKills.delete(session.id);
     db.saveSession(session);
     res.end();
-    // Refresh skill for each unique model used in generate steps
-    const seenModelIds = new Set();
-    for (const step of pipelineDef) {
-      if (step.type !== 'generate' || !step.modelId || seenModelIds.has(step.modelId)) continue;
-      seenModelIds.add(step.modelId);
-      const mc = cfg.models?.[step.modelId];
-      if (mc) {
-        refreshSkill(mc.id, mc.label, mc.architecture)
-          .catch(err => console.error(`[${tag}] skill refresh failed: ${err.message}`));
+    // Refresh skill for each unique model used in generate steps (skipped when disabled globally)
+    if (cfg.skillRefinement !== false) {
+      const seenModelIds = new Set();
+      for (const step of pipelineDef) {
+        if (step.type !== 'generate' || !step.modelId || seenModelIds.has(step.modelId)) continue;
+        seenModelIds.add(step.modelId);
+        const mc = cfg.models?.[step.modelId];
+        if (mc) {
+          refreshSkill(mc.id, mc.label, mc.architecture)
+            .catch(err => console.error(`[${tag}] skill refresh failed: ${err.message}`));
+        }
       }
     }
   }

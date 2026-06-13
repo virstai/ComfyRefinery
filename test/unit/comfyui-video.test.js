@@ -3,9 +3,12 @@
 const { test } = require('node:test');
 const assert   = require('node:assert/strict');
 const http     = require('http');
+const fs       = require('fs');
+const os       = require('os');
+const path     = require('path');
 
 // We test getOutputVideos by pointing comfyui at a real local HTTP server.
-// comfyui reads its baseUrl from config, so we override it via env.
+// comfyui reads its baseUrl from config, so we write a tmp config.json.
 
 async function withFakeHistory(historyBody, fn) {
   const srv = http.createServer((req, res) => {
@@ -18,8 +21,13 @@ async function withFakeHistory(historyBody, fn) {
   });
   await new Promise(r => srv.listen(0, r));
   const port = srv.address().port;
-  const orig = process.env.COMFYUI_URL;
-  process.env.COMFYUI_URL = `http://127.0.0.1:${port}`;
+
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ii-comfyui-video-test-'));
+  const origDataDir = process.env.DATA_DIR;
+  process.env.DATA_DIR = tmpDir;
+  fs.writeFileSync(path.join(tmpDir, 'config.json'), JSON.stringify({
+    comfyuiUrl: `http://127.0.0.1:${port}`,
+  }));
 
   // Force config reload
   delete require.cache[require.resolve('../../src/services/config')];
@@ -29,8 +37,9 @@ async function withFakeHistory(historyBody, fn) {
   try {
     await fn(comfyui);
   } finally {
-    if (orig === undefined) delete process.env.COMFYUI_URL;
-    else process.env.COMFYUI_URL = orig;
+    if (origDataDir === undefined) delete process.env.DATA_DIR;
+    else process.env.DATA_DIR = origDataDir;
+    fs.rmSync(tmpDir, { recursive: true, force: true });
     await new Promise(r => srv.close(r));
     delete require.cache[require.resolve('../../src/services/config')];
     delete require.cache[require.resolve('../../src/services/comfyui')];

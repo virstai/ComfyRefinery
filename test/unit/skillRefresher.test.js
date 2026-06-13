@@ -31,12 +31,11 @@ before(async () => {
   });
 
   await new Promise(r => fakeOllamaServer.listen(0, r));
-  process.env.OLLAMA_URL = `http://127.0.0.1:${fakeOllamaServer.address().port}`;
 
   fs.writeFileSync(path.join(tmpDir, 'config.json'), JSON.stringify({
-    ollamaUrl:   process.env.OLLAMA_URL,
+    llmBaseUrl:  `http://127.0.0.1:${fakeOllamaServer.address().port}/v1`,
     llmModel:    'test-model',
-    llmProvider: 'ollama',
+    llmProvider: 'openai',
   }));
 });
 
@@ -45,7 +44,6 @@ after(async () => {
   fs.rmSync(tmpDir, { recursive: true, force: true });
   delete process.env.SKILLS_DIR;
   delete process.env.DATA_DIR;
-  delete process.env.OLLAMA_URL;
 });
 
 const skills        = require('../../src/services/skills');

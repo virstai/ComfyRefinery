@@ -18,14 +18,14 @@ const ARCH_META = {
   sd15: {
     label:        'SD 1.5 / SD 2.x',
     loadingMode:  'checkpoint',
-    capabilities: { lora: true, adapter: true, controlNet: false },
-    fields:       { checkpoint: true, vae: true, cfgScale: true, negativePrompt: true, adapterModel: 'ipa', adapterWeight: true },
+    capabilities: { lora: true, adapter: true, controlNet: true, tileControlNet: true },
+    fields:       { checkpoint: true, vae: true, cfgScale: true, negativePrompt: true, adapterModel: 'ipa', adapterWeight: true, controlNetModel: 'controlnet', tileControlNetModel: 'controlnet' },
   },
   sdxl: {
     label:        'SDXL',
     loadingMode:  'checkpoint',
-    capabilities: { lora: true, adapter: true, controlNet: false },
-    fields:       { checkpoint: true, vae: true, cfgScale: true, negativePrompt: true, refiner: true, adapterModel: 'ipa', adapterWeight: true },
+    capabilities: { lora: true, adapter: true, controlNet: true, tileControlNet: true },
+    fields:       { checkpoint: true, vae: true, cfgScale: true, negativePrompt: true, refiner: true, adapterModel: 'ipa', adapterWeight: true, controlNetModel: 'controlnet', tileControlNetModel: 'controlnet' },
   },
   flux: {
     label:        'Flux.1',

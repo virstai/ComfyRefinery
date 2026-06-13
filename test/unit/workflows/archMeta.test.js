@@ -32,9 +32,10 @@ test('adapter: enabled for sd15/sdxl/flux/flux2, disabled for sd3/chroma and ani
   }
 });
 
-test('controlNet: anima only', () => {
+test('controlNet: sd15, sdxl, anima', () => {
+  const supported = ['sd15', 'sdxl', 'anima'];
   for (const arch of architectures) {
-    assert.equal(archMeta[arch].capabilities.controlNet, arch === 'anima', arch);
+    assert.equal(archMeta[arch].capabilities.controlNet, supported.includes(arch), arch);
   }
 });
 

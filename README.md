@@ -12,14 +12,18 @@ descriptions you curate) and request a **pose ControlNet** guide — a draft ima
 rendered from a pose description, a skeleton is extracted with DWPose, and the main
 generation follows it.
 
+All LLM features are individually optional. With all four disabled ComfyRefinery acts
+as a pure ComfyUI frontend with structured workflows — no LLM server required.
+
 > **Note:** This is a vibe-coded / AI-assisted project. Most features work, but many have not been fully human-tested — especially less common model architectures and more complex multi-step workflows. Expect rough edges and bugs.
 
 ## Prerequisites
 
 - **Node.js** 18+
-- **An OpenAI-compatible LLM** with vision support — Ollama (`gemma4:31b`, `llava:13b`),
-  LM Studio, OpenAI, vLLM, or any server that speaks `/v1/chat/completions`
 - **ComfyUI** running with at least one model loaded
+- **An OpenAI-compatible LLM** with vision support *(optional)* — Ollama (`gemma4:31b`,
+  `llava:13b`), LM Studio, OpenAI, vLLM, or any server that speaks
+  `/v1/chat/completions`. Required only when one or more LLM features are enabled.
 
 ## Install
 
@@ -56,13 +60,13 @@ Two things need to be configured before generating:
 
 Open **Settings** (⚙) and fill in:
 
-- **LLM base URL** — any OpenAI-compatible server, e.g. `http://127.0.0.1:11434/v1`
-  for Ollama or `https://api.openai.com/v1` for OpenAI.
-- **API key** — leave blank for local servers.
-- **LLM model** — the model name your server exposes (e.g. `gemma4:31b`). **Must be
-  vision-capable** (able to accept images) — it receives generated images for review
-  and optionally reference images for prompt building.
-- **ComfyUI URL** — default `http://127.0.0.1:8188`.
+- **ComfyUI URL** — default `http://127.0.0.1:8188`. Change if ComfyUI is on another
+  host or port.
+- **LLM base URL** *(optional)* — any OpenAI-compatible server, e.g.
+  `http://127.0.0.1:11434/v1` for Ollama or `https://api.openai.com/v1` for OpenAI.
+- **API key** *(optional)* — leave blank for local servers.
+- **LLM model** *(optional)* — the model name your server exposes (e.g. `gemma4:31b`).
+  When image review or vision guidance is enabled the model must support image inputs.
 
 ### Step 2 — Add a Model
 
@@ -84,6 +88,7 @@ Open **Models** (⊞) and click **Add model**:
    | CLIP / text encoder | `models/clip/` or `models/text_encoders/` |
    | IP-Adapter | `models/ipadapter/` |
    | CLIP Vision | `models/clip_vision/` |
+   | ControlNet model (pose or tile) | `models/controlnet/` |
    | Upscale model | `models/upscale_models/` |
 
 3. Give the model a label and save.
@@ -93,9 +98,11 @@ Open **Models** (⊞) and click **Add model**:
 Open **Workflows** (▶) and click **Add workflow**:
 
 1. Add a **generate step** and select the Model you just created.
-2. Configure resolution, sampler, scheduler, and review settings.
-3. Optionally add an **upscale** or **video** step after the generate step.
-4. Click **Use** to make it the active workflow.
+2. Configure resolution, sampler, and scheduler.
+3. Under **Image inputs**, configure how reference images and (for step 2+) the
+   previous step's output are used — init-image, adapter, tile ControlNet, or ignored.
+4. Optionally add an **upscale** or **video** step after the generate step.
+5. Click **Use** to make it the active workflow.
 
 ### Optional — LoRAs
 
@@ -106,62 +113,140 @@ a description — the LLM uses these to decide when a LoRA helps.
 
 In a workflow generate step you can then pin **always-on LoRAs** (e.g. turbo LoRAs —
 remember to set the step's Steps/CFG to the LoRA's recommended values) and/or enable
-**LLM may add LoRAs**, which lets the prompt-builder agent apply catalog LoRAs per prompt.
+**LLM may add LoRAs**, which lets the prompt-builder agent apply catalog LoRAs per
+prompt. LLM LoRA selection requires the **Vision guidance & LoRA selection** LLM feature
+to be enabled.
 
 LoRAs are supported on every image architecture (SD 1.5, SDXL, SD3, Flux, Flux 2,
 ChromaHD, Anima) — the LoRA chain is injected right after the model loader.
 
 ### Optional — Pose ControlNet
 
-Currently supported on the **anima** architecture (see the in-app Anima setup guide for
-the required custom nodes and weights). Select the ControlNet weights in the **model's**
-settings, then set a workflow step's **Pose mode** to `auto` (the LLM decides per prompt)
-or `always`. A pose draft is rendered with the step's model from a detection-friendly
-pose description, DWPose extracts the skeleton, and the generation follows it. If no
-pose can be extracted, the step fails rather than generating without pose control.
-Strength below ~1.0 lets the prompt override the pose.
+Supported on **SD 1.5**, **SDXL**, and **Anima**. Select the ControlNet weights in the
+**model's** settings, then set a workflow step's **Pose mode** to `auto` (the LLM
+decides per prompt) or `always`. A pose draft is rendered with the step's model from a
+detection-friendly pose description, DWPose extracts the skeleton, and the main generation
+follows it. If no pose can be extracted, the step fails rather than generating without
+pose control. Strength below ~1.0 lets the prompt override the pose.
+
+- **SD 1.5 / SDXL** use standard ComfyUI `ControlNetLoader` + `ControlNetApplyAdvanced`
+  nodes (no custom nodes) — requires a matching OpenPose ControlNet model in
+  `models/controlnet/` and `comfyui_controlnet_aux` for the DWPose extractor.
+- **Anima** uses the LLLite variant (`AnimaLLLiteApply`) — see the in-app Anima setup
+  guide for the required custom node packs and weights.
 
 **Anima IP-Adapter** is implemented but currently **disabled**: the adapter weights
-from the comfyui-anima-ipadapter project are still in training and not publicly
-released. The "Adapter conditioning" reference mode is therefore not offered for
-anima steps; it will be re-enabled (one capability flag) once the weights ship.
+are not yet publicly released. The "Adapter conditioning" reference mode is therefore
+not offered for Anima steps; it will be re-enabled once the weights ship.
+
+### Optional — Tile ControlNet and image input modes
+
+Each generate step has an **Image inputs** section controlling how external images
+influence generation.
+
+**For the previous step's output** (step 2+ only), select a mode:
+
+- **Init-image (img2img)** — denoises the previous output at a configurable strength.
+  Simple, but loses detail at any denoise value.
+- **Adapter** — feeds the previous output into IPAdapter/Redux as a style reference.
+  No denoising, but less spatially faithful.
+- **Tile ControlNet** — the previous output guides generation via tile ControlNet;
+  the model renders fresh from noise while following the source's structure. Requires a
+  tile ControlNet model in `models/controlnet/` (set in the model's settings). Supported
+  on **SD 1.5** and **SDXL**. Strength defaults to 0.5, applied across the first 60% of
+  denoising steps — enough to preserve structure while letting the model add fine detail.
+- **Ignore** — chained image is dropped; the step generates from scratch.
+
+**For user-uploaded references**, the same modes are available under **Diffusion mode**,
+plus an LLM vision guidance checkbox (sends reference images to the LLM for prompt
+building — requires the Vision guidance & LoRA selection feature to be enabled).
 
 ### Step 4 — Generate
 
-Type a prompt and click **Generate**. The LLM builds the prompt, ComfyUI generates
-the image, and the AI reviews it — repeating until accepted or the iteration limit
-is reached.
+Type a prompt and click **Generate**. With default settings the LLM builds the prompt,
+ComfyUI generates the image, and the AI reviews it — repeating until accepted or the
+iteration limit is reached. Disable any or all LLM features in Settings to simplify or
+remove the LLM from the loop entirely.
 
-### Environment variable overrides
+---
 
-| Variable | Default | Purpose |
+## Settings
+
+All settings are configured in-app via the **Settings** panel (⚙). No environment
+variables are needed for application config — the only supported env var is `PORT`
+to override the HTTP listen port.
+
+### Connection
+
+| Setting | Default | Notes |
 |---|---|---|
-| `OLLAMA_URL` | `http://127.0.0.1:11434` | LLM base URL — `/v1` is appended automatically; accepts any OpenAI-compat server |
-| `COMFYUI_URL` | `http://127.0.0.1:8188` | ComfyUI base URL |
-| `OLLAMA_MODEL` | _(from config)_ | LLM model name |
+| ComfyUI URL | `http://127.0.0.1:8188` | Base URL of your ComfyUI instance |
+| LLM base URL | `http://127.0.0.1:11434/v1` | OpenAI-compatible endpoint; unused when all LLM features are off |
+| API key | *(blank)* | Leave blank for Ollama / local servers |
+| LLM model | *(blank)* | Model name as your server exposes it; must support vision if image review or vision guidance is enabled |
 
-## Development
+### Review
 
-```bash
-npm run dev     # Express --watch on :3000 + Vite hot-reload on :5173
-npm test        # all tests
-```
+These settings are hidden when **Image review** is disabled.
+
+| Setting | Default | Notes |
+|---|---|---|
+| Max iterations | 3 | Maximum generate-review cycles per step; overridable per workflow step |
+| Acceptance grace period | 10 s | Seconds to hold an accepted result before finalising; 0 = disabled |
+| Human review | off | Pause for manual accept/reject after each iteration |
+| Bypass grace period | off | Skip the grace period hold, finalise immediately on acceptance |
+
+Per-step overrides for max iterations, grace period, and human review are available
+in each workflow step's **Review** block (hidden when image review is globally off).
+
+### LLM features
+
+Four independent toggles control how much the LLM is involved. Disabling all four
+removes the LLM from the generation loop entirely — only ComfyUI is needed.
+
+| Feature | Default | What it does when enabled |
+|---|---|---|
+| **Prompt refinement** | on | The LLM rewrites the user's prompt using the workflow skill before each generate. When off, the raw prompt is passed directly to ComfyUI with no modification. |
+| **Image review** | on | After each generation the LLM reviews the image and returns a verdict. Rejected iterations retry with a refined prompt. When off, every generation auto-accepts on the first attempt. |
+| **Skill refinement** | on | After each session the LLM synthesises a skill — a compact prompt-engineering guide — from accept/reject history. Future prompts are built using this guide. When off, the architecture's built-in default skill is used and no updates are written. |
+| **Vision guidance & LoRA selection** | on | The LLM receives reference images for compositional guidance, and can select LoRAs from the registry via tool calling. When off, references are only used for diffusion (adapter/init-image/tile), and LoRA selection falls back to always-on LoRAs only. |
+
+**Typical combinations:**
+
+- **All on** — full AI loop: prompt built from skill, image reviewed and retried, skill
+  learned over time, LoRAs and references inform the prompt.
+- **Prompt refinement off** — raw user prompt goes to ComfyUI as-is; review still runs
+  (different seed on retry), skill still updated.
+- **Image review off** — one generation per step, auto-accepted; no LLM review calls.
+  Fastest mode when you trust the prompt.
+- **All off** — ComfyUI-only mode. No LLM server required. Prompts pass through
+  unchanged, every generation accepts immediately, skills are not updated.
+
+### Acceptance grace period
+
+When the AI accepts an iteration the result is held for a configurable window. During
+this time a **Refuse** button appears, letting you reject without restarting. After the
+timer the session completes normally. You can also refuse after the session ends — open
+the iteration modal and use **Continue session** to keep iterating.
+
+---
 
 ## Supported architectures
 
 ### Image
 
-| Key | Name | Loader | LoRA | Adapter | Pose ControlNet |
-|---|---|---|---|---|---|
-| `sd15` | SD 1.5 / SD 2.x | Checkpoint + optional external VAE | ✓ | IPAdapter | — |
-| `sdxl` | SDXL | Checkpoint + optional VAE + optional refiner | ✓ | IPAdapter | — |
-| `flux` | Flux.1 | Checkpoint, or split (UNet + CLIP-L + T5-XXL + VAE) | ✓ | Redux | — |
-| `flux2` | Flux 2 (Dev / Klein) | Split only (UNet + CLIP/Mistral or Qwen-3 + VAE) | ✓ | ReferenceLatent | — |
-| `sd3` | SD 3 / SD 3.5 | Checkpoint + optional external VAE | ✓ | — | — |
-| `chroma` | ChromaHD | Split only (UNet + T5 encoder + VAE); standard ComfyUI nodes | ✓ | — | — |
-| `anima` | Anima | Split only (UNet + CLIP/Qwen-3 + Qwen-Image VAE); needs `er_sde` sampler | ✓ | — ¹ | LLLite |
+| Key | Name | Loader | LoRA | Adapter | Pose ControlNet | Tile ControlNet |
+|---|---|---|---|---|---|---|
+| `sd15` | SD 1.5 / SD 2.x | Checkpoint + optional external VAE | ✓ | IPAdapter | ✓ (standard) | ✓ |
+| `sdxl` | SDXL | Checkpoint + optional VAE + optional refiner | ✓ | IPAdapter | ✓ (standard) | ✓ |
+| `flux` | Flux.1 | Checkpoint, or split (UNet + CLIP-L + T5-XXL + VAE) | ✓ | Redux | — | — |
+| `flux2` | Flux 2 (Dev / Klein) | Split only (UNet + CLIP/Mistral or Qwen-3 + VAE) | ✓ | ReferenceLatent | — | — |
+| `sd3` | SD 3 / SD 3.5 | Checkpoint + optional external VAE | ✓ | — | — | — |
+| `chroma` | ChromaHD | Split only (UNet + T5 encoder + VAE); standard ComfyUI nodes | ✓ | — | — | — |
+| `anima` | Anima | Split only (UNet + CLIP/Qwen-3 + Qwen-Image VAE); needs `er_sde` sampler | ✓ | — ¹ | LLLite ² | — |
 
-¹ Anima IP-Adapter is implemented but disabled — weights not yet publicly released.
+¹ Anima IP-Adapter is implemented but disabled — weights not yet publicly released.  
+² Anima pose ControlNet uses `AnimaLLLiteApply` (kohya-ss/ComfyUI-Anima-LLLite) rather than standard `ControlNetApplyAdvanced`; requires DWPose via comfyui_controlnet_aux for skeleton extraction.
 
 ### Video
 
@@ -175,20 +260,14 @@ clip from the final prompt text (T2V) or the previous step's output image (I2V).
 | `ltxvideo` | LTX-Video | Split (UNet + CLIP/T5 + VAE) |
 | `cogvideox` | CogVideoX | Checkpoint + VAE + CLIP |
 
-## Settings
+---
 
-| Setting | Default | Description |
-|---|---|---|
-| Max iterations | 3 | Generate-review cycles per run (overridable per workflow step) |
-| Acceptance grace period | 10 s | Hold after acceptance before finalising; 0 = disabled |
-| Human review | off | Pause after each iteration for manual accept/reject |
+## Development
 
-### Acceptance grace period
-
-When the AI accepts an iteration the result is held for a configurable window. During
-this time a **Refuse** button appears, letting you reject without restarting. After the
-timer the session completes normally. You can also refuse after the session ends — open
-the iteration modal and use **Continue session** to keep iterating.
+```bash
+npm run dev     # Express --watch on :3000 + Vite hot-reload on :5173
+npm test        # all tests
+```
 
 ---
 
@@ -328,7 +407,7 @@ PUT    /api/sessions/loras          # update one entry ({ filename, ...fields } 
 Each workflow accumulates a **skill**: a prompt-engineering guide the LLM uses when
 building prompts, plus optional enforce rules (style mandates) and a blacklist (words
 stripped from all generated prompts). The skill is re-synthesised automatically after
-every session using accept/reject history.
+every session using accept/reject history (when skill refinement is enabled).
 
 **`GET /api/sessions/skills/:workflowId`**
 
@@ -393,11 +472,10 @@ with open('output.png', 'wb') as f:
   broadcast stream) shows the result and a refuse button while it is active.
 - `cfg_scale` is forwarded as both `guidance` and `cfgScale`; each architecture uses
   whichever applies.
-- `POST /sdapi/v1/img2img`: `init_images` are always forwarded to the LLM as vision
-  context (the prompt builder sees them). They are also uploaded to ComfyUI and used as
+- `POST /sdapi/v1/img2img`: `init_images` are forwarded to the LLM as vision context
+  when vision guidance is enabled. They are also uploaded to ComfyUI and used as
   diffusion references when the active workflow step is configured for `adapter` or
-  `init-image` mode; otherwise only the vision context path is active.
-  `denoising_strength` maps to `denoise` in `init-image` mode.
+  `init-image` mode. `denoising_strength` maps to `denoise` in `init-image` mode.
 
 ---
 

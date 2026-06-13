@@ -27,16 +27,13 @@ before(async () => {
   const ollamaPort = ollamaServer.address().port;
   const comfyPort  = comfyServer.address().port;
 
-  process.env.OLLAMA_URL  = `http://127.0.0.1:${ollamaPort}`;
-  process.env.COMFYUI_URL = `http://127.0.0.1:${comfyPort}`;
-
   fs.mkdirSync(path.join(tmpDir, 'sessions'), { recursive: true });
   fs.mkdirSync(path.join(tmpDir, 'skills'),   { recursive: true });
   fs.writeFileSync(path.join(tmpDir, 'config.json'), JSON.stringify({
-    ollamaUrl:             `http://127.0.0.1:${ollamaPort}`,
+    llmBaseUrl:            `http://127.0.0.1:${ollamaPort}/v1`,
     comfyuiUrl:            `http://127.0.0.1:${comfyPort}`,
     llmModel:              'test-model',
-    llmProvider:           'ollama',
+    llmProvider:           'openai',
     activeWorkflow:        'test-video-wf',
     maxIterations:         3,
     humanReview:           false,
@@ -74,8 +71,6 @@ after(async () => {
   delete process.env.DATA_DIR;
   delete process.env.SESSIONS_DIR;
   delete process.env.SKILLS_DIR;
-  delete process.env.OLLAMA_URL;
-  delete process.env.COMFYUI_URL;
 });
 
 const base = () => `http://127.0.0.1:${appPort}`;

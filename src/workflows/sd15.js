@@ -28,6 +28,9 @@ function build(params) {
   nodes["2"] = { class_type: "CLIPTextEncode", inputs: { text: p.positivePrompt, clip: clipRef } };
   nodes["3"] = { class_type: "CLIPTextEncode", inputs: { text: p.negativePrompt, clip: clipRef } };
 
+  let positiveRef = ["2", 0];
+  let negativeRef = ["3", 0];
+
   if (p.vae) {
     nodes["8"] = { class_type: "VAELoader", inputs: { vae_name: p.vae } };
   }
@@ -60,6 +63,50 @@ function build(params) {
     });
   }
 
+  // Tile ControlNet: structural guide from a tile image (nodes 60–62)
+  if (p.tileControlNet?.image && p.tileControlNet?.model) {
+    const tc = p.tileControlNet;
+    const imgPath = tc.image.subfolder
+      ? `${tc.image.subfolder}/${tc.image.filename}`
+      : tc.image.filename;
+    nodes["60"]  = { class_type: "LoadImage",   inputs: { image: imgPath } };
+    nodes["60r"] = { class_type: "ImageScale",  inputs: { image: ["60", 0], width: p.width, height: p.height, upscale_method: "lanczos", crop: "disabled" } };
+    nodes["61"]  = { class_type: "ControlNetLoader", inputs: { control_net_name: tc.model } };
+    nodes["62"]  = { class_type: "ControlNetApplyAdvanced", inputs: {
+      positive:      positiveRef,
+      negative:      negativeRef,
+      control_net:   ["61", 0],
+      image:         ["60r", 0],
+      strength:      tc.strength ?? 0.5,
+      start_percent: 0.0,
+      end_percent:   0.6,
+    }};
+    positiveRef = ["62", 0];
+    negativeRef = ["62", 1];
+  }
+
+  // Pose ControlNet: standard ControlNetApplyAdvanced with a pre-extracted skeleton (nodes 63–65)
+  // Chains after tile ControlNet if both are active.
+  if (p.controlNet?.image && p.controlNet?.model) {
+    const cn = p.controlNet;
+    const imgPath = cn.image.subfolder
+      ? `${cn.image.subfolder}/${cn.image.filename}`
+      : cn.image.filename;
+    nodes["63"] = { class_type: "LoadImage",        inputs: { image: imgPath } };
+    nodes["64"] = { class_type: "ControlNetLoader", inputs: { control_net_name: cn.model } };
+    nodes["65"] = { class_type: "ControlNetApplyAdvanced", inputs: {
+      positive:      positiveRef,
+      negative:      negativeRef,
+      control_net:   ["64", 0],
+      image:         ["63", 0],
+      strength:      cn.strength ?? 1.0,
+      start_percent: 0.0,
+      end_percent:   1.0,
+    }};
+    positiveRef = ["65", 0];
+    negativeRef = ["65", 1];
+  }
+
   let latentRef;
   let denoise;
   if (p.initImage) {
@@ -81,7 +128,7 @@ function build(params) {
     inputs: {
       seed, steps: p.steps, cfg: p.cfgScale,
       sampler_name: p.sampler, scheduler: p.scheduler, denoise,
-      model: modelRef, positive: ["2", 0], negative: ["3", 0], latent_image: latentRef,
+      model: modelRef, positive: positiveRef, negative: negativeRef, latent_image: latentRef,
     },
   };
   nodes["6"] = { class_type: "VAEDecode", inputs: { samples: ["5", 0], vae: vaeRef } };

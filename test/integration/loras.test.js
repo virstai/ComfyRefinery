@@ -27,7 +27,6 @@ before(async () => {
     },
   });
   await new Promise(r => comfyServer.listen(0, r));
-  process.env.COMFYUI_URL = `http://127.0.0.1:${comfyServer.address().port}`;
 
   fs.writeFileSync(path.join(tmpDir, 'config.json'), JSON.stringify({
     comfyuiUrl: `http://127.0.0.1:${comfyServer.address().port}`,
@@ -46,7 +45,7 @@ after(async () => {
     new Promise(r => comfyServer.close(r)),
   ]);
   fs.rmSync(tmpDir, { recursive: true, force: true });
-  for (const k of ['DATA_DIR', 'SESSIONS_DIR', 'SKILLS_DIR', 'COMFYUI_URL']) delete process.env[k];
+  for (const k of ['DATA_DIR', 'SESSIONS_DIR', 'SKILLS_DIR']) delete process.env[k];
 });
 
 const base = () => `http://127.0.0.1:${appPort}`;
