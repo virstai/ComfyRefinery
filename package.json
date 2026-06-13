@@ -1,6 +1,6 @@
 {
   "name": "comfy-refinery",
-  "version": "0.9.0",
+  "version": "0.10.0",
   "description": "Workflow orchestration for ComfyUI — multi-step AI-reviewed image pipelines",
   "main": "server.js",
   "scripts": {
