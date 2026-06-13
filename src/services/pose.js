@@ -7,6 +7,7 @@
 // the run's output IS the skeleton.
 
 const comfyui = require('./comfyui');
+const png     = require('../lib/png');
 const { buildWorkflow: buildArchWorkflow } = require('../workflows');
 
 // comfyui_controlnet_aux defaults, verified against the pack's dwpose.py.
@@ -40,24 +41,33 @@ function buildPoseGraph(poseModelConfig, prompt, { width, height }) {
 
 // Returns { ref, imageUrl } — ref is a ComfyUI input ref for the skeleton,
 // imageUrl the app-relative URL for the UI. Throws a human-readable Error on
-// any failure; callers treat pose failures as non-fatal warnings.
+// any failure — a workflow that asked for a pose must not silently continue
+// without one, so callers let these errors fail the step.
 async function generatePose({ cfg, poseModelConfig, prompt, width, height, onProgress }) {
   if (!await comfyui.hasNode(DWPOSE_NODE)) {
-    throw new Error(`Pose skipped: ${DWPOSE_NODE} node not found — install comfyui_controlnet_aux`);
+    throw new Error(`Pose generation failed: ${DWPOSE_NODE} node not found — install comfyui_controlnet_aux`);
   }
 
   const graph = buildPoseGraph(poseModelConfig, prompt, { width, height });
   const { images } = await comfyui.generate(graph, onProgress, null);
-  if (!images.length) throw new Error('Pose skipped: draft run produced no image');
+  if (!images.length) throw new Error('Pose generation failed: draft run produced no image');
 
   const img     = images[0];
   const sub     = encodeURIComponent(img.subfolder ?? '');
   const type    = encodeURIComponent(img.type ?? 'output');
   const name    = encodeURIComponent(img.filename);
   const viewRes = await fetch(`${cfg.comfyuiUrl}/view?filename=${name}&subfolder=${sub}&type=${type}`);
-  if (!viewRes.ok) throw new Error(`Pose skipped: failed to fetch skeleton image (${viewRes.status})`);
+  if (!viewRes.ok) throw new Error(`Pose generation failed: could not fetch skeleton image (${viewRes.status})`);
 
-  const ref = await comfyui.uploadImage(Buffer.from(await viewRes.arrayBuffer()), `pose_${Date.now()}.png`);
+  // DWPose outputs an all-black canvas when it finds no person in the draft
+  // (e.g. extreme close-ups with no detectable body). Feeding that to the
+  // ControlNet would silently condition on nothing — fail loudly instead.
+  const skeleton = Buffer.from(await viewRes.arrayBuffer());
+  if (png.isBlank(skeleton)) {
+    throw new Error('Pose generation failed: no person detected in the draft (empty pose guide)');
+  }
+
+  const ref = await comfyui.uploadImage(skeleton, `pose_${Date.now()}.png`);
   return { ref, imageUrl: `/api/image?filename=${name}&subfolder=${sub}&type=${type}` };
 }
 

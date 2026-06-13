@@ -156,7 +156,9 @@ async function prepare(stepDef, ctx, previousIterations, onToken) {
 }
 
 // Optional pre-pass between prepare() and the main generation: pose ControlNet.
-// Never fatal — returns { warning } on failure and the step continues txt2img.
+// When a pose is wanted (mode 'always', or 'auto' + the LLM requested one) and
+// cannot be produced, this THROWS — a workflow that asked for pose control must
+// not silently generate without it.
 // hooks.onStart fires once the pose run actually begins (drives the 'posing'
 // phase event); hooks.onProgress forwards ComfyUI sampling progress.
 async function prePass(stepDef, prepResult, ctx, hooks = {}) {
@@ -166,25 +168,21 @@ async function prePass(stepDef, prepResult, ctx, hooks = {}) {
   if (!wanted) return null;
 
   const poseModelConfig = ctx.cfg.models?.[cn.poseModelId];
-  if (!poseModelConfig)    return { warning: `Pose skipped: pose model "${cn.poseModelId}" not configured` };
-  if (!cn.controlNetModel) return { warning: 'Pose skipped: no ControlNet model configured on this step' };
+  if (!poseModelConfig)    throw new Error(`Pose generation failed: pose model "${cn.poseModelId}" not configured`);
+  if (!cn.controlNetModel) throw new Error('Pose generation failed: no ControlNet model configured on this step');
 
   hooks.onStart?.();
-  try {
-    const { ref, imageUrl } = await pose.generatePose({
-      cfg:    ctx.cfg,
-      poseModelConfig,
-      prompt: prepResult.prompt,
-      width:  prepResult.params.width,
-      height: prepResult.params.height,
-      onProgress: hooks.onProgress,
-    });
-    prepResult.poseRef      = ref;
-    prepResult.poseImageUrl = imageUrl;
-    return { poseImageUrl: imageUrl };
-  } catch (err) {
-    return { warning: err.message };
-  }
+  const { ref, imageUrl } = await pose.generatePose({
+    cfg:    ctx.cfg,
+    poseModelConfig,
+    prompt: prepResult.prompt,
+    width:  prepResult.params.width,
+    height: prepResult.params.height,
+    onProgress: hooks.onProgress,
+  });
+  prepResult.poseRef      = ref;
+  prepResult.poseImageUrl = imageUrl;
+  return { poseImageUrl: imageUrl };
 }
 
 // Build the ComfyUI workflow graph for this iteration.

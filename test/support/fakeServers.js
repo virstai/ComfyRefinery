@@ -5,9 +5,10 @@
 const http = require('http');
 const { WebSocketServer } = require('ws');
 
-// 1×1 transparent PNG returned by fake /view so base64 encoding works.
+// 1×1 white PNG returned by fake /view so base64 encoding works. White (not
+// transparent/black) so pose-skeleton blank-detection treats it as a valid pose.
 const TINY_PNG = Buffer.from(
-  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==',
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4////fwAJ+wP9KobjigAAAABJRU5ErkJggg==',
   'base64',
 );
 
@@ -146,7 +147,7 @@ function makeFakeComfyUI(opts = {}) {
     }
     if (req.url.startsWith('/view')) {
       res.writeHead(200, { 'Content-Type': 'image/png' });
-      res.end(TINY_PNG);
+      res.end(opts.viewImage ?? TINY_PNG);
       return;
     }
     if (req.url.startsWith('/object_info/')) {

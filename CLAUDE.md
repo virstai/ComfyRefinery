@@ -89,7 +89,7 @@ reference strategy, ordered steps, per-step review. **Active-selected entity.**
 Generate step LoRA / ControlNet fields:
 - `loras` — always-on LoRA list applied to every iteration: `[{ name, weight }]`.
 - `llmLoras` — `true` enables LLM tool calling; LLM may call `add_lora` / `request_pose` via the agent loop (`src/services/agent.js`, bounded 3 rounds). Each tool carries its own system-prompt guidance, so the prompt adapts to whichever tools the step's settings enable — local models won't call tools from schemas alone. Selected LoRAs are recorded on the iteration.
-- `controlNet` — `{ poseMode, poseModelId, controlNetModel, strength }`. `poseMode`: `"off"` (disabled), `"auto"` (LLM-triggered via `request_pose`), `"always"` (unconditional). When active, a pose pre-pass runs (`src/services/pose.js`): draft generation with `poseModelId` + DWPreprocessor extraction in a single ComfyUI graph; skeleton re-uploaded as input for the main generation. Anima arch only (other archs ignore this field).
+- `controlNet` — `{ poseMode, poseModelId, controlNetModel, strength }`. `poseMode`: `"off"` (disabled), `"auto"` (LLM-triggered via `request_pose`), `"always"` (unconditional). When active, a pose pre-pass runs (`src/services/pose.js`): draft generation with `poseModelId` + DWPreprocessor extraction in a single ComfyUI graph; skeleton re-uploaded as input for the main generation. **Failure is fatal**: when a pose is wanted but cannot be produced (missing nodes/config, or DWPose detects no person → all-black skeleton, checked via `src/lib/png.js`), the step errors out rather than silently generating without pose control. Anima arch only (other archs ignore this field).
 
 `referenceStrategy.diffusion` — `{ mode, denoise? }`:
 - `mode: "txt2img"` — ignore refs for diffusion (still used for vision notes)
@@ -174,10 +174,13 @@ label(stepDef, cfg)
 prepare(stepDef, ctx, previousIterations, onToken)     // → { prompt?, params?, ... }
 buildComfyWorkflow(stepDef, prepareResult, ctx)        // → ComfyUI node graph
 reviewMessages(stepDef, prepareResult, ctx, imageBase64, previousIterations)
-prePass?(stepDef, prepResult, ctx, hooks)              // optional; non-fatal
+prePass?(stepDef, prepResult, ctx, hooks)              // optional; throws on failure
+skipReview?(stepDef)                                   // optional; true → no LLM review, auto-ACCEPT
 ```
 
-`prePass` is an optional export. When present it is called before `buildComfyWorkflow`. `hooks` provides `{ onStart(), onProgress(pct) }`. Returns `null` (skipped), `{ warning: string }` (soft failure — emits a `warning` SSE event and continues), or `{ poseImageUrl: string }` (skeleton image uploaded to ComfyUI; passed into the main generation graph as a ControlNet conditioning image).
+`prePass` is an optional export. When present it is called before `buildComfyWorkflow`. `hooks` provides `{ onStart(), onProgress(pct) }`. Returns `null` (not wanted) or `{ poseImageUrl: string }` (skeleton uploaded to ComfyUI; passed into the main graph as ControlNet conditioning). When a pose is wanted but cannot be produced it **throws**, failing the step — a workflow that asked for pose control must not silently continue without it.
+
+`skipReview` is an optional export: when it returns `true` for a step def, the LLM review is skipped and the iteration auto-ACCEPTs (used by deterministic model-type upscales, where re-running after a rejection could never change the result). Human review, if configured, still applies.
 
 `ctx` shape: `{ userPrompt, modelConfig, skillId, inputImage, chainedInputRef, references, cfg, signal }`.
 - `skillId` = `session.workflowId`
@@ -210,6 +213,7 @@ When `refs.length > 0 && mode === 'adapter'`:
   "review": { "maxIterations": 1, "humanReview": true } }
 ```
 `model` type: `UpscaleModelLoader → ImageUpscaleWithModel → (ImageScaleBy if factor < native) → SaveImage`.
+Model upscales are deterministic, so they run once with **no LLM review** (auto-ACCEPT; `skipReview`). Hires upscales re-diffuse with a fresh seed and keep their review loop.
 `hires` type: calls arch workflow builder with `initImage`, injects `LatentUpscaleBy` between VAEEncode and KSampler.
 
 ### Flux 2 architecture (`flux2.js`)
@@ -334,6 +338,7 @@ src/
   lib/
     parsers.js        — parsePromptResponse, parseReview
     loraMeta.js       — auto-detect LoRA architecture from ComfyUI /view_metadata response
+    png.js            — dependency-free PNG pixel inspector (blank-skeleton detection)
     loraTools.js      — lora catalog helpers + agent tool factories (add_lora, request_pose) with per-tool guidance
 ui/src/
   stores/
@@ -390,6 +395,11 @@ Integration tests write to a tmpDir; set `DATA_DIR` / `SESSIONS_DIR` / `SKILLS_D
   (~43 packages; verified no conflicts with the existing torch stack via pip dry-run).
   The DWPose detector models (`yolox_l.onnx`, `dw-ll_ucoco_384.onnx`) auto-download
   from huggingface on first use.
+- **Pose detection limits**: DWPose's person detector is trained on photographs and
+  can find nothing in flat-shaded anime drafts with no visible body (e.g. extreme
+  close-ups) — the skeleton comes back all black and the step fails with
+  "no person detected in the draft". Prompts implying full/half-body framing work;
+  pure face/hand close-ups are not pose-controllable with this detector.
 - **Anima-LLLite**: ControlNet on anima needs `kohya-ss/ComfyUI-Anima-LLLite`
   (`cd ComfyUI/custom_nodes && git clone https://github.com/kohya-ss/ComfyUI-Anima-LLLite`,
   no pip deps). The node is `AnimaLLLiteApply` (verified against the pack:

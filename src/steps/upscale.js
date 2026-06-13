@@ -163,4 +163,11 @@ function buildHiresWorkflow(stepDef, prepareResult, ctx) {
   return workflow;
 }
 
-module.exports = { label, prepare, buildComfyWorkflow, reviewMessages };
+// Model (ESRGAN) upscales are deterministic — same input, same output — so an
+// LLM review could never change the outcome by re-running. Skip it entirely.
+// Hires upscales re-diffuse with a fresh seed and keep their review.
+function skipReview(stepDef) {
+  return (stepDef.upscaleType ?? 'model') !== 'hires';
+}
+
+module.exports = { label, prepare, buildComfyWorkflow, reviewMessages, skipReview };
