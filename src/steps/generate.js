@@ -228,7 +228,7 @@ function buildComfyWorkflow(stepDef, prepareResult, ctx) {
 
   const cn = stepDef.controlNet;
   const controlNetParams = (prepareResult.poseRef && cn?.controlNetModel)
-    ? { controlNet: { image: prepareResult.poseRef, model: cn.controlNetModel, strength: cn.strength ?? 0.8 } }
+    ? { controlNet: { image: prepareResult.poseRef, model: cn.controlNetModel, strength: cn.strength ?? 1.0 } }
     : {};
 
   const { workflow } = buildArchWorkflow(ctx.modelConfig, {

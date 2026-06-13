@@ -111,7 +111,7 @@ test('poseMode always: pose graph runs first, main graph gets LLLite + always-on
   const draftPositive = Object.values(poseGraph)
     .find(n => n.class_type === 'CLIPTextEncode' && n.inputs.text.includes('a knight'));
   assert.ok(draftPositive, 'draft prompt built from the user description');
-  assert.match(draftPositive.inputs.text, /entire body visible/, 'detection-friendly template applied');
+  assert.match(draftPositive.inputs.text, /fully inside the frame/, 'detection-friendly template applied');
   assert.ok(nodeTypes(mainGraph).includes('AnimaLLLiteApply'), 'main graph has LLLite node');
   assert.ok(nodeTypes(mainGraph).includes('LoraLoader'), 'always-on lora applied');
 

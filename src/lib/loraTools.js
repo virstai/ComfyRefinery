@@ -84,11 +84,12 @@ function requestPoseTool(state) {
       required: ['description'],
     },
     guidance:
-      'A pose ControlNet is available: when the description implies a specific human pose, gesture, ' +
-      'or framing, call the request_pose tool with a plain physical description of the pose. ' +
-      'Always describe the ENTIRE body stance from head to feet (e.g. "a woman standing facing the ' +
-      'viewer, one arm raised and pointing directly at the camera, the other arm relaxed at her side, ' +
-      'legs together"), even when the final image will be framed closer. No framing or art-style terms.',
+      'A pose ControlNet is available: when the description implies specific pose(s), gesture(s), or ' +
+      'framing, call the request_pose tool with a plain physical description of every subject\'s pose ' +
+      '(e.g. "a woman standing facing the viewer, one arm raised pointing directly at the camera, the ' +
+      'other relaxed at her side"). Head-to-toe stance descriptions extract the most reliable pose ' +
+      'guides — prefer them unless the image really calls for closer framing. Multiple subjects are ' +
+      'supported: describe each one. No art-style terms.',
     execute(args) {
       state.wantsPose   = true;
       state.description = args?.description || null;

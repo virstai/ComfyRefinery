@@ -74,7 +74,7 @@ reference strategy, ordered steps, per-step review. **Active-selected entity.**
       "loras":    [{ "name": "anima_turbo.safetensors", "weight": 1.0 }],
       "llmLoras": true,
       "controlNet": { "poseMode": "auto", "poseModelId": "pose-draft",
-                      "controlNetModel": "anima_lllite_pose.safetensors", "strength": 0.8 },
+                      "controlNetModel": "anima_lllite_pose.safetensors", "strength": 1.0 },
       "review": { "maxIterations": 4, "humanReview": false, "gracePeriod": 10 }
     },
     {
@@ -89,7 +89,7 @@ reference strategy, ordered steps, per-step review. **Active-selected entity.**
 Generate step LoRA / ControlNet fields:
 - `loras` — always-on LoRA list applied to every iteration: `[{ name, weight }]`.
 - `llmLoras` — `true` enables LLM tool calling; LLM may call `add_lora` / `request_pose` via the agent loop (`src/services/agent.js`, bounded 3 rounds). Each tool carries its own system-prompt guidance, so the prompt adapts to whichever tools the step's settings enable — local models won't call tools from schemas alone. Selected LoRAs are recorded on the iteration.
-- `controlNet` — `{ poseMode, poseModelId, controlNetModel, strength }`. `poseMode`: `"off"` (disabled), `"auto"` (LLM-triggered via `request_pose`), `"always"` (unconditional). When active, a pose pre-pass runs (`src/services/pose.js`): a draft is generated with `poseModelId` **from a detection-friendly prompt** — the `request_pose` tool supplies a plain physical pose description (fallback: the raw user prompt) which is wrapped in a template forcing whole-body framing, plain background, and photographic rendering, with an anti-crop/anti-flat-style negative. The styled image prompt is never used for the draft (style/crop terms defeat the detector). DWPreprocessor extracts the skeleton in the same ComfyUI graph; it's re-uploaded as input for the main generation. The pre-pass is architecture-agnostic (any model can draft; the skeleton suits any pose ControlNet). **Failure is fatal**: when a pose is wanted but cannot be produced (missing nodes/config, or an all-black skeleton, checked via `src/lib/png.js`), the step errors out rather than silently generating without pose control. ControlNet apply is anima-only for now (other archs ignore this field).
+- `controlNet` — `{ poseMode, poseModelId, controlNetModel, strength }`. `poseMode`: `"off"` (disabled), `"auto"` (LLM-triggered via `request_pose`), `"always"` (unconditional). When active, a pose pre-pass runs (`src/services/pose.js`): a draft is generated with `poseModelId` **from a detection-friendly prompt** — the `request_pose` tool supplies a plain physical pose description (fallback: the raw user prompt) which is wrapped in a template adding plain background and photographic rendering with an anti-crop/anti-flat-style negative. Framing follows the description (upper-body and multi-subject poses are supported); the agent's guidance prefers head-to-toe stances since they extract most reliably. The styled image prompt is never used for the draft (style terms defeat the detector). Strength below ~1.0 lets the prompt's own composition override the pose — default is 1.0. DWPreprocessor extracts the skeleton in the same ComfyUI graph; it's re-uploaded as input for the main generation. The pre-pass is architecture-agnostic (any model can draft; the skeleton suits any pose ControlNet). **Failure is fatal**: when a pose is wanted but cannot be produced (missing nodes/config, or an all-black skeleton, checked via `src/lib/png.js`), the step errors out rather than silently generating without pose control. ControlNet apply is anima-only for now (other archs ignore this field).
 
 `referenceStrategy.diffusion` — `{ mode, denoise? }`:
 - `mode: "txt2img"` — ignore refs for diffusion (still used for vision notes)
@@ -396,11 +396,13 @@ Integration tests write to a tmpDir; set `DATA_DIR` / `SESSIONS_DIR` / `SKILLS_D
   The DWPose detector models (`yolox_l.onnx`, `dw-ll_ucoco_384.onnx`) auto-download
   from huggingface on first use.
 - **Pose detection limits**: DWPose's person detector is trained on photographs, so
-  the pose draft is deliberately prompted toward photorealistic whole-body framing
-  (see the `controlNet` docs above) regardless of the final image's style or crop.
-  If detection still finds no person, the skeleton comes back all black and the
-  step fails with "no person detected in the draft" — by design, never silently.
-  A general-purpose/photoreal model as `poseModelId` gives the most reliable drafts.
+  the pose draft is prompted toward photographic rendering on a plain background
+  (see the `controlNet` docs above). Head-to-toe stances extract most reliably;
+  partial-body framings work but DWPose may add low-confidence keypoints for
+  out-of-frame limbs. If detection finds no person, the skeleton comes back all
+  black and the step fails with "no person detected in the draft" — by design,
+  never silently. A general-purpose/photoreal `poseModelId` gives the most
+  reliable drafts; ControlNet strength below ~1.0 may be overridden by the prompt.
 - **Anima-LLLite**: ControlNet on anima needs `kohya-ss/ComfyUI-Anima-LLLite`
   (`cd ComfyUI/custom_nodes && git clone https://github.com/kohya-ss/ComfyUI-Anima-LLLite`,
   no pip deps). The node is `AnimaLLLiteApply` (verified against the pack:

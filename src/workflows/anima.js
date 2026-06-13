@@ -58,7 +58,7 @@ function build(params) {
       model:            modelRef,
       lllite_name:      cn.model,
       image:            ["70", 0],
-      strength:         cn.strength ?? 0.8,
+      strength:         cn.strength ?? 1.0,
       start_percent:    0.0,
       end_percent:      1.0,
       preserve_wrapper: true,

@@ -88,7 +88,7 @@ test('controlNet with subfolder image path', () => {
     controlNet: { image: { filename: 'pose.png', subfolder: 'poses' }, model: 'lllite.safetensors' },
   });
   assert.equal(wf['70'].inputs.image, 'poses/pose.png');
-  assert.equal(wf['71'].inputs.strength, 0.8, 'default strength');
+  assert.equal(wf['71'].inputs.strength, 1.0, 'default strength');
 });
 
 test('controlNet ignored when image or model missing', () => {

@@ -142,10 +142,11 @@
             </template>
           </div>
           <p v-if="step.poseMode !== 'off'" class="hint">
-            A pose draft is generated from a detection-friendly prompt (whole body, plain background),
-            the skeleton is extracted with DWPose, and the main generation follows it via ControlNet
-            (Anima-LLLite on anima models). A general-purpose or photoreal model works best as the
-            pose draft model. If no pose can be extracted, the step fails rather than continuing.
+            A pose draft is generated from a detection-friendly prompt (plain background, photo
+            rendering; supports any framing and multiple subjects), the skeleton is extracted with
+            DWPose, and the main generation follows it via ControlNet (Anima-LLLite on anima models).
+            Strength below ~1.0 lets the prompt override the pose. If no pose can be extracted,
+            the step fails rather than continuing.
           </p>
         </div>
       </template>
@@ -390,7 +391,7 @@ function blankGenerateStep() {
     maxIterations: '', humanReview: false, gracePeriod: '',
     visionNotes: false, refMode: 'txt2img', refDenoise: 0.6,
     loras: [], llmLoras: false,
-    poseMode: 'off', poseModelId: '', controlNetModel: '', cnStrength: 0.8,
+    poseMode: 'off', poseModelId: '', controlNetModel: '', cnStrength: 1.0,
   };
 }
 
@@ -471,7 +472,7 @@ function stepFromDef(s) {
     poseMode:        s.controlNet?.poseMode        ?? 'off',
     poseModelId:     s.controlNet?.poseModelId     ?? '',
     controlNetModel: s.controlNet?.controlNetModel ?? '',
-    cnStrength:      s.controlNet?.strength        ?? 0.8,
+    cnStrength:      s.controlNet?.strength        ?? 1.0,
   };
 }
 
@@ -679,7 +680,7 @@ async function save() {
           poseMode:        s.poseMode,
           poseModelId:     s.poseModelId,
           controlNetModel: s.controlNetModel,
-          strength:        Number(s.cnStrength) || 0.8,
+          strength:        Number(s.cnStrength) || 1.0,
         },
       }),
     };

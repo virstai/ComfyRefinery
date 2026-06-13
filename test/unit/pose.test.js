@@ -29,13 +29,13 @@ test('draft prompt is detection-friendly: templated description, anti-crop negat
   const encodes  = Object.values(wf).filter(n => n.class_type === 'CLIPTextEncode');
   const positive = encodes.find(n => n.inputs.text.includes('a knight kneeling with sword planted'));
   assert.ok(positive, 'pose description present in the draft prompt');
-  assert.match(positive.inputs.text, /entire body visible/, 'framing forced toward full body');
+  assert.match(positive.inputs.text, /fully inside the frame/, 'subjects kept inside the frame');
   assert.match(positive.inputs.text, /photorealistic/, 'rendering biased toward the photo-trained detector');
   assert.ok(!positive.inputs.text.includes('cel shading'), 'no style terms leak in');
 
-  const negative = encodes.find(n => /close-up/.test(n.inputs.text));
-  assert.ok(negative, 'negative prompt suppresses crops/close-ups');
-  assert.match(negative.inputs.text, /cropped/);
+  const negative = encodes.find(n => /cropped limbs/.test(n.inputs.text));
+  assert.ok(negative, 'negative prompt suppresses cropped limbs / flat styles');
+  assert.match(negative.inputs.text, /flat shading/);
 
   const latent = Object.values(wf).find(n => n.class_type === 'EmptyLatentImage');
   assert.equal(latent.inputs.width, 768);
