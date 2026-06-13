@@ -72,14 +72,23 @@ test('addLoraTool.execute: dedupes repeats (first wins) and rejects unknown name
   assert.match(warnings[0], /evil\.safetensors/);
 });
 
-test('requestPoseTool: guidance explains when to call; execute flips state', () => {
-  const state = { wantsPose: false };
+test('requestPoseTool: guidance explains when/how to call; execute records the description', () => {
+  const state = { wantsPose: false, description: null };
   const tool  = requestPoseTool(state);
   assert.equal(tool.name, 'request_pose');
   assert.match(tool.guidance, /request_pose/);
   assert.match(tool.guidance, /pose/i);
-  assert.match(tool.execute({ reason: 'framing' }), /[Pp]ose guide/);
+  assert.deepEqual(tool.parameters.required, ['description'], 'pose description is required');
+  assert.match(tool.execute({ description: 'a person pointing at the camera, arm extended' }), /[Pp]ose guide/);
   assert.equal(state.wantsPose, true);
+  assert.equal(state.description, 'a person pointing at the camera, arm extended');
+});
+
+test('requestPoseTool: missing description still flags wantsPose with null description', () => {
+  const state = { wantsPose: false, description: null };
+  requestPoseTool(state).execute({});
+  assert.equal(state.wantsPose, true);
+  assert.equal(state.description, null);
 });
 
 test('mergeLoras: step always-on first, llm additions deduped, step wins', () => {

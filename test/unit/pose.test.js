@@ -23,10 +23,20 @@ test('pose graph routes SaveImage through the DWPose preprocessor', () => {
   assert.deepEqual(dw.inputs.image, [decode[0], 0]);
 });
 
-test('pose graph carries the prompt and dimensions', () => {
-  const wf = buildPoseGraph(POSE_MODEL, 'a knight on a hill', { width: 768, height: 1152 });
-  const positive = Object.values(wf).find(n => n.class_type === 'CLIPTextEncode' && n.inputs.text === 'a knight on a hill');
-  assert.ok(positive, 'prompt present in graph');
+test('draft prompt is detection-friendly: templated description, anti-crop negative', () => {
+  const wf = buildPoseGraph(POSE_MODEL, 'a knight kneeling with sword planted', { width: 768, height: 1152 });
+
+  const encodes  = Object.values(wf).filter(n => n.class_type === 'CLIPTextEncode');
+  const positive = encodes.find(n => n.inputs.text.includes('a knight kneeling with sword planted'));
+  assert.ok(positive, 'pose description present in the draft prompt');
+  assert.match(positive.inputs.text, /entire body visible/, 'framing forced toward full body');
+  assert.match(positive.inputs.text, /photorealistic/, 'rendering biased toward the photo-trained detector');
+  assert.ok(!positive.inputs.text.includes('cel shading'), 'no style terms leak in');
+
+  const negative = encodes.find(n => /close-up/.test(n.inputs.text));
+  assert.ok(negative, 'negative prompt suppresses crops/close-ups');
+  assert.match(negative.inputs.text, /cropped/);
+
   const latent = Object.values(wf).find(n => n.class_type === 'EmptyLatentImage');
   assert.equal(latent.inputs.width, 768);
   assert.equal(latent.inputs.height, 1152);

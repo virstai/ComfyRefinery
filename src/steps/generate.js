@@ -129,11 +129,14 @@ async function prepare(stepDef, ctx, previousIterations, onToken) {
     : [];
 
   const llmChosen = [];
-  const poseState = { wantsPose: false };
+  const poseState = { wantsPose: false, description: null };
   const warnings  = [];
   const tools     = [];
-  if (catalog.length)                          tools.push(addLoraTool(catalog, llmChosen, warnings));
-  if (stepDef.controlNet?.poseMode === 'auto') tools.push(requestPoseTool(poseState));
+  const poseMode  = stepDef.controlNet?.poseMode;
+  if (catalog.length) tools.push(addLoraTool(catalog, llmChosen, warnings));
+  // Offered in 'always' mode too: the agent supplies the pose description
+  // even though the pose itself runs unconditionally.
+  if (poseMode === 'auto' || poseMode === 'always') tools.push(requestPoseTool(poseState));
 
   const alwaysOnText = alwaysOnSection(alwaysOn, registry);
   if (alwaysOnText) messages[0].content += `\n\n${alwaysOnText}`;
@@ -143,7 +146,10 @@ async function prepare(stepDef, ctx, previousIterations, onToken) {
 
   const prompt = parsePromptResponse(result.text);
   const loras  = mergeLoras(alwaysOn, llmChosen);
-  const wantsPose = poseState.wantsPose;
+  const wantsPose = poseMode === 'always' || poseState.wantsPose;
+  // Fall back to the raw user description (never the styled prompt — style
+  // and crop terms are what break pose detection in the draft).
+  const poseDescription = poseState.description ?? ctx.userPrompt;
 
   const params = {
     ...archDefaults,
@@ -152,7 +158,7 @@ async function prepare(stepDef, ctx, previousIterations, onToken) {
     positivePrompt: prompt,
   };
 
-  return { prompt, params, loras, wantsPose, warnings };
+  return { prompt, params, loras, wantsPose, poseDescription, warnings };
 }
 
 // Optional pre-pass between prepare() and the main generation: pose ControlNet.
@@ -175,7 +181,7 @@ async function prePass(stepDef, prepResult, ctx, hooks = {}) {
   const { ref, imageUrl } = await pose.generatePose({
     cfg:    ctx.cfg,
     poseModelConfig,
-    prompt: prepResult.prompt,
+    poseDescription: prepResult.poseDescription,
     width:  prepResult.params.width,
     height: prepResult.params.height,
     onProgress: hooks.onProgress,

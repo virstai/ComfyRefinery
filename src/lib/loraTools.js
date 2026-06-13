@@ -67,21 +67,30 @@ function addLoraTool(catalog, chosen, warnings) {
   };
 }
 
-// request_pose agent tool. Flips state.wantsPose; the pose pre-pass picks it up.
+// request_pose agent tool. Sets state.wantsPose + state.description; the pose
+// pre-pass renders the description with a detection-friendly template.
 function requestPoseTool(state) {
   return {
     name:        'request_pose',
-    description: 'Generate a pose/composition guide first so the image follows the expected framing.',
+    description: 'Generate a pose guide image so the generation follows the expected pose and framing.',
     parameters: {
-      type:       'object',
-      properties: { reason: { type: 'string', description: 'Why a pose guide helps here' } },
-      required:   [],
+      type: 'object',
+      properties: {
+        description: {
+          type: 'string',
+          description: 'The pose in plain physical body terms: stance, limbs, gesture, body orientation, how much of the body is in view',
+        },
+      },
+      required: ['description'],
     },
     guidance:
-      'A pose/composition ControlNet is available: when the description implies a specific ' +
-      'human pose, gesture, or framing, call the request_pose tool in addition to writing the prompt.',
-    execute() {
-      state.wantsPose = true;
+      'A pose ControlNet is available: when the description implies a specific human pose, gesture, ' +
+      'or framing, call the request_pose tool with a plain physical description of the pose ' +
+      '(e.g. "a woman facing the viewer, one arm raised and pointing directly at the camera, upper body leaning forward"). ' +
+      'Describe only the body and pose — no art style.',
+    execute(args) {
+      state.wantsPose   = true;
+      state.description = args?.description || null;
       return 'Pose guide will be generated and applied via ControlNet.';
     },
   };

@@ -105,6 +105,13 @@ test('poseMode always: pose graph runs first, main graph gets LLLite + always-on
   const poseGraph = comfyServer.prompts[0].prompt;
   const mainGraph = comfyServer.prompts[1].prompt;
   assert.ok(nodeTypes(poseGraph).includes('DWPreprocessor'), 'pose graph extracts skeleton');
+
+  // No request_pose call was made, so the draft falls back to the raw user
+  // prompt wrapped in the detection-friendly template.
+  const draftPositive = Object.values(poseGraph)
+    .find(n => n.class_type === 'CLIPTextEncode' && n.inputs.text.includes('a knight'));
+  assert.ok(draftPositive, 'draft prompt built from the user description');
+  assert.match(draftPositive.inputs.text, /entire body visible/, 'detection-friendly template applied');
   assert.ok(nodeTypes(mainGraph).includes('AnimaLLLiteApply'), 'main graph has LLLite node');
   assert.ok(nodeTypes(mainGraph).includes('LoraLoader'), 'always-on lora applied');
 
@@ -128,7 +135,7 @@ test('poseMode auto: LLM tool calls add a lora and request the pose', async () =
     if (parsed.messages.some(m => m.role === 'tool')) return [];
     return [
       { name: 'add_lora',     args: { name: 'anima_style.safetensors', weight: 0.5 } },
-      { name: 'request_pose', args: { reason: 'framing' } },
+      { name: 'request_pose', args: { description: 'a dancer mid-leap, both legs extended, full body airborne' } },
     ];
   };
 
@@ -140,6 +147,13 @@ test('poseMode auto: LLM tool calls add a lora and request the pose', async () =
   assert.match(systemContent, /add_lora/, 'lora guidance present in system prompt');
 
   assert.equal(comfyServer.prompts.length, 2, 'pose ran because the LLM requested it');
+
+  // The draft uses the LLM-supplied pose description, not the styled prompt
+  const poseGraph = comfyServer.prompts[0].prompt;
+  const draftPositive = Object.values(poseGraph)
+    .find(n => n.class_type === 'CLIPTextEncode' && n.inputs.text.includes('a dancer mid-leap, both legs extended'));
+  assert.ok(draftPositive, 'LLM pose description used for the draft');
+
   const mainGraph = comfyServer.prompts[1].prompt;
   const lora = Object.values(mainGraph).find(n => n.class_type === 'LoraLoader');
   assert.equal(lora.inputs.lora_name, 'anima_style.safetensors');

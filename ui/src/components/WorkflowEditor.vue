@@ -142,8 +142,10 @@
             </template>
           </div>
           <p v-if="step.poseMode !== 'off'" class="hint">
-            A quick draft is generated with the pose model, the skeleton is extracted with DWPose,
-            and the main generation follows it via ControlNet (Anima-LLLite on anima models).
+            A pose draft is generated from a detection-friendly prompt (whole body, plain background),
+            the skeleton is extracted with DWPose, and the main generation follows it via ControlNet
+            (Anima-LLLite on anima models). A general-purpose or photoreal model works best as the
+            pose draft model. If no pose can be extracted, the step fails rather than continuing.
           </p>
         </div>
       </template>

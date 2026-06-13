@@ -1,10 +1,11 @@
 'use strict';
 
-// Pose pre-pass: generate a quick draft with a dedicated pose model, extract an
+// Pose pre-pass: generate a draft purpose-built for pose extraction, extract an
 // OpenPose skeleton via DWPose (comfyui_controlnet_aux), and re-upload it as a
 // ComfyUI input for use as the ControlNet conditioning image.
 // One ComfyUI run: the draft graph's SaveImage is rewired through DWPose, so
-// the run's output IS the skeleton.
+// the run's output IS the skeleton. The whole flow is architecture-agnostic —
+// any configured model can draft, and the skeleton works with any ControlNet.
 
 const comfyui = require('./comfyui');
 const png     = require('../lib/png');
@@ -16,8 +17,22 @@ const DWPOSE_NODE    = 'DWPreprocessor';
 const BBOX_DETECTOR  = 'yolox_l.onnx';
 const POSE_ESTIMATOR = 'dw-ll_ucoco_384.onnx';
 
-function buildPoseGraph(poseModelConfig, prompt, { width, height }) {
-  const { workflow } = buildArchWorkflow(poseModelConfig, { positivePrompt: prompt, width, height });
+// The draft exists only to be skeletonized, so its prompt is composed for the
+// detector, not for the final artwork: subject fully in frame, plain backdrop,
+// photographic rendering (DWPose's detector is trained on photographs), and no
+// style/crop terms from the real prompt — those are what made detection fail.
+function draftPrompt(poseDescription) {
+  return `photorealistic photo, ${poseDescription}, entire body visible in frame, plain neutral background, natural lighting, sharp focus`;
+}
+
+const DRAFT_NEGATIVE = 'close-up, portrait, cropped, out of frame, face only, anime, cartoon, illustration, flat shading';
+
+function buildPoseGraph(poseModelConfig, poseDescription, { width, height }) {
+  const { workflow } = buildArchWorkflow(poseModelConfig, {
+    positivePrompt: draftPrompt(poseDescription),
+    negativePrompt: DRAFT_NEGATIVE,
+    width, height,
+  });
 
   const saveEntry = Object.entries(workflow).find(([, n]) => n.class_type === 'SaveImage');
   if (!saveEntry) throw new Error('Pose model graph has no SaveImage node');
@@ -43,12 +58,12 @@ function buildPoseGraph(poseModelConfig, prompt, { width, height }) {
 // imageUrl the app-relative URL for the UI. Throws a human-readable Error on
 // any failure — a workflow that asked for a pose must not silently continue
 // without one, so callers let these errors fail the step.
-async function generatePose({ cfg, poseModelConfig, prompt, width, height, onProgress }) {
+async function generatePose({ cfg, poseModelConfig, poseDescription, width, height, onProgress }) {
   if (!await comfyui.hasNode(DWPOSE_NODE)) {
     throw new Error(`Pose generation failed: ${DWPOSE_NODE} node not found — install comfyui_controlnet_aux`);
   }
 
-  const graph = buildPoseGraph(poseModelConfig, prompt, { width, height });
+  const graph = buildPoseGraph(poseModelConfig, poseDescription, { width, height });
   const { images } = await comfyui.generate(graph, onProgress, null);
   if (!images.length) throw new Error('Pose generation failed: draft run produced no image');
 
