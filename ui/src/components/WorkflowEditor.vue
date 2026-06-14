@@ -87,12 +87,15 @@
             <label v-if="step.imageMode === 'tile' || step.imageMode === 'structural'">Strength
               <input type="number" v-model.number="step.imageStrength" min="0" max="2" step="0.05" :placeholder="step.imageMode === 'structural' ? '0.9' : '0.5'">
             </label>
+            <label v-if="step.imageMode === 'structural'">End at step %
+              <input type="number" v-model.number="step.imageEndPercent" min="0.1" max="1" step="0.05" placeholder="0.65">
+            </label>
             <label v-if="step.imageMode === 'tile'">Denoise
               <input type="number" v-model.number="step.imageDenoise" min="0.01" max="1" step="0.05" placeholder="0.65">
             </label>
           </div>
           <p v-if="step.imageMode === 'structural'" class="hint">
-            Extracts structure (depth map, edges, etc.) from the previous step's output as ControlNet conditioning. The model generates from pure text — full style freedom. Preprocessor is configured on the model (Models panel) alongside the CN model file.
+            Extracts structure (depth map, edges, etc.) from the previous step's output as ControlNet conditioning. The model generates from pure text — full style freedom. Preprocessor is configured on the model (Models panel). End at step % stops CN influence before the final detail passes — lower values (e.g. 0.5) help with faces/eyes at the cost of less structural fidelity.
           </p>
           <p v-else-if="si > 0" class="hint">Applies to the previous step's output and user-uploaded references. If both are present, the previous step's output takes priority.</p>
         </div>
@@ -324,7 +327,7 @@ function blankGenerateStep() {
     modelId: '', width: '', height: '', steps: '', cfgScale: '', guidance: '',
     sampler: '', scheduler: '', negativePrompt: '', refinerSwitchAt: '',
     maxIterations: '', humanReview: false, gracePeriod: '',
-    imageMode: 'txt2img', imageDenoise: '', imageStrength: '',
+    imageMode: 'txt2img', imageDenoise: '', imageStrength: '', imageEndPercent: '',
     visionNotes: false,
     loras: [], llmLoras: false,
     poseMode: 'off', cnStrength: 1.0,
@@ -406,6 +409,7 @@ function stepFromDef(s) {
                        ?? s.referenceStrategy?.diffusion?.many?.denoise // back-compat
                        ?? '',
     imageStrength:     s.chainStrategy?.tileStrength ?? s.chainStrategy?.strength ?? s.controlNet?.tile?.strength ?? '',
+    imageEndPercent:   s.chainStrategy?.endPercent ?? '',
     maxIterations:   s.review?.maxIterations ?? '',
     humanReview:     s.review?.humanReview   ?? false,
     gracePeriod:     s.review?.gracePeriod   ?? '',
@@ -545,7 +549,8 @@ async function save() {
       mode: imageMode,
       ...((imageMode === 'init-image' || imageMode === 'tile') && s.imageDenoise !== '' && { denoise: Number(s.imageDenoise) }),
       ...(imageMode === 'tile'       && s.imageStrength !== '' && { tileStrength:  Number(s.imageStrength) }),
-      ...(imageMode === 'structural' && s.imageStrength !== '' && { strength:      Number(s.imageStrength) }),
+      ...(imageMode === 'structural' && s.imageStrength   !== '' && { strength:    Number(s.imageStrength) }),
+      ...(imageMode === 'structural' && s.imageEndPercent !== '' && { endPercent:  Number(s.imageEndPercent) }),
     } : undefined;
 
     // ControlNet: pose and/or tile-from-references

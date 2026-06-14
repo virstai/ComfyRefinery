@@ -279,10 +279,11 @@ function buildComfyWorkflow(stepDef, prepareResult, ctx) {
         // The preprocessed hint (depth/softedge/lineart) carries composition only.
         structuralControlNetParams = {
           structuralControlNet: {
-            image:       ctx.chainedInputRef,
-            model:       structuralModel,
+            image:        ctx.chainedInputRef,
+            model:        structuralModel,
             preprocessor: ctx.modelConfig?.structuralControlNetPreprocessor ?? cs?.preprocessor ?? 'depth',
-            strength:    cs?.strength ?? 0.9,
+            strength:     cs?.strength ?? 0.9,
+            endPercent:   cs?.endPercent,
           },
         };
       }

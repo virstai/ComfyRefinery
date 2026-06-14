@@ -127,7 +127,7 @@ function build(params) {
       image:         ["72", 0],
       strength:      sc.strength ?? 0.9,
       start_percent: 0.0,
-      end_percent:   1.0,
+      end_percent:   sc.endPercent ?? 0.65,
     }};
     positiveRef = ["74", 0];
     negativeRef = ["74", 1];

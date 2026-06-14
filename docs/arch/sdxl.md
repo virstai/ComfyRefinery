@@ -78,7 +78,7 @@ Unlike tile ControlNet (which carries pixel-level appearance and suppresses the 
 | `lineart_realistic` | `LineartRealisticPreprocessor` | Photo-to-lineart conversion |
 | `canny` | `CannyEdgePreprocessor` | Hard edges, architectural detail |
 
-Start with `depth` at strength 0.9. Reduce strength if SDXL's style is being over-constrained by the composition hint.
+Start with `depth` at strength 0.9 and end percent 0.65 (the default). The end percent stops CN influence before the final sampling steps — lower values (e.g. 0.5) improve eyes and fine detail at the cost of weaker structural fidelity. Reduce strength if SDXL's overall style is being over-constrained.
 
 ## Notes
 

@@ -148,3 +148,28 @@ test('structural chainStrategy: falls through when structuralControlNetModel mis
   const nodeTypes = Object.values(wf).map(n => n.class_type);
   assert.ok(!nodeTypes.includes('ControlNetApplyAdvanced'), 'no CN when model missing');
 });
+
+test('structural chainStrategy: end_percent defaults to 0.65 to free detail-pass steps', () => {
+  const chainedRef = { filename: 'klein.png', subfolder: '' };
+  const modelConfig = { architecture: 'sdxl', checkpoint: 'sdxl.safetensors', structuralControlNetModel: 'depth.safetensors' };
+  const wf = generate.buildComfyWorkflow(
+    { chainStrategy: { mode: 'structural', strength: 0.9 }, referenceStrategy: { diffusion: { mode: 'txt2img' } } },
+    { params: { ...modelConfig, positivePrompt: 'anime', width: 1024, height: 1024 } },
+    { modelConfig, chainedInputRef: chainedRef },
+  );
+  const cnNode = Object.values(wf).find(n => n.class_type === 'ControlNetApplyAdvanced');
+  assert.ok(cnNode, 'CN apply node present');
+  assert.equal(cnNode.inputs.end_percent, 0.65, 'default end_percent is 0.65');
+});
+
+test('structural chainStrategy: custom endPercent is forwarded to end_percent', () => {
+  const chainedRef = { filename: 'klein.png', subfolder: '' };
+  const modelConfig = { architecture: 'sdxl', checkpoint: 'sdxl.safetensors', structuralControlNetModel: 'depth.safetensors' };
+  const wf = generate.buildComfyWorkflow(
+    { chainStrategy: { mode: 'structural', strength: 0.9, endPercent: 0.5 }, referenceStrategy: { diffusion: { mode: 'txt2img' } } },
+    { params: { ...modelConfig, positivePrompt: 'anime', width: 1024, height: 1024 } },
+    { modelConfig, chainedInputRef: chainedRef },
+  );
+  const cnNode = Object.values(wf).find(n => n.class_type === 'ControlNetApplyAdvanced');
+  assert.equal(cnNode.inputs.end_percent, 0.5, 'custom endPercent forwarded');
+});
