@@ -1,6 +1,7 @@
 'use strict';
 
-const { applyLoraChain } = require('./lib/loraChain');
+const { applyLoraChain }       = require('./lib/loraChain');
+const { buildPreprocessorNode } = require('./lib/preprocessors');
 
 const defaults = {
   width:              1024,
@@ -82,10 +83,37 @@ function build(params) {
       image:         ["60r", 0],
       strength:      tc.strength ?? 0.5,
       start_percent: 0.0,
-      end_percent:   0.6,
+      end_percent:   0.85,
     }};
     positiveRef = ["62", 0];
     negativeRef = ["62", 1];
+  }
+
+  // Structural ControlNet (nodes 70–74): extract a preprocessed hint (depth, softedge, lineart, canny)
+  // from a reference image inline in the graph, then apply it as a composition guide for SDXL.
+  // Designed for cross-model style transfer: use the chained (Klein/Flux2) output as the structural
+  // guide so SDXL generates fresh with full anime style freedom, constrained only by layout.
+  if (p.structuralControlNet?.image && p.structuralControlNet?.model) {
+    const sc = p.structuralControlNet;
+    const imgPath = sc.image.subfolder
+      ? `${sc.image.subfolder}/${sc.image.filename}`
+      : sc.image.filename;
+    const resolution = Math.max(p.width, p.height);
+    nodes["70"] = { class_type: "LoadImage",  inputs: { image: imgPath } };
+    nodes["71"] = { class_type: "ImageScale", inputs: { image: ["70", 0], width: p.width, height: p.height, upscale_method: "lanczos", crop: "disabled" } };
+    nodes["72"] = buildPreprocessorNode(sc.preprocessor ?? 'depth', ["71", 0], resolution);
+    nodes["73"] = { class_type: "ControlNetLoader", inputs: { control_net_name: sc.model } };
+    nodes["74"] = { class_type: "ControlNetApplyAdvanced", inputs: {
+      positive:      positiveRef,
+      negative:      negativeRef,
+      control_net:   ["73", 0],
+      image:         ["72", 0],
+      strength:      sc.strength ?? 0.9,
+      start_percent: 0.0,
+      end_percent:   1.0,
+    }};
+    positiveRef = ["74", 0];
+    negativeRef = ["74", 1];
   }
 
   // Pose ControlNet: standard ControlNetApplyAdvanced with a pre-extracted skeleton (nodes 63–65)

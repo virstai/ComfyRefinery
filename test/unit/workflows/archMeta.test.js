@@ -32,10 +32,19 @@ test('adapter: enabled for sd15/sdxl/flux/flux2, disabled for sd3/chroma and ani
   }
 });
 
-test('controlNet: sd15, sdxl, anima', () => {
-  const supported = ['sd15', 'sdxl', 'anima'];
+test('controlNet (pose pre-pass): sd15, sdxl, anima; tileControlNet + structuralControlNet: sd15 and sdxl only', () => {
+  const poseSupported = ['sd15', 'sdxl', 'anima'];
   for (const arch of architectures) {
-    assert.equal(archMeta[arch].capabilities.controlNet, supported.includes(arch), arch);
+    assert.equal(archMeta[arch].capabilities.controlNet, poseSupported.includes(arch), arch);
+  }
+  // Tile and structural CN are available on sd15/sdxl only
+  for (const arch of ['sd15', 'sdxl']) {
+    assert.equal(archMeta[arch].capabilities.tileControlNet,       true, `${arch} tileControlNet`);
+    assert.equal(archMeta[arch].capabilities.structuralControlNet, true, `${arch} structuralControlNet`);
+  }
+  for (const arch of ['flux', 'flux2', 'anima', 'sd3', 'chroma']) {
+    assert.equal(archMeta[arch].capabilities.tileControlNet,       undefined, `${arch} no tileControlNet`);
+    assert.equal(archMeta[arch].capabilities.structuralControlNet, undefined, `${arch} no structuralControlNet`);
   }
 });
 

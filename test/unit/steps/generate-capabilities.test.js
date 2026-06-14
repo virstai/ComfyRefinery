@@ -53,3 +53,98 @@ test('prePass still returns null when poseMode is off, regardless of arch', asyn
   );
   assert.equal(out, null);
 });
+
+test('tile chainStrategy: sets initImage + denoise so SDXL starts from chained content, not noise', () => {
+  const chainedRef = { filename: 'prev.png', subfolder: '' };
+  const modelConfig = {
+    architecture: 'sdxl', checkpoint: 'sdxl.safetensors', vae: 'vae.safetensors',
+    tileControlNetModel: 'cn-tile.safetensors',
+  };
+  const wf = generate.buildComfyWorkflow(
+    { chainStrategy: { mode: 'tile', tileStrength: 0.6 }, referenceStrategy: { diffusion: { mode: 'txt2img' } } },
+    { params: { ...modelConfig, positivePrompt: 'a knight', width: 1024, height: 1024 } },
+    { modelConfig, chainedInputRef: chainedRef },
+  );
+  const nodeTypes = Object.values(wf).map(n => n.class_type);
+  // Must have an init image (VAEEncode) — no longer txt2img from noise
+  assert.ok(nodeTypes.includes('VAEEncode'), 'VAEEncode present: img2img init');
+  // Tile CN nodes must also be present
+  assert.ok(nodeTypes.includes('ControlNetApplyAdvanced'), 'tile CN applied');
+});
+
+test('tile mode from refs (controlNet.tile) also uses init-image, not empty latent', () => {
+  const refImage = { filename: 'ref.png', subfolder: '' };
+  const modelConfig = {
+    architecture: 'sdxl', checkpoint: 'sdxl.safetensors',
+    tileControlNetModel: 'cn-tile.safetensors',
+  };
+  const wf = generate.buildComfyWorkflow(
+    { controlNet: { tile: { enabled: true, strength: 0.6 } }, referenceStrategy: { diffusion: { mode: 'txt2img' } } },
+    { params: { ...modelConfig, positivePrompt: 'a knight', width: 1024, height: 1024 } },
+    { modelConfig, references: [refImage] },
+  );
+  const nodeTypes = Object.values(wf).map(n => n.class_type);
+  assert.ok(nodeTypes.includes('VAEEncode'), 'VAEEncode: ref tile also sets init image');
+  assert.ok(nodeTypes.includes('ControlNetApplyAdvanced'), 'tile CN applied from ref');
+});
+
+test('tile chainStrategy: without tileControlNetModel on the model, falls through to txt2img', () => {
+  const chainedRef = { filename: 'prev.png', subfolder: '' };
+  const modelConfig = {
+    architecture: 'sdxl', checkpoint: 'sdxl.safetensors',
+    // no tileControlNetModel
+  };
+  const wf = generate.buildComfyWorkflow(
+    { chainStrategy: { mode: 'tile', tileStrength: 0.6 }, referenceStrategy: { diffusion: { mode: 'txt2img' } } },
+    { params: { ...modelConfig, positivePrompt: 'a knight', width: 1024, height: 1024 } },
+    { modelConfig, chainedInputRef: chainedRef },
+  );
+  const nodeTypes = Object.values(wf).map(n => n.class_type);
+  assert.ok(!nodeTypes.includes('ControlNetApplyAdvanced'), 'no tile CN when model missing');
+});
+
+test('structural chainStrategy: applies preprocessor inline, no init image (pure txt2img)', () => {
+  const chainedRef = { filename: 'klein.png', subfolder: '' };
+  const modelConfig = {
+    architecture: 'sdxl', checkpoint: 'sdxl.safetensors',
+    structuralControlNetModel: 'illustrious-depth.safetensors',
+  };
+  const wf = generate.buildComfyWorkflow(
+    { chainStrategy: { mode: 'structural', preprocessor: 'depth', strength: 0.9 }, referenceStrategy: { diffusion: { mode: 'txt2img' } } },
+    { params: { ...modelConfig, positivePrompt: 'anime character', width: 1024, height: 1024 } },
+    { modelConfig, chainedInputRef: chainedRef },
+  );
+  const nodeTypes = Object.values(wf).map(n => n.class_type);
+  // Must have structural CN nodes
+  assert.ok(nodeTypes.includes('MiDaS-DepthMapPreprocessor'), 'depth preprocessor node');
+  assert.ok(nodeTypes.includes('ControlNetApplyAdvanced'),    'CN apply node');
+  // Must NOT have init image: SDXL generates from noise for full style freedom
+  assert.ok(!nodeTypes.includes('VAEEncode'), 'no VAEEncode: pure txt2img, no init image');
+});
+
+test('structural chainStrategy: softedge uses HEDPreprocessor', () => {
+  const chainedRef = { filename: 'klein.png', subfolder: '' };
+  const modelConfig = {
+    architecture: 'sdxl', checkpoint: 'sdxl.safetensors',
+    structuralControlNetModel: 'illustrious-softedge.safetensors',
+  };
+  const wf = generate.buildComfyWorkflow(
+    { chainStrategy: { mode: 'structural', preprocessor: 'softedge', strength: 0.85 }, referenceStrategy: { diffusion: { mode: 'txt2img' } } },
+    { params: { ...modelConfig, positivePrompt: 'anime character', width: 1024, height: 1024 } },
+    { modelConfig, chainedInputRef: chainedRef },
+  );
+  const nodeTypes = Object.values(wf).map(n => n.class_type);
+  assert.ok(nodeTypes.includes('HEDPreprocessor'), 'softedge uses HEDPreprocessor');
+});
+
+test('structural chainStrategy: falls through when structuralControlNetModel missing', () => {
+  const chainedRef = { filename: 'klein.png', subfolder: '' };
+  const modelConfig = { architecture: 'sdxl', checkpoint: 'sdxl.safetensors' };
+  const wf = generate.buildComfyWorkflow(
+    { chainStrategy: { mode: 'structural', preprocessor: 'depth' }, referenceStrategy: { diffusion: { mode: 'txt2img' } } },
+    { params: { ...modelConfig, positivePrompt: 'anime', width: 1024, height: 1024 } },
+    { modelConfig, chainedInputRef: chainedRef },
+  );
+  const nodeTypes = Object.values(wf).map(n => n.class_type);
+  assert.ok(!nodeTypes.includes('ControlNetApplyAdvanced'), 'no CN when model missing');
+});

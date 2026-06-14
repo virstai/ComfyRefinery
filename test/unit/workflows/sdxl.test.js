@@ -43,3 +43,23 @@ test('loras + ipadapter: unified loader patches the post-lora model', () => {
   assert.deepEqual(wf['50'].inputs.model, ['30', 0]);
   assert.deepEqual(wf['5'].inputs.model,  ['52', 0]);
 });
+
+test('tile controlnet: nodes 60/61/62 present, image is rescaled, end_percent is 0.85', () => {
+  const wf = build({ ...BASE,
+    tileControlNet: { image: { filename: 'tile.png', subfolder: '' }, model: 'cn-tile.safetensors', strength: 0.7 },
+  });
+  assert.ok(wf['60'],  'LoadImage present');
+  assert.ok(wf['60r'], 'ImageScale present');
+  assert.ok(wf['61'],  'ControlNetLoader present');
+  assert.ok(wf['62'],  'ControlNetApplyAdvanced present');
+  assert.equal(wf['62'].inputs.end_percent, 0.85);
+  assert.equal(wf['62'].inputs.strength, 0.7);
+  // Positive/negative conditioning are replaced by the CN outputs
+  assert.deepEqual(wf['5'].inputs.positive, ['62', 0]);
+  assert.deepEqual(wf['5'].inputs.negative, ['62', 1]);
+});
+
+test('tile controlnet without a tile image: no CN nodes emitted', () => {
+  const wf = build({ ...BASE, tileControlNet: { model: 'cn-tile.safetensors' } });
+  assert.ok(!wf['62'], 'no ControlNetApplyAdvanced when image is missing');
+});

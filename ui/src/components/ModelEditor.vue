@@ -196,6 +196,36 @@
       </label>
     </div>
 
+    <!-- Structural ControlNet (sd15/sdxl) -->
+    <div v-if="hasField('structuralControlNetModel')">
+      <hr>
+      <strong>Structural ControlNet</strong>
+      <span class="hint"> — extracts depth/edges from a previous step's output as layout guidance; the model generates pure txt2img for full style freedom</span>
+      <label style="margin-top:8px">Structural ControlNet model
+        <select v-model="form.structuralControlNetModel">
+          <option value="">— none —</option>
+          <option v-for="m in assets.comfyui?.controlNets ?? []" :key="m" :value="m">{{ m }}</option>
+        </select>
+      </label>
+      <label v-if="form.structuralControlNetModel" style="margin-top:8px">Preprocessor
+        <select v-model="form.structuralControlNetPreprocessor">
+          <option value="depth">Depth (MiDaS) — matches depth CN models</option>
+          <option value="softedge">Soft edges (HED) — matches softedge CN models</option>
+          <option value="lineart_realistic">Lineart realistic — matches lineart CN models</option>
+          <option value="lineart_anime">Lineart anime — matches lineart CN models</option>
+          <option value="canny">Canny edges — matches canny CN models</option>
+        </select>
+      </label>
+      <p class="hint">
+        Pick a depth or softedge CN trained for this checkpoint. For Illustrious XL:
+        <strong>illustriousXLv0.1_depth_midas_fp16</strong> (stronger spatial layout) or
+        <strong>illustriousXLv0.1_Softedge_fp16</strong> (looser, more style freedom).
+        The preprocessor must match the CN model — depth CN → MiDaS, softedge CN → HED.
+        Use a CN trained for the same base model — mismatched ones (e.g. windsingai tile) cause washed-out output.
+        See <em>docs/arch/sdxl.md</em> for download links.
+      </p>
+    </div>
+
     <!-- Skill section -->
     <div v-if="modelId && skillData" class="skill-section">
       <hr>
@@ -462,7 +492,7 @@ const form = reactive({
   label: '', architecture: '', splitLoad: false,
   checkpoint: '', unetName: '', unetName2: '', clipL: '', t5xxl: '', clipName: '', vaeName: '',
   vae: '', useRefiner: false, refinerCheckpoint: '',
-  adapterModel: '', clipVisionModel: '', adapterWeight: '', controlNetModel: '', tileControlNetModel: '',
+  adapterModel: '', clipVisionModel: '', adapterWeight: '', controlNetModel: '', tileControlNetModel: '', structuralControlNetModel: '', structuralControlNetPreprocessor: 'depth',
   modelQuantization: '', vaePrecision: '',
 });
 
@@ -483,10 +513,12 @@ watch(() => props.model, m => {
   form.vae               = m.vae               ?? '';
   form.useRefiner        = !!m.refinerCheckpoint;
   form.refinerCheckpoint = m.refinerCheckpoint ?? '';
-  form.adapterModel          = m.adapterModel          ?? '';
-  form.controlNetModel       = m.controlNetModel       ?? '';
-  form.tileControlNetModel   = m.tileControlNetModel   ?? '';
-  form.clipVisionModel       = m.clipVisionModel       ?? '';
+  form.adapterModel              = m.adapterModel              ?? '';
+  form.controlNetModel           = m.controlNetModel           ?? '';
+  form.tileControlNetModel       = m.tileControlNetModel       ?? '';
+  form.structuralControlNetModel       = m.structuralControlNetModel       ?? '';
+  form.structuralControlNetPreprocessor = m.structuralControlNetPreprocessor ?? 'depth';
+  form.clipVisionModel           = m.clipVisionModel           ?? '';
   form.adapterWeight     = m.adapterWeight     ?? '';
 }, { immediate: true });
 
@@ -545,10 +577,12 @@ async function save() {
     clipName:          (isSplit.value  && form.clipName)    ? form.clipName    : null,
     vae:               form.vae              || null,
     refinerCheckpoint: (form.useRefiner && form.refinerCheckpoint) ? form.refinerCheckpoint : null,
-    adapterModel:          form.adapterModel          || null,
-    controlNetModel:       form.controlNetModel       || null,
-    tileControlNetModel:   form.tileControlNetModel   || null,
-    clipVisionModel:       form.clipVisionModel       || null,
+    adapterModel:              form.adapterModel              || null,
+    controlNetModel:           form.controlNetModel           || null,
+    tileControlNetModel:       form.tileControlNetModel       || null,
+    structuralControlNetModel:       form.structuralControlNetModel       || null,
+    structuralControlNetPreprocessor: form.structuralControlNetModel ? (form.structuralControlNetPreprocessor || 'depth') : null,
+    clipVisionModel:           form.clipVisionModel           || null,
     adapterWeight:     form.adapterWeight !== '' ? Number(form.adapterWeight) : null,
   };
 

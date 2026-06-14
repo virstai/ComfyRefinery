@@ -18,14 +18,16 @@ const ARCH_META = {
   sd15: {
     label:        'SD 1.5 / SD 2.x',
     loadingMode:  'checkpoint',
-    capabilities: { lora: true, adapter: true, controlNet: true, tileControlNet: true },
-    fields:       { checkpoint: true, vae: true, cfgScale: true, negativePrompt: true, adapterModel: 'ipa', adapterWeight: true, controlNetModel: 'controlnet', tileControlNetModel: 'controlnet' },
+    capabilities: { lora: true, adapter: true, controlNet: true, tileControlNet: true, structuralControlNet: true },
+    fields:       { checkpoint: true, vae: true, cfgScale: true, negativePrompt: true, adapterModel: 'ipa', adapterWeight: true, controlNetModel: 'controlnet', tileControlNetModel: 'controlnet', structuralControlNetModel: 'controlnet' },
+    notes:        'Tile and structural ControlNet require comfyui_controlnet_aux (Fannovel16) for preprocessor nodes. Structural CN enables cross-model composition transfer — use a CN model matching the checkpoint prediction type (eps vs v-pred).',
   },
   sdxl: {
     label:        'SDXL',
     loadingMode:  'checkpoint',
-    capabilities: { lora: true, adapter: true, controlNet: true, tileControlNet: true },
-    fields:       { checkpoint: true, vae: true, cfgScale: true, negativePrompt: true, refiner: true, adapterModel: 'ipa', adapterWeight: true, controlNetModel: 'controlnet', tileControlNetModel: 'controlnet' },
+    capabilities: { lora: true, adapter: true, controlNet: true, tileControlNet: true, structuralControlNet: true },
+    fields:       { checkpoint: true, vae: true, cfgScale: true, negativePrompt: true, refiner: true, adapterModel: 'ipa', adapterWeight: true, controlNetModel: 'controlnet', tileControlNetModel: 'controlnet', structuralControlNetModel: 'controlnet' },
+    notes:        'Tile and structural ControlNet require comfyui_controlnet_aux (Fannovel16) for preprocessor nodes. For Illustrious XL checkpoints use the MIC-Lab eps-trained CNs (illustriousXLv0.1_depth_midas_fp16.safetensors, illustriousXLv0.1_Softedge_fp16.safetensors) — the windsingai tile model is v-pred only and will produce washed-out output with eps Illustrious v0.1.',
   },
   flux: {
     label:        'Flux.1',

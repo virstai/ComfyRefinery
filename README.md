@@ -25,6 +25,47 @@ as a pure ComfyUI frontend with structured workflows — no LLM server required.
   `llava:13b`), LM Studio, OpenAI, vLLM, or any server that speaks
   `/v1/chat/completions`. Required only when one or more LLM features are enabled.
 
+## ComfyUI custom nodes and models
+
+Most architectures work with stock ComfyUI. The table below lists every custom node
+pack and special model type referenced across the architecture guides — install only
+what you need for the archs you actually use.
+
+### Custom node packs
+
+| Pack | Repo | Required for | Archs |
+|---|---|---|---|
+| **ComfyUI_IPAdapter_plus** | [cubiq/ComfyUI_IPAdapter_plus](https://github.com/cubiq/ComfyUI_IPAdapter_plus) | Adapter reference mode (IPAdapter) | SD 1.5, SDXL |
+| **comfyui_controlnet_aux** | [Fannovel16/comfyui_controlnet_aux](https://github.com/Fannovel16/comfyui_controlnet_aux) | Pose ControlNet (DWPose skeleton extractor) and structural ControlNet preprocessors (MiDaS depth, HED, lineart, canny) | SD 1.5, SDXL, Anima |
+| **ComfyUI-Anima-LLLite** | [kohya-ss/ComfyUI-Anima-LLLite](https://github.com/kohya-ss/ComfyUI-Anima-LLLite) | Pose ControlNet on Anima via the LLLite format (`AnimaLLLiteApply` node — no pip deps) | Anima |
+| **comfyui-anima-ipadapter** | [Wenaka2004/comfyui-anima-ipadapter](https://github.com/Wenaka2004/comfyui-anima-ipadapter) | Adapter reference mode on Anima *(weights not yet publicly released)* | Anima |
+| **RES4LYF** | [ClownsharkBatwing/RES4LYF](https://github.com/ClownsharkBatwing/RES4LYF) | `er_sde` sampler for Anima *(may already be in your ComfyUI build — check samplers list first)* | Anima |
+| **ComfyUI-CogVideoXWrapper** | [kijai/ComfyUI-CogVideoXWrapper](https://github.com/kijai/ComfyUI-CogVideoXWrapper) | CogVideoX — required, auto-downloads models on first use; also needs `diffusers>=0.30.1` | CogVideoX |
+| **ComfyUI-LTXVideo** | [Lightricks/ComfyUI-LTXVideo](https://github.com/Lightricks/ComfyUI-LTXVideo) | LTX-Video advanced features (`LTXVPreprocess`, `LTXVAddGuide`, etc.) — basic T2V/I2V works without it | LTX-Video |
+| **ComfyUI-GGUF** | [city96/ComfyUI-GGUF](https://github.com/city96/ComfyUI-GGUF) | Quantised GGUF model variants for LTX-Video | LTX-Video |
+| **ComfyUI-HunyuanVideoWrapper** | [kijai/ComfyUI-HunyuanVideoWrapper](https://github.com/kijai/ComfyUI-HunyuanVideoWrapper) | HunyuanVideo on older ComfyUI builds — native support is built-in on current ComfyUI | HunyuanVideo |
+
+**No custom nodes required:** Flux.1, Flux 2, SD 3 / 3.5, ChromaHD, WanVideo.
+
+### Special model files
+
+Some architectures need model files that sit outside the usual checkpoint/VAE/LoRA
+categories:
+
+| Model | File(s) | Folder | Used for |
+|---|---|---|---|
+| **DWPose detectors** | `yolox_l.onnx`, `dw-ll_ucoco_384.onnx` | Auto-downloaded by `comfyui_controlnet_aux` | Person detection + keypoint extraction for pose pre-pass (SD 1.5, SDXL, Anima) |
+| **Anima-LLLite weights** | e.g. `anima-lllite-pose-1.safetensors` | `models/controlnet/` | Anima pose ControlNet — from [kohya-ss/Anima-LLLite](https://huggingface.co/kohya-ss/Anima-LLLite) |
+| **Illustrious XL structural CNs** | `illustriousXLv0.1_depth_midas_fp16.safetensors`, `illustriousXLv0.1_Softedge_fp16.safetensors` | `models/controlnet/` | Structural ControlNet on Illustrious XL checkpoints — from [MIC-Lab/illustriousXLv0.1_controlnet](https://huggingface.co/MIC-Lab/illustriousXLv0.1_controlnet); use eps-trained CNs with eps checkpoints |
+| **Flux Redux** | `flux1-redux-dev.safetensors` + `sigclip_vision_patch14_384.safetensors` | `models/style_models/`, `models/clip_vision/` | Adapter reference mode on Flux.1 |
+| **WanVideo CLIP Vision** | `sigclip_vision_patch14_384.safetensors` | `models/clip_vision/` | Image-to-video conditioning on WanVideo 14B I2V |
+| **HunyuanVideo CLIP Vision** | `llava_llama3_vision.safetensors` | `models/clip_vision/` | Image-to-video conditioning on HunyuanVideo I2V |
+
+See each architecture's guide in [`docs/arch/`](docs/arch/) for exact filenames, download
+links, and step-by-step setup instructions.
+
+---
+
 ## Install
 
 ```bash
@@ -139,27 +180,32 @@ pose control. Strength below ~1.0 lets the prompt override the pose.
 are not yet publicly released. The "Adapter conditioning" reference mode is therefore
 not offered for Anima steps; it will be re-enabled once the weights ship.
 
-### Optional — Tile ControlNet and image input modes
+### Optional — Image input modes
 
 Each generate step has an **Image inputs** section controlling how external images
-influence generation.
+influence generation. The same modes apply to both the previous step's output (step 2+)
+and user-uploaded references.
 
-**For the previous step's output** (step 2+ only), select a mode:
-
-- **Init-image (img2img)** — denoises the previous output at a configurable strength.
-  Simple, but loses detail at any denoise value.
-- **Adapter** — feeds the previous output into IPAdapter/Redux as a style reference.
+- **Init-image (img2img)** — denoises at a configurable strength. Simple, but loses
+  detail at any denoise value.
+- **Adapter** — feeds via IPAdapter / Redux / ReferenceLatent as a style reference.
   No denoising, but less spatially faithful.
-- **Tile ControlNet** — the previous output guides generation via tile ControlNet;
-  the model renders fresh from noise while following the source's structure. Requires a
-  tile ControlNet model in `models/controlnet/` (set in the model's settings). Supported
-  on **SD 1.5** and **SDXL**. Strength defaults to 0.5, applied across the first 60% of
-  denoising steps — enough to preserve structure while letting the model add fine detail.
-- **Ignore** — chained image is dropped; the step generates from scratch.
+- **Tile ControlNet** — the source image guides generation via tile ControlNet while
+  the model renders from noise. Supported on **SD 1.5** and **SDXL**. Requires a tile
+  ControlNet model in `models/controlnet/` (set in the model's settings). Strength
+  defaults to 0.5.
+- **Structural ControlNet** — extracts a depth map or edge map from the source via an
+  inline preprocessor node, then uses it as ControlNet guidance while the model runs as
+  pure txt2img (no init image). The target model contributes all pixel-level aesthetic;
+  only the composition is borrowed from the source. Ideal for cross-model chaining (e.g.
+  Flux 2 Klein provides layout fidelity → Illustrious SDXL applies anime style).
+  Supported on **SD 1.5** and **SDXL**. Requires a structural ControlNet model and
+  `comfyui_controlnet_aux`.
+- **Ignore** — image is dropped; the step generates from scratch.
 
-**For user-uploaded references**, the same modes are available under **Diffusion mode**,
-plus an LLM vision guidance checkbox (sends reference images to the LLM for prompt
-building — requires the Vision guidance & LoRA selection feature to be enabled).
+For user-uploaded references, the same modes are available, plus an LLM vision guidance
+checkbox (sends reference images to the LLM for prompt building — requires the Vision
+guidance & LoRA selection feature to be enabled).
 
 ### Step 4 — Generate
 
@@ -235,18 +281,19 @@ the iteration modal and use **Continue session** to keep iterating.
 
 ### Image
 
-| Key | Name | Loader | LoRA | Adapter | Pose ControlNet | Tile ControlNet |
-|---|---|---|---|---|---|---|
-| `sd15` | SD 1.5 / SD 2.x | Checkpoint + optional external VAE | ✓ | IPAdapter | ✓ (standard) | ✓ |
-| `sdxl` | SDXL | Checkpoint + optional VAE + optional refiner | ✓ | IPAdapter | ✓ (standard) | ✓ |
-| `flux` | Flux.1 | Checkpoint, or split (UNet + CLIP-L + T5-XXL + VAE) | ✓ | Redux | — | — |
-| `flux2` | Flux 2 (Dev / Klein) | Split only (UNet + CLIP/Mistral or Qwen-3 + VAE) | ✓ | ReferenceLatent | — | — |
-| `sd3` | SD 3 / SD 3.5 | Checkpoint + optional external VAE | ✓ | — | — | — |
-| `chroma` | ChromaHD | Split only (UNet + T5 encoder + VAE); standard ComfyUI nodes | ✓ | — | — | — |
-| `anima` | Anima | Split only (UNet + CLIP/Qwen-3 + Qwen-Image VAE); needs `er_sde` sampler | ✓ | — ¹ | LLLite ² | — |
+| Key | Name | Loader | LoRA | Adapter | Pose CN | Tile CN | Structural CN |
+|---|---|---|---|---|---|---|---|
+| `sd15` | SD 1.5 / SD 2.x | Checkpoint + optional external VAE | ✓ | IPAdapter | ✓ | ✓ | ✓ |
+| `sdxl` | SDXL | Checkpoint + optional VAE + optional refiner | ✓ | IPAdapter | ✓ | ✓ | ✓ |
+| `flux` | Flux.1 | Checkpoint, or split (UNet + CLIP-L + T5-XXL + VAE) | ✓ | Redux | — | — | — |
+| `flux2` | Flux 2 (Dev / Klein) | Split only (UNet + CLIP/Mistral or Qwen-3 + VAE) | ✓ | ReferenceLatent | — | — | — |
+| `sd3` | SD 3 / SD 3.5 | Checkpoint + optional external VAE | ✓ | — | — | — | — |
+| `chroma` | ChromaHD | Split only (UNet + T5 encoder + VAE); standard ComfyUI nodes | ✓ | — | — | — | — |
+| `anima` | Anima | Split only (UNet + CLIP/Qwen-3 + Qwen-Image VAE); needs `er_sde` sampler | ✓ | — ¹ | LLLite ² | — | — |
 
 ¹ Anima IP-Adapter is implemented but disabled — weights not yet publicly released.  
-² Anima pose ControlNet uses `AnimaLLLiteApply` (kohya-ss/ComfyUI-Anima-LLLite) rather than standard `ControlNetApplyAdvanced`; requires DWPose via comfyui_controlnet_aux for skeleton extraction.
+² Anima pose ControlNet uses `AnimaLLLiteApply` (kohya-ss/ComfyUI-Anima-LLLite) rather than standard `ControlNetApplyAdvanced`; requires DWPose via comfyui_controlnet_aux for skeleton extraction.  
+Structural CN: extracts depth/edges from a previous step's output as structure-only guidance while the model generates pure txt2img — used for cross-model style transfer (e.g. Flux 2 Klein → Illustrious SDXL). Requires comfyui_controlnet_aux preprocessor nodes and a matching ControlNet model.
 
 ### Video
 

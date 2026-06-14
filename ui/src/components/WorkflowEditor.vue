@@ -65,50 +65,36 @@
           <input type="number" v-model.number="step.refinerSwitchAt" min="0" max="1" step="0.05" placeholder="0.8">
         </label>
 
-        <!-- Image inputs: previous step + user references -->
+        <!-- Image inputs: unified mode for previous step output + user references -->
         <div class="review-block">
           <strong>Image inputs</strong>
-
-          <template v-if="si > 0">
-            <p class="hint" style="margin:8px 0 4px;font-weight:600;color:var(--text)">Previous step output</p>
-            <div class="row">
-              <label>Mode
-                <select v-model="step.chainMode">
-                  <option value="init-image">Init-image (img2img)</option>
-                  <option value="txt2img">Ignore</option>
-                  <option v-if="archCap(si, 'adapter')" value="adapter">Adapter</option>
-                  <option v-if="archCap(si, 'tileControlNet')" value="tile">Tile ControlNet</option>
-                </select>
-              </label>
-              <label v-if="step.chainMode === 'init-image'">Denoise
-                <input type="number" v-model.number="step.chainDenoise" min="0.01" max="1" step="0.05" placeholder="0.5">
-              </label>
-              <label v-if="step.chainMode === 'tile'">Strength
-                <input type="number" v-model.number="step.chainTileStrength" min="0" max="2" step="0.05" placeholder="0.5">
-              </label>
-            </div>
-          </template>
-
-          <p class="hint" style="margin:8px 0 4px;font-weight:600;color:var(--text)">References</p>
           <label v-if="config.llmExtras !== false" class="checkbox-label">
-            <input type="checkbox" v-model="step.visionNotes"> Pass to LLM for composition guidance
+            <input type="checkbox" v-model="step.visionNotes"> Pass references to LLM for composition guidance
           </label>
           <div class="row" style="margin-top:4px">
-            <label>Diffusion mode
-              <select v-model="step.refMode">
+            <label>Mode
+              <select v-model="step.imageMode">
                 <option value="txt2img">Ignore</option>
                 <option value="init-image">Init-image (img2img)</option>
                 <option v-if="archCap(si, 'adapter')" value="adapter">Adapter</option>
                 <option v-if="archCap(si, 'tileControlNet')" value="tile">Tile ControlNet</option>
+                <option v-if="archCap(si, 'structuralControlNet')" value="structural">Structural ControlNet</option>
               </select>
             </label>
-            <label v-if="step.refMode === 'init-image'">Denoise
-              <input type="number" v-model.number="step.refDenoise" min="0.01" max="1" step="0.05" placeholder="0.6">
+<label v-if="step.imageMode === 'init-image'">Denoise
+              <input type="number" v-model.number="step.imageDenoise" min="0.01" max="1" step="0.05" placeholder="0.6">
             </label>
-            <label v-if="step.refMode === 'tile'">Strength
-              <input type="number" v-model.number="step.refTileStrength" min="0" max="2" step="0.05" placeholder="0.5">
+            <label v-if="step.imageMode === 'tile' || step.imageMode === 'structural'">Strength
+              <input type="number" v-model.number="step.imageStrength" min="0" max="2" step="0.05" :placeholder="step.imageMode === 'structural' ? '0.9' : '0.5'">
+            </label>
+            <label v-if="step.imageMode === 'tile'">Denoise
+              <input type="number" v-model.number="step.imageDenoise" min="0.01" max="1" step="0.05" placeholder="0.65">
             </label>
           </div>
+          <p v-if="step.imageMode === 'structural'" class="hint">
+            Extracts structure (depth map, edges, etc.) from the previous step's output as ControlNet conditioning. The model generates from pure text — full style freedom. Preprocessor is configured on the model (Models panel) alongside the CN model file.
+          </p>
+          <p v-else-if="si > 0" class="hint">Applies to the previous step's output and user-uploaded references. If both are present, the previous step's output takes priority.</p>
         </div>
 
         <!-- LoRAs -->
@@ -338,8 +324,8 @@ function blankGenerateStep() {
     modelId: '', width: '', height: '', steps: '', cfgScale: '', guidance: '',
     sampler: '', scheduler: '', negativePrompt: '', refinerSwitchAt: '',
     maxIterations: '', humanReview: false, gracePeriod: '',
-    chainMode: 'init-image', chainDenoise: '', chainTileStrength: '',
-    visionNotes: false, refMode: 'txt2img', refDenoise: 0.6, refTileStrength: '',
+    imageMode: 'txt2img', imageDenoise: '', imageStrength: '',
+    visionNotes: false,
     loras: [], llmLoras: false,
     poseMode: 'off', cnStrength: 1.0,
   };
@@ -393,6 +379,14 @@ function stepFromDef(s) {
       cfgScale: s.params?.cfgScale     ?? '',
     };
   }
+  // Unified image mode: chain strategy takes priority over reference strategy
+  const chainMode    = s.chainStrategy?.mode;
+  const hasTileRef   = s.controlNet?.tile?.enabled;
+  const fallbackMode = hasTileRef ? 'tile'
+    : (s.referenceStrategy?.diffusion?.mode
+       ?? s.referenceStrategy?.diffusion?.many?.mode  // back-compat
+       ?? s.referenceStrategy?.diffusion?.one?.mode   // back-compat
+       ?? 'txt2img');
   return {
     type:           'generate',
     modelId:        s.modelId              ?? '',
@@ -405,25 +399,17 @@ function stepFromDef(s) {
     scheduler:      s.params?.scheduler    ?? '',
     negativePrompt: s.params?.negativePrompt ?? '',
     refinerSwitchAt: s.params?.refinerSwitchAt ?? '',
-    chainMode:       s.chainStrategy?.mode          ?? (s.params?.chainDenoise != null ? 'init-image' : 'init-image'),
-    chainDenoise:    s.chainStrategy?.denoise       ?? s.params?.chainDenoise ?? '',
-    chainTileStrength: s.chainStrategy?.tileStrength ?? '',
+    imageMode:         chainMode ?? fallbackMode,
+    imageDenoise:      s.chainStrategy?.denoise
+                       ?? s.referenceStrategy?.diffusion?.denoise
+                       ?? s.referenceStrategy?.diffusion?.one?.denoise  // back-compat
+                       ?? s.referenceStrategy?.diffusion?.many?.denoise // back-compat
+                       ?? '',
+    imageStrength:     s.chainStrategy?.tileStrength ?? s.chainStrategy?.strength ?? s.controlNet?.tile?.strength ?? '',
     maxIterations:   s.review?.maxIterations ?? '',
     humanReview:     s.review?.humanReview   ?? false,
     gracePeriod:     s.review?.gracePeriod   ?? '',
-    visionNotes: s.referenceStrategy?.visionNotes ?? false,
-    // If tile is configured for references, show it as 'tile' diffusion mode
-    refMode:     s.controlNet?.tile?.enabled
-                   ? 'tile'
-                   : (s.referenceStrategy?.diffusion?.mode
-                      ?? s.referenceStrategy?.diffusion?.many?.mode   // back-compat
-                      ?? s.referenceStrategy?.diffusion?.one?.mode    // back-compat
-                      ?? 'txt2img'),
-    refDenoise:  s.referenceStrategy?.diffusion?.denoise
-                   ?? s.referenceStrategy?.diffusion?.one?.denoise  // back-compat
-                   ?? s.referenceStrategy?.diffusion?.many?.denoise // back-compat
-                   ?? 0.6,
-    refTileStrength: s.controlNet?.tile?.strength ?? '',
+    visionNotes:     s.referenceStrategy?.visionNotes ?? false,
     loras:           (s.loras ?? []).map(l => ({ ...l })),
     llmLoras:        s.llmLoras ?? false,
     poseMode:        s.controlNet?.poseMode  ?? 'off',
@@ -549,16 +535,17 @@ async function save() {
 
     const caps = capsForModel(s.modelId);
     // Fall back to txt2img if the chosen mode requires a capability the model lacks
-    const refMode = (s.refMode === 'adapter' && !caps.adapter) ? 'txt2img'
-                  : (s.refMode === 'tile' && !caps.tileControlNet) ? 'txt2img'
-                  : s.refMode;
+    const imageMode = (s.imageMode === 'adapter'    && !caps.adapter)            ? 'txt2img'
+                    : (s.imageMode === 'tile'        && !caps.tileControlNet)     ? 'txt2img'
+                    : (s.imageMode === 'structural'  && !caps.structuralControlNet) ? 'txt2img'
+                    : (s.imageMode || 'txt2img');
 
     // Chain strategy (only meaningful when not the first step)
-    const chainMode = s.chainMode || 'init-image';
     const chainStrategy = si > 0 ? {
-      mode: chainMode,
-      ...(chainMode === 'init-image' && s.chainDenoise !== '' && { denoise: Number(s.chainDenoise) }),
-      ...(chainMode === 'tile' && s.chainTileStrength !== '' && { tileStrength: Number(s.chainTileStrength) }),
+      mode: imageMode,
+      ...((imageMode === 'init-image' || imageMode === 'tile') && s.imageDenoise !== '' && { denoise: Number(s.imageDenoise) }),
+      ...(imageMode === 'tile'       && s.imageStrength !== '' && { tileStrength:  Number(s.imageStrength) }),
+      ...(imageMode === 'structural' && s.imageStrength !== '' && { strength:      Number(s.imageStrength) }),
     } : undefined;
 
     // ControlNet: pose and/or tile-from-references
@@ -567,10 +554,11 @@ async function save() {
       controlNetOut.poseMode = s.poseMode;
       controlNetOut.strength = Number(s.cnStrength) || 1.0;
     }
-    if (caps.tileControlNet && refMode === 'tile') {
+    if (caps.tileControlNet && imageMode === 'tile') {
       controlNetOut.tile = {
         enabled: true,
-        ...(s.refTileStrength !== '' && { strength: Number(s.refTileStrength) }),
+        ...(s.imageStrength !== '' && { strength: Number(s.imageStrength) }),
+        ...(s.imageDenoise  !== '' && { denoise:  Number(s.imageDenoise) }),
       };
     }
 
@@ -593,9 +581,9 @@ async function save() {
       referenceStrategy: {
         visionNotes: s.visionNotes,
         diffusion: {
-          // tile mode uses controlNet.tile, not diffusion; store as txt2img
-          mode: refMode === 'tile' ? 'txt2img' : refMode,
-          ...((refMode === 'init-image') && { denoise: Number(s.refDenoise) || 0.6 }),
+          // tile/structural use CN nodes rather than diffusion routing; record as txt2img
+          mode: (imageMode === 'tile' || imageMode === 'structural') ? 'txt2img' : imageMode,
+          ...(imageMode === 'init-image' && { denoise: Number(s.imageDenoise) || 0.6 }),
         },
       },
       ...(caps.lora && s.loras.some(l => l.name) && { loras: s.loras.filter(l => l.name).map(l => ({ name: l.name, weight: Number(l.weight) || 1.0 })) }),

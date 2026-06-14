@@ -221,10 +221,11 @@ function buildComfyWorkflow(stepDef, prepareResult, ctx) {
   const mode = rs?.mode;
   const arch = ctx.modelConfig?.architecture;
 
-  let initImage            = null;
-  let denoise              = 0.6;
-  let adapterParams        = {};
-  let tileControlNetParams = {};
+  let initImage                  = null;
+  let denoise                    = 0.6;
+  let adapterParams              = {};
+  let tileControlNetParams       = {};
+  let structuralControlNetParams = {};
 
   // Reference-based routing
   if (refs.length > 0 && mode === 'init-image') {
@@ -262,8 +263,27 @@ function buildComfyWorkflow(stepDef, prepareResult, ctx) {
     } else if (csMode === 'tile' && archMeta[arch]?.capabilities?.tileControlNet) {
       const tileModel = cs?.tileModel || ctx.modelConfig?.tileControlNetModel;
       if (tileModel) {
+        // Tile CN is designed for img2img — use the chained image as init so SDXL
+        // has a real content anchor instead of fighting random noise. Without this,
+        // the CN conditioning vs empty latent tension causes black images.
+        initImage = ctx.chainedInputRef;
+        denoise   = cs?.denoise ?? 0.65;
         tileControlNetParams = {
           tileControlNet: { image: ctx.chainedInputRef, model: tileModel, strength: cs?.tileStrength ?? 0.5 },
+        };
+      }
+    } else if (csMode === 'structural' && archMeta[arch]?.capabilities?.structuralControlNet) {
+      const structuralModel = cs?.structuralModel || ctx.modelConfig?.structuralControlNetModel;
+      if (structuralModel) {
+        // No initImage — pure txt2img so the target model has full style freedom.
+        // The preprocessed hint (depth/softedge/lineart) carries composition only.
+        structuralControlNetParams = {
+          structuralControlNet: {
+            image:       ctx.chainedInputRef,
+            model:       structuralModel,
+            preprocessor: ctx.modelConfig?.structuralControlNetPreprocessor ?? cs?.preprocessor ?? 'depth',
+            strength:    cs?.strength ?? 0.9,
+          },
         };
       }
     }
@@ -275,6 +295,11 @@ function buildComfyWorkflow(stepDef, prepareResult, ctx) {
   if (!tileControlNetParams.tileControlNet && cnTile?.enabled && refs.length > 0 && archMeta[arch]?.capabilities?.tileControlNet) {
     const tileModel = cnTile.model || ctx.modelConfig?.tileControlNetModel;
     if (tileModel) {
+      // Same reasoning as chain tile mode: tile CN is designed for img2img, not empty latent.
+      if (!initImage) {
+        initImage = refs[0];
+        denoise   = cnTile.denoise ?? 0.65;
+      }
       tileControlNetParams = {
         tileControlNet: { image: refs[0], model: tileModel, strength: cnTile.strength ?? 0.5 },
       };
@@ -296,6 +321,7 @@ function buildComfyWorkflow(stepDef, prepareResult, ctx) {
     ...(prepareResult.loras?.length ? { loras: prepareResult.loras } : {}),
     ...controlNetParams,
     ...tileControlNetParams,
+    ...structuralControlNetParams,
   });
   return workflow;
 }
