@@ -53,7 +53,8 @@ async function refreshSkill(modelId, modelLabel, arch, correctionNote = '') {
     ? `${activeVer.outcomes.accepts}/${activeSessions} accepted`
     : 'No session data yet.';
 
-  const autoNotes       = (data.notes ?? []).filter(n => n.auto);
+  const modelNotes      = cfg.models?.[modelId]?.notes ?? [];
+  const autoNotes       = modelNotes.filter(n => n.auto);
   const lockedEnforce   = autoNotes.filter(n =>  n.enabled && n.type === 'enforce').map(n => n.text);
   const lockedBlacklist = autoNotes.filter(n =>  n.enabled && n.type === 'blacklist').flatMap(n => n.words ?? []);
   const pendingEnforce  = autoNotes.filter(n => !n.enabled && n.type === 'enforce').map(n => n.text);
@@ -117,9 +118,10 @@ async function refreshSkill(modelId, modelLabel, arch, correctionNote = '') {
   const blacklistWords = (sections.BLACKLIST ?? []).join(',').split(',').map(w => w.trim()).filter(Boolean);
 
   if (enforceLines.length || blacklistWords.length) {
-    const latest     = skills.get(modelId);
-    const userNotes  = (latest.notes ?? []).filter(n => !n.auto);
-    const latestAuto = (latest.notes ?? []).filter(n => n.auto);
+    const latestCfg  = config.load();
+    const latestNotes = latestCfg.models?.[modelId]?.notes ?? [];
+    const userNotes  = latestNotes.filter(n => !n.auto);
+    const latestAuto = latestNotes.filter(n => n.auto);
     const lockedAuto = latestAuto.filter(n => n.enabled);
 
     const lockedEnforceTexts   = new Set(lockedAuto.filter(n => n.type === 'enforce').map(n => n.text));
@@ -139,7 +141,7 @@ async function refreshSkill(modelId, modelLabel, arch, correctionNote = '') {
         return { id: prev?.id ?? genId(), type: 'blacklist', words: [word], enabled: false, auto: true };
       });
 
-    skills.saveNotes(modelId, [...userNotes, ...lockedAuto, ...newEnforce, ...newBlacklist]);
+    config.saveModelNotes(modelId, [...userNotes, ...lockedAuto, ...newEnforce, ...newBlacklist]);
   }
 
   console.log(`[skills] updated skill for ${modelId}${correctionNote ? ' (manual correction)' : ''}`);

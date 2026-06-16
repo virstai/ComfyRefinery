@@ -85,16 +85,27 @@ function deleteWorkflow(id) {
   save(cfg);
 }
 
-// Upsert a model entry, keeping only loader fields.
+// Upsert a model entry, keeping only loader fields (plus preserving notes).
 function saveModel(id, modelData) {
   const cfg = load();
   const resolvedId = id || slugify(modelData.label);
   const loaderData = Object.fromEntries(
     Object.entries(modelData).filter(([k]) => MODEL_LOADER_FIELDS.has(k)),
   );
-  cfg.models[resolvedId] = { ...loaderData, id: resolvedId };
+  const existingNotes = cfg.models[resolvedId]?.notes;
+  const notes = modelData.notes !== undefined ? modelData.notes : existingNotes;
+  cfg.models[resolvedId] = { ...loaderData, id: resolvedId, ...(notes?.length ? { notes } : {}) };
   save(cfg);
   return cfg.models[resolvedId];
+}
+
+// Update only the notes field on a model (user and auto notes).
+function saveModelNotes(modelId, notes) {
+  const cfg = load();
+  if (!cfg.models[modelId]) return null;
+  cfg.models[modelId] = { ...cfg.models[modelId], notes };
+  save(cfg);
+  return cfg.models[modelId];
 }
 
 function deleteModel(id) {
@@ -107,4 +118,4 @@ function slugify(str) {
   return str.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || Date.now().toString();
 }
 
-module.exports = { load, save, activeWorkflow, saveWorkflow, deleteWorkflow, saveModel, deleteModel };
+module.exports = { load, save, activeWorkflow, saveWorkflow, deleteWorkflow, saveModel, saveModelNotes, deleteModel };

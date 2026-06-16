@@ -95,12 +95,14 @@ router.delete('/models/:id', (req, res) => {
 
 // GET /api/sessions/skills/:modelId
 router.get('/skills/:modelId', (req, res) => {
-  const data = skills.get(req.params.modelId);
-  if (data) return res.json(data);
+  const cfg   = config.load();
+  const model = cfg.models?.[req.params.modelId];
+  const notes = model?.notes ?? [];
+  const data  = skills.get(req.params.modelId);
+  if (data) return res.json({ ...data, notes });
   // No skill file yet — return a shell with the architecture default so the UI can show it.
-  const cfg  = config.load();
-  const arch = cfg.models?.[req.params.modelId]?.architecture ?? null;
-  res.json({ defaultSkill: skills.getDefaultSkill(arch) ?? null });
+  const arch = model?.architecture ?? null;
+  res.json({ defaultSkill: skills.getDefaultSkill(arch) ?? null, notes });
 });
 
 // POST /api/sessions/skills/:modelId/refresh
@@ -125,8 +127,9 @@ router.post('/skills/:modelId/refresh', async (req, res) => {
 // PATCH /api/sessions/skills/:modelId/notes
 router.patch('/skills/:modelId/notes', (req, res) => {
   try {
-    skills.saveNotes(req.params.modelId, req.body.notes ?? []);
-    res.json(skills.get(req.params.modelId) ?? {});
+    const model = config.saveModelNotes(req.params.modelId, req.body.notes ?? []);
+    if (!model) return res.status(404).json({ error: 'Model not found' });
+    res.json(model);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

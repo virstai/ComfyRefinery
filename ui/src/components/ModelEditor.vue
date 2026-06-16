@@ -426,30 +426,28 @@ async function toggleLock() {
 async function doActivateVersion(versionId) {
   const data = await activateSkillVersion(props.modelId, versionId);
   skillData.value = data;
-  localNotes.value = (data.notes ?? []).map(n => ({ ...n }));
 }
 
 async function doDeleteVersion(versionId) {
   if (!confirm('Delete this skill version?')) return;
   const data = await deleteSkillVersion(props.modelId, versionId);
   skillData.value = data;
-  localNotes.value = (data.notes ?? []).map(n => ({ ...n }));
 }
 
 async function doResetToDefault() {
   const data = await resetSkillToDefault(props.modelId);
   skillData.value = data;
-  localNotes.value = (data.notes ?? []).map(n => ({ ...n }));
 }
 
 async function doRefreshSkill() {
   if (refreshing.value || skillLocked.value) return;
   refreshing.value = true;
   try {
-    const data = await apiRefreshSkill(props.modelId, correctionNote.value.trim());
-    skillData.value  = data;
-    localNotes.value = (data.notes ?? []).map(n => ({ ...n }));
+    await apiRefreshSkill(props.modelId, correctionNote.value.trim());
     correctionNote.value = '';
+    // Reload via loadSkill to pick up updated skill text AND auto-notes written to model config.
+    skillData.value  = await loadSkill(props.modelId).catch(() => skillData.value);
+    localNotes.value = (skillData.value?.notes ?? []).map(n => ({ ...n }));
   } catch (err) {
     alert(`Skill refresh failed: ${err.message}`);
   } finally {
@@ -458,8 +456,8 @@ async function doRefreshSkill() {
 }
 
 async function persistNotes() {
-  const data = await saveNotes(props.modelId, localNotes.value);
-  skillData.value = data;
+  await saveNotes(props.modelId, localNotes.value);
+  skillData.value  = await loadSkill(props.modelId).catch(() => skillData.value);
 }
 
 async function toggleNote(id) {
@@ -476,10 +474,10 @@ async function addNote() {
   const text = addNoteText.value.trim();
   if (!text) return;
   if (addNoteType.value === 'enforce') {
-    localNotes.value.push({ id: genId(), type: 'enforce', enabled: false, auto: false, text });
+    localNotes.value.push({ id: genId(), type: 'enforce', enabled: true, auto: false, text });
   } else {
     for (const word of text.split(',').map(w => w.trim()).filter(Boolean)) {
-      localNotes.value.push({ id: genId(), type: 'blacklist', words: [word], enabled: false, auto: false });
+      localNotes.value.push({ id: genId(), type: 'blacklist', words: [word], enabled: true, auto: false });
     }
   }
   addNoteText.value = '';

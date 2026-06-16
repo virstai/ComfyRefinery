@@ -47,9 +47,11 @@ after(async () => {
 });
 
 const skills        = require('../../src/services/skills');
+const config        = require('../../src/services/config');
 const { refreshSkill } = require('../../src/services/skillRefresher');
 
 function seedModel(id, accepts, rejects) {
+  // Skill file — needed for version/outcome tracking
   const dir = process.env.SKILLS_DIR;
   fs.mkdirSync(dir, { recursive: true });
   fs.writeFileSync(path.join(dir, `${id}.json`), JSON.stringify({
@@ -58,6 +60,12 @@ function seedModel(id, accepts, rejects) {
     outcomes: { accepts, rejects },
     notes: [],
   }));
+  // Model entry in config — needed for notes storage
+  const cfgPath = path.join(tmpDir, 'config.json');
+  const cfg = JSON.parse(fs.readFileSync(cfgPath, 'utf8'));
+  cfg.models = cfg.models ?? {};
+  cfg.models[id] = { id, label: id, architecture: 'sd15' };
+  fs.writeFileSync(cfgPath, JSON.stringify(cfg));
 }
 
 test('skips silently when skill file does not exist', async () => {
@@ -110,8 +118,8 @@ test('parses ENFORCE lines into auto notes (disabled by default)', async () => {
   seedModel('enforce-parse', 8, 2); // ≥10 sessions
   skillResponse = 'SKILL\nSome skill.\n\nENFORCE\nAlways use danbooru tags.\nAvoid natural language.';
   await refreshSkill('enforce-parse', 'EnforceParse', 'sd15');
-  const data = skills.get('enforce-parse');
-  const enforceNotes = data.notes.filter(n => n.type === 'enforce' && n.auto);
+  const notes = config.load().models['enforce-parse']?.notes ?? [];
+  const enforceNotes = notes.filter(n => n.type === 'enforce' && n.auto);
   assert.equal(enforceNotes.length, 2);
   assert.equal(enforceNotes[0].text, 'Always use danbooru tags.');
   assert.equal(enforceNotes[1].text, 'Avoid natural language.');
@@ -123,8 +131,8 @@ test('parses BLACKLIST into one auto note per word', async () => {
   seedModel('blacklist-parse', 8, 2); // ≥10 sessions
   skillResponse = 'SKILL\nSome skill.\n\nBLACKLIST\nfoo, bar, baz';
   await refreshSkill('blacklist-parse', 'BlacklistParse', 'sd15');
-  const data = skills.get('blacklist-parse');
-  const blNotes = data.notes.filter(n => n.type === 'blacklist' && n.auto);
+  const notes = config.load().models['blacklist-parse']?.notes ?? [];
+  const blNotes = notes.filter(n => n.type === 'blacklist' && n.auto);
   assert.equal(blNotes.length, 3, 'should have one note per word');
   assert.deepEqual(blNotes.map(n => n.words[0]).sort(), ['bar', 'baz', 'foo']);
   assert.ok(blNotes.every(n => n.enabled === false), 'auto blacklist words should default to disabled');
@@ -137,16 +145,16 @@ test('preserves per-word enabled state across blacklist refreshes', async () => 
   await refreshSkill('blacklist-preserve', 'BlacklistPreserve', 'sd15');
 
   // Enable 'foo' but leave 'bar' disabled
-  const data = skills.get('blacklist-preserve');
-  const fooNote = data.notes.find(n => n.type === 'blacklist' && n.words?.[0] === 'foo');
+  const notes = config.load().models['blacklist-preserve']?.notes ?? [];
+  const fooNote = notes.find(n => n.type === 'blacklist' && n.words?.[0] === 'foo');
   fooNote.enabled = true;
-  skills.saveNotes('blacklist-preserve', data.notes);
+  config.saveModelNotes('blacklist-preserve', notes);
 
   // Second refresh: new active version has 0 sessions, use correction note to force it
   skillResponse = 'SKILL\nSome skill.\n\nBLACKLIST\nfoo, bar, baz';
   await refreshSkill('blacklist-preserve', 'BlacklistPreserve', 'sd15', 'keep same blacklist words');
-  const updated = skills.get('blacklist-preserve');
-  const blNotes = updated.notes.filter(n => n.type === 'blacklist');
+  const updated = config.load().models['blacklist-preserve']?.notes ?? [];
+  const blNotes = updated.filter(n => n.type === 'blacklist');
   const foo = blNotes.find(n => n.words?.[0] === 'foo');
   const bar = blNotes.find(n => n.words?.[0] === 'bar');
   const baz = blNotes.find(n => n.words?.[0] === 'baz');
@@ -165,15 +173,15 @@ test('preserves enabled state of existing auto notes across refreshes', async ()
   await refreshSkill('preserve-enabled', 'PreserveEnabled', 'sd15');
 
   // Manually enable the auto note
-  const data = skills.get('preserve-enabled');
-  const note = data.notes.find(n => n.type === 'enforce' && n.auto);
+  const notes = config.load().models['preserve-enabled']?.notes ?? [];
+  const note = notes.find(n => n.type === 'enforce' && n.auto);
   note.enabled = true;
-  skills.saveNotes('preserve-enabled', data.notes);
+  config.saveModelNotes('preserve-enabled', notes);
 
   // Second refresh: new active version has 0 sessions, use correction note to force it
   await refreshSkill('preserve-enabled', 'PreserveEnabled', 'sd15', 'same enforce rules apply');
-  const updated = skills.get('preserve-enabled');
-  const updatedNote = updated.notes.find(n => n.type === 'enforce' && n.auto && n.text === 'Do something specific.');
+  const updatedNotes = config.load().models['preserve-enabled']?.notes ?? [];
+  const updatedNote = updatedNotes.find(n => n.type === 'enforce' && n.auto && n.text === 'Do something specific.');
   assert.ok(updatedNote, 'auto note should still exist');
   assert.equal(updatedNote.enabled, true, 'enabled state should be preserved');
   skillResponse = 'SKILL\nUse short descriptive tags.\n\nENFORCE\nAlways adapt to model style.\n\nBLACKLIST\nbad-word, another-word';
@@ -181,17 +189,15 @@ test('preserves enabled state of existing auto notes across refreshes', async ()
 
 test('user-created notes are not overwritten by refresh', async () => {
   seedModel('user-notes', 8, 2); // ≥10 sessions so refresh actually runs
-  // Add a user note directly
-  const data = skills.get('user-notes');
+  // Add a user note directly to model config
   const userId = 'user-note-id';
-  data.notes = [{ id: userId, type: 'enforce', text: 'My manual rule', enabled: true, auto: false }];
-  skills.saveNotes('user-notes', data.notes);
+  config.saveModelNotes('user-notes', [{ id: userId, type: 'enforce', text: 'My manual rule', enabled: true, auto: false }]);
 
   skillResponse = 'SKILL\nSome skill.\n\nENFORCE\nAuto-generated rule.';
   await refreshSkill('user-notes', 'UserNotes', 'sd15');
 
-  const updated = skills.get('user-notes');
-  const userNote = updated.notes.find(n => n.id === userId);
+  const updatedNotes = config.load().models['user-notes']?.notes ?? [];
+  const userNote = updatedNotes.find(n => n.id === userId);
   assert.ok(userNote, 'user note should still exist');
   assert.equal(userNote.text, 'My manual rule');
   skillResponse = 'SKILL\nUse short descriptive tags.\n\nENFORCE\nAlways adapt to model style.\n\nBLACKLIST\nbad-word, another-word';

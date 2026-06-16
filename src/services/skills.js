@@ -253,35 +253,15 @@ function getSummary(modelId) {
 
   const activeVer = getActiveVersion(data);
   const skillText = activeVer?.skill ?? getDefaultSkill(data.architecture);
-  const parts = [];
 
   if (skillText) {
     const label = activeVer?.skill
       ? 'Prompt engineering notes for this model (learned from previous sessions)'
       : `Prompt engineering baseline for ${data.architecture ?? 'this architecture'}`;
-    parts.push(`${label}:\n${skillText}`);
+    return `${label}:\n${skillText}`;
   }
 
-  const enabledNotes = (data.notes ?? []).filter(n => n.enabled);
-
-  const enforced = enabledNotes.filter(n => n.type === 'enforce');
-  if (enforced.length) {
-    parts.push(`Active style enforcements (MUST apply to every prompt):\n${enforced.map(n => `- ${n.text}`).join('\n')}`);
-  }
-
-  const blacklistWords = enabledNotes.filter(n => n.type === 'blacklist').flatMap(n => n.words ?? []);
-  if (blacklistWords.length) {
-    parts.push(`Words to avoid in all prompts (blacklisted): ${blacklistWords.join(', ')}`);
-  }
-
-  if (parts.length) return parts.join('\n\n');
-
-  // Fallback: show raw stats when no skill text and no default exists.
-  const o = activeVer?.outcomes;
-  if (!o || (o.accepts + o.rejects) === 0) return null;
-  const total = o.accepts + o.rejects;
-  const rate  = Math.round((o.accepts / total) * 100);
-  return `Outcome history for this workflow: ${o.accepts}/${total} accepted (${rate}%)`;
+  return null;
 }
 
 function getBlacklist(modelId) {
