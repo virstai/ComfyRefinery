@@ -104,6 +104,15 @@ When using camera motion LoRAs, put the camera directive first: "Camera slowly p
 Use expressive motion verbs for better temporal coherence: "cascades", "billowing", "glides", "dashes", "undulating" outperform generic "moves" or "walks".
 Keep prompts above 20 words — unlike image models, very short prompts produce noticeably degraded output.
 Avoid fine-grained gesture instructions ("raises her left hand") — they are unreliable. Broad motion directives work far better.`,
+
+  zimage: `Write prompts as natural language prose — Z-Image uses a Qwen 3 4B text encoder that reads full sentences and semantic relationships, not tag lists.
+
+No comma-separated tag syntax or weighting syntax like (tag:1.4) — write descriptive sentences instead.
+CFG and negative prompts are fully supported. Use cfgScale 3–5; the default of 4 is a reliable starting point. Negative prompts are effective: "blurry, low quality, deformed anatomy, watermark, text artifacts" works well as a baseline.
+Describe lighting, material texture, and optics explicitly: "shot on a 50mm prime, soft window light from the left, shallow depth of field" conveys more than generic quality boosters.
+Bilingual prompting works natively — Chinese and English text in the same prompt is understood correctly.
+For text-in-image generation (a standout Z-Image capability), quote the exact string in the prompt: "a neon sign reading \\"OPEN\\" in red letters" — the model renders readable text more reliably than most image models.
+Negative prompt for text generation: include "garbled text, illegible characters" to suppress hallucinated glyphs.`,
 };
 
 // ── Migration ──────────────────────────────────────────────────────────────────
