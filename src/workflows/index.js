@@ -12,6 +12,7 @@ const profiles = {
   hunyuanvideo: require('./hunyuanvideo'),
   ltxvideo:     require('./ltxvideo'),
   cogvideox:    require('./cogvideox'),
+  zimage:       require('./zimage'),
 };
 
 const ARCH_META = {
@@ -106,6 +107,13 @@ const ARCH_META = {
     videoArch:    true,
     fields:       { checkpoint: true, vae: true, clipName: true, cfgScale: true },
     notes:       'Requires kijai/ComfyUI-CogVideoXWrapper. The wrapper auto-downloads models to models/CogVideo/. T5 encoder goes in models/clip/. Available in 2B, 5B, and 5B-I2V variants — no 9B variant exists.',
+  },
+  zimage: {
+    label:        'Z-Image',
+    loadingMode:  'split',
+    capabilities: { lora: true, adapter: false, controlNet: false },
+    fields:       { unetName: true, clipName: true, vaeName: true, cfgScale: true, negativePrompt: true },
+    notes:        'No custom nodes required — uses standard ComfyUI nodes. Diffusion model goes in models/diffusion_models/, text encoder (Qwen 3 4B) in models/text_encoders/, VAE in models/vae/.',
   },
 };
 
