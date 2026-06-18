@@ -124,13 +124,13 @@ Generate step LoRA / ControlNet fields:
   adapter routing + the `add_lora` tool on it, and pose mode on a non-controlNet arch fails the
   step with an error. Anima's `adapter` is `false` until the IP-Adapter weights are released.
 
-  | Capability | sd15 | sdxl | flux | flux2 | anima | wanvideo |
-  |---|---|---|---|---|---|---|
-  | `lora` | ✓ | ✓ | ✓ | ✓ | ✓ | — |
-  | `adapter` | ✓ | ✓ | ✓ | ✓ | — (disabled) | — |
-  | `controlNet` (pose, LLLite) | — | — | — | — | ✓ | — |
-  | `tileControlNet` | ✓ | ✓ | — | — | — | — |
-  | `structuralControlNet` | ✓ | ✓ | — | — | — | — |
+  | Capability | sd15 | sdxl | flux | flux2 | anima | zimage | wanvideo |
+  |---|---|---|---|---|---|---|---|
+  | `lora` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — |
+  | `adapter` | ✓ | ✓ | ✓ | ✓ | — (disabled) | — | — |
+  | `controlNet` (pose, LLLite) | — | — | — | — | ✓ | — | — |
+  | `tileControlNet` | ✓ | ✓ | — | — | — | — | — |
+  | `structuralControlNet` | ✓ | ✓ | — | — | — | — | — |
 
 `chainStrategy` — how to consume the previous step's output (only active on non-first steps):
 - `{ mode: "txt2img" }` — drop the chained image; generate from noise only
@@ -364,6 +364,7 @@ Notes have `auto: bool` and `enabled: bool`:
 | `anima.md` | Anima |
 | `sd3.md` | SD 3 / SD 3.5 |
 | `chroma.md` | ChromaHD |
+| `zimage.md` | Z-Image |
 | `wanvideo.md` | WanVideo |
 | `hunyuanvideo.md` | HunyuanVideo |
 | `ltxvideo.md` | LTX-Video |
@@ -405,6 +406,7 @@ src/
     sdxl.js           — SDXL + refiner; supports initImage, ipAdapterImages, tileControlNet, structuralControlNet
     flux.js           — Flux 1 (SamplerCustomAdvanced); supports initImage, reduxImages
     flux2.js          — Flux 2 (KSampler, split-load only); supports referenceImages
+    zimage.js         — Z-Image (KSampler + ModelSamplingAuraFlow, split-load only); supports initImage, LoRA
     wanvideo.js       — WanVideo I2V/T2V; native ComfyUI nodes only; MoE cascade for 14B
     sd3.js / chroma.js / anima.js
   lib/

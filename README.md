@@ -159,7 +159,7 @@ prompt. LLM LoRA selection requires the **Vision guidance & LoRA selection** LLM
 to be enabled.
 
 LoRAs are supported on every image architecture (SD 1.5, SDXL, SD3, Flux, Flux 2,
-ChromaHD, Anima) — the LoRA chain is injected right after the model loader.
+ChromaHD, Anima, Z-Image) — the LoRA chain is injected right after the model loader.
 
 ### Optional — Pose ControlNet
 
@@ -290,6 +290,7 @@ the iteration modal and use **Continue session** to keep iterating.
 | `sd3` | SD 3 / SD 3.5 | Checkpoint + optional external VAE | ✓ | — | — | — | — |
 | `chroma` | ChromaHD | Split only (UNet + T5 encoder + VAE); standard ComfyUI nodes | ✓ | — | — | — | — |
 | `anima` | Anima | Split only (UNet + CLIP/Qwen-3 + Qwen-Image VAE); needs `er_sde` sampler | ✓ | — ¹ | LLLite ² | — | — |
+| `zimage` | Z-Image | Split only (UNet + CLIP/Qwen-3 4B + VAE); standard ComfyUI nodes | ✓ | — | — | — | — |
 
 ¹ Anima IP-Adapter is implemented but disabled — weights not yet publicly released.  
 ² Anima pose ControlNet uses `AnimaLLLiteApply` (kohya-ss/ComfyUI-Anima-LLLite) rather than standard `ControlNetApplyAdvanced`; requires DWPose via comfyui_controlnet_aux for skeleton extraction.  
