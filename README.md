@@ -41,7 +41,7 @@ what you need for the archs you actually use.
 | **comfyui-anima-ipadapter** | [Wenaka2004/comfyui-anima-ipadapter](https://github.com/Wenaka2004/comfyui-anima-ipadapter) | Adapter reference mode on Anima *(weights not yet publicly released)* | Anima |
 | **RES4LYF** | [ClownsharkBatwing/RES4LYF](https://github.com/ClownsharkBatwing/RES4LYF) | `er_sde` sampler for Anima *(may already be in your ComfyUI build — check samplers list first)* | Anima |
 | **ComfyUI-CogVideoXWrapper** | [kijai/ComfyUI-CogVideoXWrapper](https://github.com/kijai/ComfyUI-CogVideoXWrapper) | CogVideoX — required, auto-downloads models on first use; also needs `diffusers>=0.30.1` | CogVideoX |
-| **ComfyUI-LTXVideo** | [Lightricks/ComfyUI-LTXVideo](https://github.com/Lightricks/ComfyUI-LTXVideo) | LTX-Video advanced features (`LTXVPreprocess`, `LTXVAddGuide`, etc.) — basic T2V/I2V works without it | LTX-Video |
+| **ComfyUI-LTXVideo** | [Lightricks/ComfyUI-LTXVideo](https://github.com/Lightricks/ComfyUI-LTXVideo) | LTX-Video advanced features (`LTXVAddGuide` for I2V, `LTX2LoraLoaderAdvanced` for distilled LoRA) — all nodes used by ComfyRefinery are built into recent ComfyUI builds; install this pack only if nodes are missing | LTX-Video |
 | **ComfyUI-GGUF** | [city96/ComfyUI-GGUF](https://github.com/city96/ComfyUI-GGUF) | Quantised GGUF model variants for LTX-Video | LTX-Video |
 | **ComfyUI-HunyuanVideoWrapper** | [kijai/ComfyUI-HunyuanVideoWrapper](https://github.com/kijai/ComfyUI-HunyuanVideoWrapper) | HunyuanVideo on older ComfyUI builds — native support is built-in on current ComfyUI | HunyuanVideo |
 
@@ -299,14 +299,20 @@ Structural CN: extracts depth/edges from a previous step's output as structure-o
 ### Video
 
 Video architectures are used in **video steps** within a workflow. They generate a short
-clip from the final prompt text (T2V) or the previous step's output image (I2V).
+clip from the final prompt text (T2V) or the previous step's output image (I2V). All
+video steps run LLM prompt refinement with a video-specific system prompt (motion, camera
+movement, scene dynamics) before submitting to ComfyUI. For I2V, the reference image is
+included in the LLM prompt to guide motion description. Duration is set in seconds in the
+workflow editor and converted to frames automatically.
 
-| Key | Name | Loader |
-|---|---|---|
-| `wanvideo` | WanVideo (Wan 2.2) | Split (UNet + CLIP/T5 + VAE) |
-| `hunyuanvideo` | HunyuanVideo | Split (UNet + CLIP/T5 + VAE) |
-| `ltxvideo` | LTX-Video | Split (UNet + CLIP/T5 + VAE) |
-| `cogvideox` | CogVideoX | Checkpoint + VAE + CLIP |
+| Key | Name | Loader | Audio |
+|---|---|---|---|
+| `wanvideo` | WanVideo (Wan 2.2) | Split (UNet × 2 + CLIP/T5 + VAE) | — |
+| `hunyuanvideo` | HunyuanVideo | Split (UNet + CLIP/T5 + VAE) | — |
+| `ltxvideo` | LTX-Video / LTX-Video 2.3 AV | Checkpoint (`LTXAVTextEncoderLoader` for 2.3 AV: Gemma 3 12B + T5 from checkpoint) | ✓ ¹ |
+| `cogvideox` | CogVideoX | Checkpoint + VAE + CLIP | — |
+
+¹ LTX-Video 2.3 AV (`ltx-2.3-22b-dev-fp8.safetensors`) embeds an audio VAE in the same checkpoint — no additional download needed. Enable the **Generate audio** toggle in model settings. Output is a single MP4 with the audio track embedded. Requires a Gemma 3 12B text encoder (`gemma_3_12B_it_fp4_mixed.safetensors`) in `models/text_encoders/`; earlier LTX-Video models use a standard T5-XXL CLIP loader instead.
 
 ---
 
@@ -421,10 +427,12 @@ GET    /api/generate/sessions/:id
 DELETE /api/generate/sessions/:id
 ```
 
-### Video proxy
+### Media proxy
 
 **`GET /api/video`** — proxies ComfyUI video output so the browser doesn't need direct
 access. Same query string as ComfyUI's `/view` endpoint (`filename`, `subfolder`, `type`).
+
+**`GET /api/audio`** — proxies ComfyUI audio output (used when audio is embedded separately). Same query string as `/api/video`.
 
 ### Config, models, workflows
 
