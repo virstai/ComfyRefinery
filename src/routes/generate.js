@@ -279,13 +279,17 @@ async function runVideoStep(stepDef, stepIndex, session, ctx, cfg, res, isKilled
 
   if (isKilled()) throw new Error('Generation stopped by user');
 
-  emit(res, 'phase', { step: stepIndex, phase: 'generating', iteration: 1 });
-  console.log(`[${tag}] step ${stepIndex}: preparing video…`);
+  emit(res, 'phase', { step: stepIndex, phase: 'prompt_building', iteration: 1 });
+  console.log(`[${tag}] step ${stepIndex}: building video prompt…`);
 
-  const prepResult = await stepType.prepare(stepDef, ctx);
+  const prepResult = await stepType.prepare(stepDef, ctx, [], token => {
+    emit(res, 'token', { step: stepIndex, iteration: 1, phase: 'prompt', token });
+  });
 
   if (isKilled()) throw new Error('Generation stopped by user');
 
+  emit(res, 'prompt', { step: stepIndex, iteration: 1, prompt: prepResult.prompt });
+  emit(res, 'phase',  { step: stepIndex, phase: 'generating', iteration: 1 });
   console.log(`[${tag}] step ${stepIndex}: queuing video ComfyUI job…`);
   const workflow = stepType.buildComfyWorkflow(stepDef, prepResult, ctx);
 

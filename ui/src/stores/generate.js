@@ -107,10 +107,12 @@ export function handleEvent(event, data) {
     }
 
     case 'phase': {
-      const it = ensureIteration(si, data.iteration);
+      const it   = ensureIteration(si, data.iteration);
+      const step = ensureStep(si);
       it.status           = labels[data.phase] || data.phase;
       genState.iterBadge  = `Step ${si + 1} · Iteration ${data.iteration}`;
       genState.status     = it.status;
+      if (step.type === 'video') step.status = it.status;
       break;
     }
 

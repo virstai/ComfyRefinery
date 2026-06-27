@@ -34,7 +34,12 @@
                   <div class="video-progress-fill" :style="{ width: step.progress + '%' }"></div>
                 </div>
               </template>
-              <template v-else>Waiting…</template>
+              <template v-else>
+                {{ step.status || 'Waiting…' }}
+                <div v-if="step.iterations[0]?.streamingPrompt || step.iterations[0]?.prompt" class="video-prompt-preview">
+                  {{ step.iterations[0].streamingPrompt || step.iterations[0].prompt }}
+                </div>
+              </template>
             </div>
           </template>
 
@@ -170,6 +175,16 @@ watch(
   background: #7c3aed;
   border-radius: 2px;
   transition: width 0.3s;
+}
+
+.video-prompt-preview {
+  margin-top: 6px;
+  font-size: 10px;
+  color: var(--muted);
+  font-style: italic;
+  line-height: 1.4;
+  max-height: 80px;
+  overflow-y: auto;
 }
 
 .video-output {

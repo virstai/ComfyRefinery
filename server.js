@@ -46,24 +46,29 @@ app.get('/api/image', async (req, res) => {
   }
 });
 
-// Proxy ComfyUI video output so the browser doesn't need direct access
-app.get('/api/video', async (req, res) => {
-  const { filename, subfolder = '', type = 'output' } = req.query;
-  if (!filename) return res.status(400).json({ error: 'filename required' });
+// Proxy ComfyUI video/audio output so the browser doesn't need direct access
+function makeComfyProxy(defaultContentType) {
+  return async (req, res) => {
+    const { filename, subfolder = '', type = 'output' } = req.query;
+    if (!filename) return res.status(400).json({ error: 'filename required' });
 
-  const { comfyuiUrl } = config.load();
-  const url = `${comfyuiUrl}/view?filename=${encodeURIComponent(filename)}&subfolder=${encodeURIComponent(subfolder)}&type=${encodeURIComponent(type)}`;
+    const { comfyuiUrl } = config.load();
+    const url = `${comfyuiUrl}/view?filename=${encodeURIComponent(filename)}&subfolder=${encodeURIComponent(subfolder)}&type=${encodeURIComponent(type)}`;
 
-  try {
-    const upstream = await fetch(url);
-    if (!upstream.ok) return res.status(upstream.status).send('ComfyUI error');
-    res.set('Content-Type', upstream.headers.get('content-type') || 'video/mp4');
-    const buf = await upstream.arrayBuffer();
-    res.send(Buffer.from(buf));
-  } catch (err) {
-    res.status(502).json({ error: 'Could not reach ComfyUI', detail: err.message });
-  }
-});
+    try {
+      const upstream = await fetch(url);
+      if (!upstream.ok) return res.status(upstream.status).send('ComfyUI error');
+      res.set('Content-Type', upstream.headers.get('content-type') || defaultContentType);
+      const buf = await upstream.arrayBuffer();
+      res.send(Buffer.from(buf));
+    } catch (err) {
+      res.status(502).json({ error: 'Could not reach ComfyUI', detail: err.message });
+    }
+  };
+}
+
+app.get('/api/video', makeComfyProxy('video/mp4'));
+app.get('/api/audio', makeComfyProxy('audio/flac'));
 
 if (require.main === module) {
   const PORT = process.env.PORT || 3000;

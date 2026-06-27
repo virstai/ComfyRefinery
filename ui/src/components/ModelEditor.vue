@@ -90,13 +90,31 @@
       </select>
     </label>
 
-    <!-- Single text encoder: T5 for Chroma, Mistral 3 / Qwen 3 for Flux 2 -->
-    <label v-if="showSplitField && hasField('clipName')">Text encoder file
+    <!-- Single text encoder: T5 for Chroma, Mistral 3 / Qwen 3 for Flux 2, Gemma for LTX -->
+    <label v-if="(showSplitField || hasFieldAlways('clipName')) && hasField('clipName')">Text encoder file
       <select v-model="form.clipName">
         <option value="">— select —</option>
         <option v-for="c in assets.comfyui?.clips" :key="c" :value="c">{{ c }}</option>
       </select>
     </label>
+    <p v-if="(showSplitField || hasFieldAlways('clipName')) && hasField('clipName') && fieldHint('clipName')" class="hint">{{ fieldHint('clipName') }}</p>
+
+    <!-- Distilled guidance LoRA (LTX-2.3) -->
+    <label v-if="hasField('distilledLoraName')">Distilled guidance LoRA <span class="hint">(optional)</span>
+      <select v-model="form.distilledLoraName">
+        <option value="">— none —</option>
+        <option v-for="l in assets.comfyui?.loras ?? []" :key="l" :value="l">{{ l }}</option>
+      </select>
+    </label>
+    <p v-if="hasField('distilledLoraName') && fieldHint('distilledLoraName')" class="hint">{{ fieldHint('distilledLoraName') }}</p>
+
+    <!-- Audio generation toggle (LTX-AV) -->
+    <div v-if="hasField('enableAudio')">
+      <label class="checkbox-label">
+        <input type="checkbox" v-model="form.enableAudio"> Generate audio alongside video
+      </label>
+      <p v-if="fieldHint('enableAudio')" class="hint">{{ fieldHint('enableAudio') }}</p>
+    </div>
 
     <!-- VAE (split archs) -->
     <label v-if="showSplitField && hasField('vaeName')">VAE file
@@ -492,6 +510,7 @@ const form = reactive({
   vae: '', useRefiner: false, refinerCheckpoint: '',
   adapterModel: '', clipVisionModel: '', adapterWeight: '', controlNetModel: '', tileControlNetModel: '', structuralControlNetModel: '', structuralControlNetPreprocessor: 'depth',
   modelQuantization: '', vaePrecision: '',
+  distilledLoraName: '', enableAudio: false,
 });
 
 watch(() => props.model, m => {
@@ -517,7 +536,9 @@ watch(() => props.model, m => {
   form.structuralControlNetModel       = m.structuralControlNetModel       ?? '';
   form.structuralControlNetPreprocessor = m.structuralControlNetPreprocessor ?? 'depth';
   form.clipVisionModel           = m.clipVisionModel           ?? '';
-  form.adapterWeight     = m.adapterWeight     ?? '';
+  form.adapterWeight             = m.adapterWeight             ?? '';
+  form.distilledLoraName         = m.distilledLoraName         ?? '';
+  form.enableAudio               = !!m.enableAudio;
 }, { immediate: true });
 
 const arch           = computed(() => form.architecture);
@@ -541,6 +562,11 @@ const adapterModelList = computed(() => {
 
 function hasField(name) {
   return !!(props.archMeta[arch.value]?.fields?.[name]);
+}
+
+// True when a field is declared 'always' — shown in both checkpoint and split modes.
+function hasFieldAlways(name) {
+  return props.archMeta[arch.value]?.fields?.[name] === 'always';
 }
 
 function fieldHint(name) {
@@ -572,7 +598,9 @@ async function save() {
     vaeName:           (isSplit.value  && form.vaeName)     ? form.vaeName     : null,
     clipL:             (isSplit.value  && form.clipL)       ? form.clipL       : null,
     t5xxl:             (isSplit.value  && form.t5xxl)       ? form.t5xxl       : null,
-    clipName:          (isSplit.value  && form.clipName)    ? form.clipName    : null,
+    clipName:          ((isSplit.value || hasFieldAlways('clipName')) && form.clipName) ? form.clipName : null,
+    distilledLoraName: hasField('distilledLoraName') ? (form.distilledLoraName || null) : null,
+    enableAudio:       hasField('enableAudio') ? form.enableAudio : null,
     vae:               form.vae              || null,
     refinerCheckpoint: (form.useRefiner && form.refinerCheckpoint) ? form.refinerCheckpoint : null,
     adapterModel:              form.adapterModel              || null,

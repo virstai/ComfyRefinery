@@ -243,11 +243,14 @@
           <span v-if="!videoModels.length" class="hint">No video models found. Add one in the Models panel.</span>
         </label>
         <div class="row">
-          <label>Width  <input type="number" v-model.number="step.width"  step="16" placeholder="832"></label>
-          <label>Height <input type="number" v-model.number="step.height" step="16" placeholder="480"></label>
-          <label>Frames <input type="number" v-model.number="step.frames" step="1"  placeholder="49"></label>
-          <label>FPS    <input type="number" v-model.number="step.fps"    step="1"  placeholder="16"></label>
+          <label>Width    <input type="number" v-model.number="step.width"    step="16"  placeholder="832"></label>
+          <label>Height   <input type="number" v-model.number="step.height"   step="16"  placeholder="480"></label>
+          <label>Duration (s) <input type="number" v-model.number="step.duration" step="0.5" min="0.5" placeholder="4"></label>
+          <label>FPS      <input type="number" v-model.number="step.fps"      step="1"   placeholder="24"></label>
         </div>
+        <p v-if="step.duration !== ''" class="hint">
+          = {{ secondsToFrames(Number(step.duration), effectiveFps(step)) }} frames at {{ effectiveFps(step) }} fps
+        </p>
         <div class="row">
           <label>Steps    <input type="number" v-model.number="step.steps"    min="1"   placeholder="30"></label>
           <label>Guidance <input type="number" v-model.number="step.guidance" step="0.5" placeholder="6"></label>
@@ -346,8 +349,25 @@ function blankUpscaleStep() {
 function blankVideoStep() {
   return {
     type: 'video',
-    modelId: '', width: '', height: '', frames: '', fps: '', steps: '', guidance: '', cfgScale: '',
+    modelId: '', width: '', height: '', duration: '', fps: '', steps: '', guidance: '', cfgScale: '',
   };
+}
+
+// Resolve the effective fps for a video step (entered value → arch default → 24)
+function effectiveFps(step) {
+  if (step.fps !== '') return Number(step.fps);
+  const arch = props.config.models?.[step.modelId]?.architecture;
+  return props.archMeta[arch]?.defaults?.fps ?? 24;
+}
+
+// Convert stored frames to display seconds (round to 1 decimal)
+function framesToSeconds(frames, fps) {
+  return Math.round((frames / fps) * 10) / 10;
+}
+
+// Convert entered seconds to frames (no rounding to arch multiples — builder handles that)
+function secondsToFrames(seconds, fps) {
+  return Math.max(1, Math.round(seconds * fps));
 }
 
 function stepFromDef(s) {
@@ -370,13 +390,18 @@ function stepFromDef(s) {
     };
   }
   if (s.type === 'video') {
+    const fps     = s.params?.fps ?? null;
+    const frames  = s.params?.frames ?? null;
+    const arch    = props.config.models?.[s.modelId]?.architecture;
+    const defFps  = props.archMeta[arch]?.defaults?.fps ?? 24;
+    const duration = frames != null ? framesToSeconds(frames, fps ?? defFps) : '';
     return {
       type:     'video',
       modelId:  s.modelId              ?? '',
       width:    s.params?.width        ?? '',
       height:   s.params?.height       ?? '',
-      frames:   s.params?.frames       ?? '',
-      fps:      s.params?.fps          ?? '',
+      duration,
+      fps:      fps                    ?? '',
       steps:    s.params?.steps        ?? '',
       guidance: s.params?.guidance     ?? '',
       cfgScale: s.params?.cfgScale     ?? '',
@@ -458,8 +483,13 @@ function showCfg(si)      { return archField(si, 'cfgScale'); }
 function showGuidance(si) { return archField(si, 'guidance'); }
 function showNegative(si) { return archField(si, 'negativePrompt'); }
 
-function addGenerateStep() { form.steps.push(blankGenerateStep()); }
-function addUpscaleStep()  { form.steps.push(blankUpscaleStep()); }
+function insertBeforeVideo(step) {
+  const vi = form.steps.findIndex(s => s.type === 'video');
+  if (vi === -1) form.steps.push(step);
+  else           form.steps.splice(vi, 0, step);
+}
+function addGenerateStep() { insertBeforeVideo(blankGenerateStep()); }
+function addUpscaleStep()  { insertBeforeVideo(blankUpscaleStep()); }
 function addVideoStep()    { form.steps.push(blankVideoStep()); }
 function removeStep(si)    { form.steps.splice(si, 1); }
 
@@ -522,13 +552,14 @@ async function save() {
     }
 
     if (s.type === 'video') {
+      const frames = s.duration !== '' ? secondsToFrames(Number(s.duration), effectiveFps(s)) : null;
       return {
         type:    'video',
         modelId: s.modelId,
         params: {
           ...(s.width    !== '' && { width:    Number(s.width) }),
           ...(s.height   !== '' && { height:   Number(s.height) }),
-          ...(s.frames   !== '' && { frames:   Number(s.frames) }),
+          ...(frames     != null && { frames }),
           ...(s.fps      !== '' && { fps:      Number(s.fps) }),
           ...(s.steps    !== '' && { steps:    Number(s.steps) }),
           ...(s.guidance !== '' && { guidance: Number(s.guidance) }),

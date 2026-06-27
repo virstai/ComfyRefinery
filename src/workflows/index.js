@@ -97,8 +97,13 @@ const ARCH_META = {
     loadingMode:  'checkpoint',
     capabilities: { lora: false, adapter: false, controlNet: false },
     videoArch:    true,
-    fields:       { checkpoint: true, clipName: true, guidance: true },
-    notes:       'Checkpoint goes in models/checkpoints/. Text encoder (T5-XXL or Gemma 3 for LTX-2.3) goes in models/text_encoders/. Native ComfyUI support built-in; ComfyUI-LTXVideo custom nodes add advanced workflow features.',
+    fields:       { checkpoint: true, clipName: 'always', distilledLoraName: 'lora', enableAudio: 'toggle', guidance: true },
+    fieldHints:   {
+      clipName:          'Text encoder — e.g. gemma_3_12B_it_fp4_mixed.safetensors (models/text_encoders/)',
+      distilledLoraName: 'Optional distilled guidance LoRA — e.g. ltx-2.3-22b-distilled-lora-384.safetensors',
+      enableAudio:       'Generate audio alongside video. No extra model download needed — audio VAE is embedded in the checkpoint.',
+    },
+    notes:       'Checkpoint goes in models/checkpoints/. Text encoder (Gemma 3 for LTX-2.3) goes in models/text_encoders/. Distilled guidance LoRA goes in models/loras/. Uses built-in ComfyUI nodes (LTXAVTextEncoderLoader, LTXVConditioning, etc.) — no custom node pack required.',
   },
   cogvideox: {
     label:        'CogVideoX',
