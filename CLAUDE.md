@@ -13,7 +13,7 @@ OpenAI, LM Studio, etc.) can be pointed at via `llmBaseUrl` in settings.
 ```bash
 npm start              # production (serve public/)
 npm run dev            # API --watch + Vite hot-reload UI
-npm test               # all 247 tests
+npm test               # all 272 tests
 npm run ui:build       # compile Vue → public/
 ```
 
@@ -124,13 +124,13 @@ Generate step LoRA / ControlNet fields:
   adapter routing + the `add_lora` tool on it, and pose mode on a non-controlNet arch fails the
   step with an error. Anima's `adapter` is `false` until the IP-Adapter weights are released.
 
-  | Capability | sd15 | sdxl | flux | flux2 | anima | zimage | wanvideo |
-  |---|---|---|---|---|---|---|---|
-  | `lora` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — |
-  | `adapter` | ✓ | ✓ | ✓ | ✓ | — (disabled) | — | — |
-  | `controlNet` (pose, LLLite) | — | — | — | — | ✓ | — | — |
-  | `tileControlNet` | ✓ | ✓ | — | — | — | — | — |
-  | `structuralControlNet` | ✓ | ✓ | — | — | — | — | — |
+  | Capability | sd15 | sdxl | flux | flux2 | anima | zimage | krea2 | wanvideo |
+  |---|---|---|---|---|---|---|---|---|
+  | `lora` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — |
+  | `adapter` | ✓ | ✓ | ✓ | ✓ | — (disabled) | — | — | — |
+  | `controlNet` (pose, LLLite) | — | — | — | — | ✓ | — | — | — |
+  | `tileControlNet` | ✓ | ✓ | — | — | — | — | — | — |
+  | `structuralControlNet` | ✓ | ✓ | — | — | — | — | — | — |
 
 `chainStrategy` — how to consume the previous step's output (only active on non-first steps):
 - `{ mode: "txt2img" }` — drop the chained image; generate from noise only
@@ -365,6 +365,7 @@ Notes have `auto: bool` and `enabled: bool`:
 | `sd3.md` | SD 3 / SD 3.5 |
 | `chroma.md` | ChromaHD |
 | `zimage.md` | Z-Image |
+| `krea2.md` | Krea 2 |
 | `wanvideo.md` | WanVideo |
 | `hunyuanvideo.md` | HunyuanVideo |
 | `ltxvideo.md` | LTX-Video |
@@ -400,13 +401,14 @@ src/
     video.js          — video step: T2V / I2V, uploads init image, routes to video arch builder
   workflows/
     index.js          — buildWorkflow(modelConfig, params) + getDefaults(arch) + archMeta (incl. per-arch capabilities)
-    lib/loraChain.js    — shared LoraLoader chain helper used by all image arch builders
+    lib/loraChain.js    — shared LoraLoader chain helper used by all image arch builders; applyModelOnlyLoraChain (LoraLoaderModelOnly) for DiT-only-trained LoRAs (krea2)
     lib/preprocessors.js — buildPreprocessorNode(type, imageRef, resolution) → ComfyUI node; maps depth/softedge/lineart_realistic/lineart_anime/canny to comfyui_controlnet_aux node classes
     sd15.js           — SD1.5; supports initImage, ipAdapterImages, tileControlNet, structuralControlNet
     sdxl.js           — SDXL + refiner; supports initImage, ipAdapterImages, tileControlNet, structuralControlNet
     flux.js           — Flux 1 (SamplerCustomAdvanced); supports initImage, reduxImages
     flux2.js          — Flux 2 (KSampler, split-load only); supports referenceImages
     zimage.js         — Z-Image (KSampler + ModelSamplingAuraFlow, split-load only); supports initImage, LoRA
+    krea2.js          — Krea 2 (plain KSampler, no ModelSampling node, split-load only); LoraLoaderModelOnly LoRAs, CFG-gated negative (ConditioningZeroOut at cfg<=1), supports initImage
     wanvideo.js       — WanVideo I2V/T2V; native ComfyUI nodes only; MoE cascade for 14B
     sd3.js / chroma.js / anima.js
   lib/
@@ -445,7 +447,7 @@ data/
 ## Testing
 
 ```bash
-npm test               # all 247 tests
+npm test               # all 272 tests
 npm run test:unit      # unit tests only
 npm run test:int       # integration tests only
 ```

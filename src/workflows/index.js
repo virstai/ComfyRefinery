@@ -13,6 +13,7 @@ const profiles = {
   ltxvideo:     require('./ltxvideo'),
   cogvideox:    require('./cogvideox'),
   zimage:       require('./zimage'),
+  krea2:        require('./krea2'),
 };
 
 const ARCH_META = {
@@ -119,6 +120,13 @@ const ARCH_META = {
     capabilities: { lora: true, adapter: false, controlNet: false },
     fields:       { unetName: true, clipName: true, vaeName: true, cfgScale: true, negativePrompt: true },
     notes:        'No custom nodes required — uses standard ComfyUI nodes. Diffusion model goes in models/diffusion_models/, text encoder (Qwen 3 4B) in models/text_encoders/, VAE in models/vae/.',
+  },
+  krea2: {
+    label:        'Krea 2',
+    loadingMode:  'split',
+    capabilities: { lora: true, adapter: false, controlNet: false },
+    fields:       { unetName: true, clipName: true, vaeName: true, cfgScale: true, negativePrompt: true },
+    notes:        'No custom nodes required, but needs a recent ComfyUI build with Krea 2 support. Diffusion model goes in models/diffusion_models/, Qwen3-VL-4B text encoder in models/text_encoders/, Qwen-Image VAE in models/vae/. Defaults target Krea 2 Turbo (8 steps, CFG 1.0); for Krea 2 Raw set steps ~52 and CFG 3.0–3.5. LoRAs use LoraLoaderModelOnly (DiT only, text encoder untouched).',
   },
 };
 

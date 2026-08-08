@@ -14,6 +14,7 @@ const SS_PATTERNS = [
   [/^flux/i,  'flux'],
   [/anima/i,  'anima'],
   [/chroma/i, 'chroma'],
+  [/krea-?2/i, 'krea2'],
 ];
 
 const MODELSPEC_PATTERNS = [
@@ -24,6 +25,7 @@ const MODELSPEC_PATTERNS = [
   [/flux/i,                'flux'],
   [/anima/i,               'anima'],
   [/chroma/i,              'chroma'],
+  [/krea-?2/i,             'krea2'],
 ];
 
 function matchPatterns(patterns, value) {

@@ -159,7 +159,7 @@ prompt. LLM LoRA selection requires the **Vision guidance & LoRA selection** LLM
 to be enabled.
 
 LoRAs are supported on every image architecture (SD 1.5, SDXL, SD3, Flux, Flux 2,
-ChromaHD, Anima, Z-Image) — the LoRA chain is injected right after the model loader.
+ChromaHD, Anima, Z-Image, Krea 2) — the LoRA chain is injected right after the model loader.
 
 ### Optional — Pose ControlNet
 
@@ -291,10 +291,12 @@ the iteration modal and use **Continue session** to keep iterating.
 | `chroma` | ChromaHD | Split only (UNet + T5 encoder + VAE); standard ComfyUI nodes | ✓ | — | — | — | — |
 | `anima` | Anima | Split only (UNet + CLIP/Qwen-3 + Qwen-Image VAE); needs `er_sde` sampler | ✓ | — ¹ | LLLite ² | — | — |
 | `zimage` | Z-Image | Split only (UNet + CLIP/Qwen-3 4B + VAE); standard ComfyUI nodes | ✓ | — | — | — | — |
+| `krea2` | Krea 2 | Split only (UNet + CLIP/Qwen3-VL-4B + Qwen-Image VAE); standard ComfyUI nodes | ✓ | — ³ | — | — | — |
 
 ¹ Anima IP-Adapter is implemented but disabled — weights not yet publicly released.  
 ² Anima pose ControlNet uses `AnimaLLLiteApply` (kohya-ss/ComfyUI-Anima-LLLite) rather than standard `ControlNetApplyAdvanced`; requires DWPose via comfyui_controlnet_aux for skeleton extraction.  
-Structural CN: extracts depth/edges from a previous step's output as structure-only guidance while the model generates pure txt2img — used for cross-model style transfer (e.g. Flux 2 Klein → Illustrious SDXL). Requires comfyui_controlnet_aux preprocessor nodes and a matching ControlNet model.
+Structural CN: extracts depth/edges from a previous step's output as structure-only guidance while the model generates pure txt2img — used for cross-model style transfer (e.g. Flux 2 Klein → Illustrious SDXL). Requires comfyui_controlnet_aux preprocessor nodes and a matching ControlNet model.  
+³ Krea 2 has native reference-latent conditioning in ComfyUI core, but it's not wired up in ComfyRefinery yet — see [docs/arch/krea2.md](docs/arch/krea2.md).
 
 ### Video
 

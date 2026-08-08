@@ -113,6 +113,14 @@ Describe lighting, material texture, and optics explicitly: "shot on a 50mm prim
 Bilingual prompting works natively — Chinese and English text in the same prompt is understood correctly.
 For text-in-image generation (a standout Z-Image capability), quote the exact string in the prompt: "a neon sign reading \\"OPEN\\" in red letters" — the model renders readable text more reliably than most image models.
 Negative prompt for text generation: include "garbled text, illegible characters" to suppress hallucinated glyphs.`,
+
+  krea2: `Write prompts as long, dense natural-language prose — Krea 2 uses a Qwen3-VL-4B encoder and is tuned to reward detailed, paragraph-length descriptions over short tag lists.
+
+No comma-separated tag syntax or weighting syntax like (tag:1.4) — write full descriptive sentences, and don't hesitate to write several.
+At the default CFG of 1.0 (Krea 2 Turbo), negative prompts have no effect — the unconditional branch isn't sampled. They only matter if CFG is raised above 1 (Krea 2 Raw settings, ~cfgScale 3–3.5), so don't rely on a negative prompt for correction unless CFG has been raised.
+Describe lighting, material texture, and lens/optics explicitly: "shot on a 35mm lens, overcast diffuse light, visible fabric weave" conveys more than generic quality boosters.
+When using one of the official Krea 2 style LoRAs, append its trigger phrase to the prompt (e.g. "purple retro anime style" for krea2_retroanime, "monochrome ink wash style" for krea2_darkbrush) — the LoRA is tuned to respond to that exact phrase.
+Keep composition and subject description concrete and spatial rather than abstract — this model favors literal descriptions of what's in frame over mood words alone.`,
 };
 
 // ── Migration ──────────────────────────────────────────────────────────────────

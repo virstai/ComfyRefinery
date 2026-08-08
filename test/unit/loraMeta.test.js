@@ -16,12 +16,14 @@ test('detects sdxl from ss_base_model_version', () => {
   assert.equal(detectArchitecture({ ss_base_model_version: 'sdxl_base_v1-0' }), 'sdxl');
 });
 
-test('detects sd3 / flux / flux2 / anima / chroma', () => {
+test('detects sd3 / flux / flux2 / anima / chroma / krea2', () => {
   assert.equal(detectArchitecture({ ss_base_model_version: 'sd3_m' }),    'sd3');
   assert.equal(detectArchitecture({ ss_base_model_version: 'flux1' }),    'flux');
   assert.equal(detectArchitecture({ ss_base_model_version: 'flux2_base_v1-0' }),    'flux2');
   assert.equal(detectArchitecture({ ss_base_model_version: 'anima_v1' }), 'anima');
   assert.equal(detectArchitecture({ ss_base_model_version: 'chroma' }),   'chroma');
+  assert.equal(detectArchitecture({ ss_base_model_version: 'krea2_turbo' }), 'krea2');
+  assert.equal(detectArchitecture({ ss_base_model_version: 'krea-2' }),      'krea2');
 });
 
 test('falls back to modelspec.architecture', () => {

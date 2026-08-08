@@ -15,7 +15,7 @@ test('every architecture declares boolean lora/adapter/controlNet capabilities',
 });
 
 test('image archs support lora; video archs support nothing', () => {
-  for (const arch of ['sd15', 'sdxl', 'flux', 'flux2', 'sd3', 'chroma', 'anima', 'zimage']) {
+  for (const arch of ['sd15', 'sdxl', 'flux', 'flux2', 'sd3', 'chroma', 'anima', 'zimage', 'krea2']) {
     assert.equal(archMeta[arch].capabilities.lora, true, `${arch} lora`);
   }
   for (const arch of ['wanvideo', 'hunyuanvideo', 'ltxvideo', 'cogvideox']) {
@@ -27,7 +27,7 @@ test('adapter: enabled for sd15/sdxl/flux/flux2, disabled for sd3/chroma and ani
   for (const arch of ['sd15', 'sdxl', 'flux', 'flux2']) {
     assert.equal(archMeta[arch].capabilities.adapter, true, arch);
   }
-  for (const arch of ['sd3', 'chroma', 'anima', 'zimage']) {
+  for (const arch of ['sd3', 'chroma', 'anima', 'zimage', 'krea2']) {
     assert.equal(archMeta[arch].capabilities.adapter, false, arch);
   }
 });
@@ -42,7 +42,7 @@ test('controlNet (pose pre-pass): sd15, sdxl, anima; tileControlNet + structural
     assert.equal(archMeta[arch].capabilities.tileControlNet,       true, `${arch} tileControlNet`);
     assert.equal(archMeta[arch].capabilities.structuralControlNet, true, `${arch} structuralControlNet`);
   }
-  for (const arch of ['flux', 'flux2', 'anima', 'sd3', 'chroma']) {
+  for (const arch of ['flux', 'flux2', 'anima', 'sd3', 'chroma', 'zimage', 'krea2']) {
     assert.equal(archMeta[arch].capabilities.tileControlNet,       undefined, `${arch} no tileControlNet`);
     assert.equal(archMeta[arch].capabilities.structuralControlNet, undefined, `${arch} no structuralControlNet`);
   }

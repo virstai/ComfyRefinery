@@ -2,7 +2,7 @@
 
 const { test } = require('node:test');
 const assert   = require('node:assert/strict');
-const { applyLoraChain } = require('../../../src/workflows/lib/loraChain');
+const { applyLoraChain, applyModelOnlyLoraChain } = require('../../../src/workflows/lib/loraChain');
 
 test('no loras: refs unchanged, no nodes added', () => {
   const nodes = {};
@@ -39,4 +39,30 @@ test('custom makeId allocator', () => {
     [{ name: 'a.safetensors', weight: 1.0 }], () => String(++c));
   assert.equal(nodes['3'].class_type, 'LoraLoader');
   assert.deepEqual(out.modelRef, ['3', 0]);
+});
+
+test('applyModelOnlyLoraChain: no loras: ref unchanged, no nodes added', () => {
+  const nodes = {};
+  const out = applyModelOnlyLoraChain(nodes, ['1', 0], undefined);
+  assert.deepEqual(out, ['1', 0]);
+  assert.equal(Object.keys(nodes).length, 0);
+  const out2 = applyModelOnlyLoraChain(nodes, ['1', 0], []);
+  assert.deepEqual(out2, ['1', 0]);
+});
+
+test('applyModelOnlyLoraChain: chains model only, no clip input; default ids 30+', () => {
+  const nodes = {};
+  const out = applyModelOnlyLoraChain(nodes, ['1', 0], [
+    { name: 'a.safetensors', weight: 0.7 },
+    { name: 'b.safetensors' },
+  ]);
+  assert.equal(nodes['30'].class_type, 'LoraLoaderModelOnly');
+  assert.deepEqual(nodes['30'].inputs.model, ['1', 0]);
+  assert.equal(nodes['30'].inputs.clip, undefined);
+  assert.equal(nodes['30'].inputs.lora_name, 'a.safetensors');
+  assert.equal(nodes['30'].inputs.strength_model, 0.7);
+  // second link chains off the first; missing weight defaults to 1.0
+  assert.deepEqual(nodes['31'].inputs.model, ['30', 0]);
+  assert.equal(nodes['31'].inputs.strength_model, 1.0);
+  assert.deepEqual(out, ['31', 0]);
 });

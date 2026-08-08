@@ -13,6 +13,8 @@ Per-architecture guides for setting up model files in ComfyUI to use with ComfyR
 | SD 3 / SD 3.5 | `sd3` | [sd3.md](sd3.md) |
 | ChromaHD | `chroma` | [chroma.md](chroma.md) |
 | Anima | `anima` | [anima.md](anima.md) |
+| Z-Image | `zimage` | [zimage.md](zimage.md) |
+| Krea 2 | `krea2` | [krea2.md](krea2.md) |
 
 ## Video architectures
 

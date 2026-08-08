@@ -25,7 +25,7 @@ test('video archs each have defaults', () => {
 
 test('image archs do not have videoArch flag', () => {
   const { archMeta } = require('../../src/workflows');
-  for (const arch of ['sd15', 'sdxl', 'flux', 'flux2', 'sd3', 'chroma', 'anima']) {
+  for (const arch of ['sd15', 'sdxl', 'flux', 'flux2', 'sd3', 'chroma', 'anima', 'zimage', 'krea2']) {
     assert.ok(!archMeta[arch]?.videoArch, `${arch} should not have videoArch`);
   }
 });
