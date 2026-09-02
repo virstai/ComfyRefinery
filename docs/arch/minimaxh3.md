@@ -18,16 +18,17 @@ Two checkpoints cover three modes:
 |---|---|---|
 | UNet file | `minimax_h3_fl2va_pruned_int8_convrot.safetensors` (19.5 GB) | `models/diffusion_models/` |
 | Ref2VA UNet file *(optional)* | `minimax_h3_ref2va_pruned_int8_convrot.safetensors` | `models/diffusion_models/` |
-| Text encoder file | `qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors` (14.6 GB) | `models/text_encoders/` |
+| Text encoder file | `qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors` (14.6 GB) on NVIDIA; `qwen3vl_32b_minimax_h3_int8_convrot.safetensors` (25.3 GB) on AMD/ROCm — see [ROCm](#rocm-use-the-int8-text-encoder-not-nvfp4) | `models/text_encoders/` |
 | VAE file | `minimax_h3_video_vae_fp16.safetensors` (4.9 GB) | `models/vae/` |
 | Audio VAE file *(optional)* | `minimax_h3_audio_vae_fp32.safetensors` (0.6 GB) | `models/vae/` |
 | Turbo LoRA (FL2VA) *(optional)* | `minimax_h3_fl2v_turbo_8step_v1.0_comfyui_bf16.safetensors` | `models/loras/` |
 | Turbo LoRA (Ref2VA) *(optional)* | `minimax_h3_ref2v_turbo_4step_v0.1_comfyui_bf16.safetensors` | `models/loras/` |
 
 Larger/heavier variants exist in the same repo (`_int8_convrot` 31.7 GB, `_bf16`
-61.7 GB for the UNet; `int8_convrot`/`bf16` for the text encoder) — the pruned int8 +
-nvfp4 combination above is the recommended local setup (~40 GB total; runs on 12 GB
-VRAM cards via dynamic offloading).
+61.7 GB for the UNet; `int8_convrot`/`bf16` for the text encoder) — the pruned int8 UNet +
+nvfp4 encoder combination is the recommended NVIDIA setup (~40 GB total; runs on 12 GB
+VRAM cards via dynamic offloading). On AMD/ROCm the nvfp4 encoder is emulated and produces
+NaN conditioning, so use the int8 convrot encoder there (~51 GB total).
 
 ## Where to download
 
@@ -36,6 +37,8 @@ cd /path/to/ComfyUI/models
 wget -P diffusion_models/ "https://huggingface.co/Comfy-Org/MiniMax-H3/resolve/main/diffusion_models/minimax_h3_fl2va_pruned_int8_convrot.safetensors"
 wget -P diffusion_models/ "https://huggingface.co/Comfy-Org/MiniMax-H3/resolve/main/diffusion_models/minimax_h3_ref2va_pruned_int8_convrot.safetensors"
 wget -P text_encoders/   "https://huggingface.co/Comfy-Org/MiniMax-H3/resolve/main/text_encoders/qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors"
+# AMD/ROCm: use this encoder instead of the nvfp4 one
+# wget -P text_encoders/ "https://huggingface.co/Comfy-Org/MiniMax-H3/resolve/main/text_encoders/qwen3vl_32b_minimax_h3_int8_convrot.safetensors"
 wget -P vae/             "https://huggingface.co/Comfy-Org/MiniMax-H3/resolve/main/vae/minimax_h3_video_vae_fp16.safetensors"
 wget -P vae/             "https://huggingface.co/Comfy-Org/MiniMax-H3/resolve/main/vae/minimax_h3_audio_vae_fp32.safetensors"
 wget -P loras/           "https://huggingface.co/Comfy-Org/MiniMax-H3/resolve/main/loras/minimax_h3_fl2v_turbo_8step_v1.0_comfyui_bf16.safetensors"

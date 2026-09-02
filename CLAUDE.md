@@ -21,24 +21,6 @@ API on :3000, Vite dev on :5173. **Always stop the dev server on port 3000 after
 
 ---
 
-## Branch: `refactor/comfyrefinery`
-
-All planned phases complete. Ready to merge to main.
-
-### Phase history
-
-| Phase | Status | Commit |
-|-------|--------|--------|
-| 1 — Rename + step registry + LLM abstraction | ✅ Done | `2129995` |
-| 2 — Workflow entity | ✅ Done | `538f3a8` |
-| LLM refactor — OpenAI-compat provider | ✅ Done | `d77467d` |
-| 3 — Reference handling | ✅ Done | `d91b763` |
-| 4 — Upscale step | ✅ Done | `69d0685` |
-| 5 — Reference adapters + stop/kill fixes | ✅ Done | `be8c9d0` |
-| 6 — Video step | ✅ Done | `e5afc2d` |
-
----
-
 ## Architecture
 
 ### Two entities
