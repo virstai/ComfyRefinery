@@ -13,7 +13,7 @@ OpenAI, LM Studio, etc.) can be pointed at via `llmBaseUrl` in settings.
 ```bash
 npm start              # production (serve public/)
 npm run dev            # API --watch + Vite hot-reload UI
-npm test               # all 272 tests
+npm test               # all 281 tests
 npm run ui:build       # compile Vue → public/
 ```
 
@@ -159,17 +159,35 @@ Skill + notes live in `data/skills/<workflowId>.json`, keyed by workflow ID.
   "steps": [
     { "type": "generate", "label": "SDXL Base", "modelId": "sdxl-base",
       "iterations": [ { "prompt": "...", "imageUrl": "...", "verdict": "ACCEPT", "diagnosis": "...",
+                        "seed": 1234567890,  // sampling seed, recorded for reproducibility
                         "loras": [{ "name": "anima_turbo.safetensors", "weight": 1.0, "source": "step" }],  // source: "step" | "llm"
                         "poseUsed": true, "poseImageUrl": "/api/image?...",
                         "warnings": ["DWPreprocessor not found — skipping pose"] } ],  // optional, only when non-empty
+      "selectedIteration": null,  // 1-based user pick of which variant feeds the next step; null = latest
       "outputImageUrl": "/api/image?..." },
     { "type": "upscale", "label": "4x-UltraSharp.pth ×4",
       "iterations": [ { "imageUrl": "...", "verdict": "ACCEPT", "diagnosis": "..." } ],
-      "outputImageUrl": "/api/image?..." }
+      "outputImageUrl": "/api/image?..." },
+    { "type": "video", "label": "LTX 2.3 ×97f @ 24fps", "modelId": "ltx-2-3",
+      // each run of a video step appends a "take" (variant) — no review loop
+      "iterations": [ { "prompt": "...", "videoUrl": "/api/video?...", "verdict": "ACCEPT", "diagnosis": "video step (no review)" } ],
+      "outputVideoUrl": "/api/video?..." }
   ],
   "status": "complete" | "stopped" | "error", "createdAt": "..."
 }
 ```
+
+### Step replay & variants
+Iterations double as **variants**: `POST /api/generate/rerun/:id` `{ fromStep, toStep? }` re-runs
+only steps `fromStep..toStep` (SSE stream like `/continue`, full history replayed first). Earlier
+steps keep their outputs — the run chains from `stepOutput(steps[fromStep-1])`, which honors
+`selectedIteration`. `fromStep === toStep` redoes one step, appending a new iteration/take.
+`POST /api/generate/sessions/:id/select` `{ stepIndex, iteration }` picks which variant feeds
+downstream steps (recomputes `outputImageUrl`/`outputVideoUrl`); a fresh run of a step clears its
+selection. `/continue` is now `rerun` with `fromStep: 0`. A kill only discards iterations added by
+the current run. UI: per-step **↻ Redo** / **▶ From here** buttons (RunSection), `Output` badge on
+the effective variant (IterationCard), prev/next variant navigation + **Use as step output** in
+DetailPane.
 
 ### SSE events
 All events carry `step` (0-indexed). Full event list:
@@ -191,12 +209,12 @@ All events carry `step` (0-indexed). Full event list:
 | `acceptance_refused` | `{ step, iteration }` | User refused during grace period |
 | `pose` | `{ step, iteration, url }` | Extracted pose skeleton image URL (DWPreprocessor output) |
 | `warning` | `{ step, iteration, message }` | Non-fatal warning (e.g. pose pre-pass failed) |
-| `video` | `{ step, url }` | Final video URL for video steps |
+| `video` | `{ step, iteration, url }` | Final video URL for a video-step take |
 | `step_complete` | `{ step, imageUrl?, videoUrl?, accepted }` | Step finished; pipeline stops if `!accepted` |
 | `done` | `{ accepted, imageUrl?, videoUrl?, sessionId, prompt, iterations }` | Pipeline complete |
 | `stopped` | `{ step }` | User clicked Stop; in-progress step cleared |
 | `error` | `{ message }` | Unexpected pipeline error |
-| `history` | `{ step, ...iteration }` | Replayed on `/continue` |
+| `history` | `{ step, ...iteration, selected? }` | Replayed on `/continue` and `/rerun`; carries `videoUrl`/`seed` when present, `selected: true` on the chosen variant |
 
 `pendingReviews` / `pendingAcceptances` keyed by `"${sessionId}:${stepIndex}"`.
 
@@ -304,17 +322,21 @@ Notes have `auto: bool` and `enabled: bool`:
 - New suggestions always start `enabled: false`.
 
 ### Orchestration
-`runPipeline(session, pipelineDef, cfg, res)` — iterates steps, threads `ctx.inputImage`.
+`runPipeline(session, pipelineDef, cfg, res, imageContext, opts)` — iterates steps, threads `ctx.inputImage`.
+- `opts = { startStep, endStep, initialInputImage }` enables partial re-runs (`/rerun` route).
 - Creates `AbortController`; kill fn aborts it + interrupts ComfyUI.
 - Emits `step_complete` after each step.
 - Stops early (skips remaining steps) if a step finishes without acceptance.
-- On kill: emits `stopped`; on unexpected error: emits `error`.
+- On kill: emits `stopped`; discards only iterations added by the current run.
+- On unexpected error: emits `error`.
 
-`runStep(stepDef, stepIndex, session, ctx, cfg, res, isKilled)` — per-step loop:
+`_runIterativeLoop(stepType, stepDef, stepIndex, session, ctx, cfg, res, isKilled)` — per-step loop
+(wrapped by `runGenerateStep` / `runUpscaleStep`; video steps use `runVideoStep`, no review loop):
 - Per-step review settings (`stepDef.review`) override global `cfg.*`.
 - For generate steps with a previous step output: pre-uploads `ctx.inputImage` as `chainedInputRef`.
 - Forwards ComfyUI binary WebSocket preview frames as `preview` SSE events.
 - `isKilled()` checked at multiple points; all LLM calls receive `ctx.signal`.
+- Picks the sampling seed before building the graph and records it on the iteration.
 
 ### Config shape
 ```jsonc
@@ -378,7 +400,7 @@ Notes have `auto: bool` and `enabled: bool`:
 ```
 src/
   routes/
-    generate.js       — runPipeline + runStep, SSE, session CRUD, kill route
+    generate.js       — runPipeline + _runIterativeLoop, SSE, session CRUD, rerun/select/kill routes
     references.js     — POST /api/references/upload (base64 JSON → ComfyUI)
     sessions.js       — config/models/workflows/skills/assets API
     sdapi.js          — A1111 compat shim (calls /api/generate/run internally)
@@ -419,16 +441,16 @@ src/
 ui/src/
   stores/
     config.js         — configState, loadConfig, saveConfig, model/workflow CRUD
-    generate.js       — genState, handleEvent (incl. stopped), SSE stream helpers, killGeneration
+    generate.js       — genState, handleEvent (incl. stopped), SSE stream helpers, killGeneration, rerunFrom, selectIteration
   components/
-    AppHeader.vue       — WorkflowSelect + panel buttons
+    Sidebar.vue         — nav, live status block, Stop button
     WorkflowSelect.vue  — custom dropdown for active workflow
-    GenerateSection.vue — prompt input + reference drop zone; restores refs on session load
+    GenerateSection.vue — prompt input + reference drop zone; restores refs on session load; Continue button
     RefGrid.vue         — presentational reference image grid + drop zone shell
     RefImage.vue        — single reference image tile (thumbnail + remove button)
-    RunSection.vue      — step group renderer; type-badged headers; Stop button
-    IterationCard.vue   — single iteration thumbnail; live preview via data URL
-    IterationModal.vue  — full detail + human review + refuse
+    RunSection.vue      — step group renderer; type-badged headers; per-step Redo / From-here buttons
+    IterationCard.vue   — iteration/take thumbnail (image or video); Output badge on the effective variant
+    DetailPane.vue      — iteration detail + human review + refuse + variant nav/selection
     ModelsPanel.vue     — model building-blocks list
     ModelEditor.vue     — loader fields, data-driven from archMeta.fields
     WorkflowsPanel.vue  — workflow list + active selector
@@ -447,7 +469,7 @@ data/
 ## Testing
 
 ```bash
-npm test               # all 272 tests
+npm test               # all 281 tests
 npm run test:unit      # unit tests only
 npm run test:int       # integration tests only
 ```

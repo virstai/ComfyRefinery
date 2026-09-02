@@ -114,7 +114,7 @@ test('video-only workflow: no review or image events emitted', async () => {
   assert.equal(events.filter(e => e.event === 'image').length,        0, 'no image events');
 });
 
-test('video-only workflow: session has outputVideoUrl and empty iterations', async () => {
+test('video-only workflow: session has outputVideoUrl and one take iteration', async () => {
   const events = await collectSSE(`${base()}/api/generate`, { prompt: 'a waterfall' });
   const sessionId = events.find(e => e.event === 'session').data.id;
 
@@ -123,9 +123,28 @@ test('video-only workflow: session has outputVideoUrl and empty iterations', asy
 
   assert.equal(session.steps.length,               1,       'one step');
   assert.equal(session.steps[0].type,              'video', 'step type video');
-  assert.equal(session.steps[0].iterations.length, 0,       'no iterations');
+  assert.equal(session.steps[0].iterations.length, 1,       'one take recorded');
+  assert.ok(session.steps[0].iterations[0].videoUrl,        'take has videoUrl');
+  assert.equal(session.steps[0].iterations[0].verdict, 'ACCEPT');
   assert.ok(session.steps[0].outputVideoUrl,                'outputVideoUrl set');
   assert.equal(session.status, 'complete',                  'session complete');
+});
+
+test('video-only workflow: rerun appends a second take and replays the first', async () => {
+  const events    = await collectSSE(`${base()}/api/generate`, { prompt: 'ocean waves' });
+  const sessionId = events.find(e => e.event === 'session').data.id;
+
+  const rerunEvents = await collectSSE(`${base()}/api/generate/rerun/${sessionId}`, { fromStep: 0, toStep: 0 });
+  const history = rerunEvents.filter(e => e.event === 'history');
+  assert.equal(history.length, 1, 'first take replayed as history');
+  assert.ok(history[0].data.videoUrl, 'replayed take carries its videoUrl');
+
+  const videoEvt = rerunEvents.find(e => e.event === 'video');
+  assert.equal(videoEvt.data.iteration, 2, 'new take numbered 2');
+
+  const session = await (await fetch(`${base()}/api/generate/sessions/${sessionId}`)).json();
+  assert.equal(session.steps[0].iterations.length, 2, 'two takes recorded');
+  assert.ok(session.steps[0].iterations.every(it => it.videoUrl), 'both takes have videoUrl');
 });
 
 test('video workflow: submits exactly one ComfyUI prompt with CreateVideo + SaveVideo output', async () => {

@@ -214,6 +214,15 @@ ComfyUI generates the image, and the AI reviews it — repeating until accepted 
 iteration limit is reached. Disable any or all LLM features in Settings to simplify or
 remove the LLM from the loop entirely.
 
+After a session finishes, each step keeps its results and can be revisited:
+
+- **↻ Redo** (step header) re-runs just that step, appending a new variant/take —
+  earlier steps keep their outputs (e.g. keep the generated image, roll new video takes).
+- **▶ From here** re-runs a step *and everything after it*.
+- Click any variant and **Use as step output** (detail pane) to choose which one feeds
+  the next step on the following "From here" run; the effective variant shows an
+  `Output` badge. Navigate variants with the ‹ › arrows or arrow keys.
+
 ---
 
 ## Settings
@@ -335,7 +344,12 @@ All endpoints under `/api`.
 
 **`POST /api/generate`** — start a new session using the active workflow.
 
-**`POST /api/generate/continue/:id`** — resume an existing session.
+**`POST /api/generate/continue/:id`** — resume an existing session (full re-run).
+
+**`POST /api/generate/rerun/:id`** — partial re-run: body `{ "fromStep": 1, "toStep": 1 }`.
+Runs only steps `fromStep..toStep` (default `toStep` = last), chaining from the kept
+output of the step before `fromStep` (honoring any variant selection). Streams the same
+SSE events, replaying full history first.
 
 ```json
 {
@@ -378,7 +392,7 @@ All three SSE endpoints emit:
 | `progress` | `{ step, iteration, pct }` — ComfyUI progress 0–100 |
 | `preview` | `{ step, iteration, url }` — base64 data URL preview frame |
 | `image` | `{ step, iteration, url }` |
-| `video` | `{ step, url }` — final video URL for video steps |
+| `video` | `{ step, iteration, url }` — final video URL for a video-step take |
 | `pose` | `{ step, iteration, url }` — extracted pose skeleton image |
 | `warning` | `{ step, iteration, message }` — non-fatal issue (e.g. unknown LoRA dropped) |
 | `review` | `{ step, iteration, verdict, diagnosis, loras?, poseUsed? }` |
@@ -403,7 +417,20 @@ All three SSE endpoints emit:
 
 **`POST /api/generate/sessions/:id/refuse-accepted`**
 
-Marks the most recent accepted iteration as refused. Safe on completed sessions.
+Marks an accepted iteration as refused. Pass `{ "stepIndex": 0, "iterationN": 2 }` to
+target a specific iteration; with an empty body the most recent accepted iteration is
+used. Safe on completed sessions.
+
+### Selecting a variant
+
+**`POST /api/generate/sessions/:id/select`**
+
+```json
+{ "stepIndex": 0, "iteration": 2 }
+```
+
+Picks which iteration (variant) of a step feeds downstream steps on the next partial
+re-run. Recomputes the step's output URLs; a fresh run of the step clears the selection.
 
 ### Kill a running generation
 

@@ -226,7 +226,8 @@ button:disabled  { opacity: .45; cursor: not-allowed; }
 .thumb-img {
   aspect-ratio: 1; background: var(--bg); position: relative; overflow: hidden;
 }
-.thumb-img img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.thumb-img img,
+.thumb-img video { width: 100%; height: 100%; object-fit: cover; display: block; }
 
 .thumb-placeholder {
   width: 100%; height: 100%; display: flex; align-items: center; justify-content: center;
@@ -246,6 +247,15 @@ button:disabled  { opacity: .45; cursor: not-allowed; }
 
 .thumb-badge--pose {
   background: color-mix(in srgb, #0ea5e9 80%, transparent);
+}
+
+.thumb-badge--output {
+  top: auto; bottom: 9px;
+  background: color-mix(in srgb, var(--accept) 85%, transparent);
+}
+
+.iter-thumb--output {
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accept) 70%, transparent);
 }
 
 .thumb-footer {
