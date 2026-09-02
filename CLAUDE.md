@@ -234,7 +234,7 @@ Back-compat: existing configs with `ollamaUrl` are migrated automatically.
 `src/steps/index.js` — `get(type)` → step module.
 `src/steps/generate.js` — generate step: LLM prompt build, vision notes, adapter/img2img routing, review.
 `src/steps/upscale.js` — upscale step: model upscaler (ESRGAN) or hires fix (re-diffusion).
-`src/steps/video.js` — video step: T2V / I2V / R2V routing, uploads init image, delegates to wanvideo (or other video arch). R2V (reference-to-video) activates when the arch declares `referenceToVideo: true` in ARCH_META **and** the model config has `refUnetName` set **and** the session has uploaded references with no chained input image — all references are passed as `referenceRefs` and the prompt refiner cites them as `<Picture N>` with explicit roles. Only minimaxh3 supports it today.
+`src/steps/video.js` — video step: T2V / I2V / R2V routing, uploads init image, delegates to wanvideo (or other video arch). **I2V aspect-ratio follow**: when the step doesn't pin both width and height, the video dimensions are derived from the input image's aspect ratio — fitted to the arch's default pixel budget and rounded to `ARCH_META[arch].dimMultiple` (16 wan/hunyuan, 32 ltx/minimaxh3, 8 cog) via `src/lib/imageSize.js` (dependency-free PNG/JPEG/WebP dimension reader + `fitToBudget`). A single explicitly set dimension is kept and the other follows the image ratio. R2V (reference-to-video) activates when the arch declares `referenceToVideo: true` in ARCH_META **and** the model config has `refUnetName` set **and** the session has uploaded references with no chained input image — all references are passed as `referenceRefs` and the prompt refiner cites them as `<Picture N>` with explicit roles. Only minimaxh3 supports it today.
 
 Step interface:
 ```js
@@ -439,6 +439,7 @@ src/
     parsers.js        — parsePromptResponse, parseReview
     loraMeta.js       — auto-detect LoRA architecture from ComfyUI /view_metadata response
     png.js            — dependency-free PNG pixel inspector (blank-skeleton detection)
+    imageSize.js      — dependency-free PNG/JPEG/WebP dimension reader + fitToBudget (video I2V aspect-ratio follow)
     loraTools.js      — lora catalog helpers + agent tool factories (add_lora, request_pose) with per-tool guidance
 ui/src/
   stores/

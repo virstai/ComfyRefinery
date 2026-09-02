@@ -315,7 +315,9 @@ uploaded reference images (R2V, where supported). All video steps run LLM prompt
 refinement with a video-specific system prompt (motion, camera movement, scene dynamics)
 before submitting to ComfyUI. For I2V/R2V, the input image(s) are included in the LLM
 prompt to guide motion description. Duration is set in seconds in the workflow editor
-and converted to frames automatically.
+and converted to frames automatically. When the step's width/height are left blank,
+I2V runs match the input image's aspect ratio (fitted to the model's pixel budget) —
+so a portrait generate step chains into a portrait video.
 
 | Key | Name | Loader | Audio |
 |---|---|---|---|

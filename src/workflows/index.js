@@ -69,6 +69,7 @@ const ARCH_META = {
     loadingMode:  'split',
     capabilities: { lora: false, adapter: false, controlNet: false },
     videoArch:    true,
+    dimMultiple:  16,
     fields:      {
       unetName:          true,
       unetName2:         true,
@@ -91,6 +92,7 @@ const ARCH_META = {
     loadingMode:  'split',
     capabilities: { lora: false, adapter: false, controlNet: false },
     videoArch:    true,
+    dimMultiple:  16,
     fields:       { unetName: true, clipName: true, vaeName: true, guidance: true },
     notes:       'Main model goes in models/diffusion_models/ (not checkpoints). Requires two text encoders: clip_l.safetensors and llava_llama3_fp8_scaled.safetensors — set CLIP to clip_l. Has native ComfyUI support (no custom nodes needed on recent ComfyUI).',
   },
@@ -99,6 +101,7 @@ const ARCH_META = {
     loadingMode:  'checkpoint',
     capabilities: { lora: false, adapter: false, controlNet: false },
     videoArch:    true,
+    dimMultiple:  32,
     fields:       { checkpoint: true, clipName: 'always', distilledLoraName: 'lora', enableAudio: 'toggle', guidance: true },
     fieldHints:   {
       clipName:          'Text encoder — e.g. gemma_3_12B_it_fp4_mixed.safetensors (models/text_encoders/)',
@@ -112,6 +115,7 @@ const ARCH_META = {
     loadingMode:     'split',
     capabilities:    { lora: false, adapter: false, controlNet: false },
     videoArch:       true,
+    dimMultiple:  32,
     referenceToVideo: true,
     fields:      {
       unetName:             true,
@@ -146,6 +150,7 @@ const ARCH_META = {
     loadingMode:  'checkpoint',
     capabilities: { lora: false, adapter: false, controlNet: false },
     videoArch:    true,
+    dimMultiple:  8,
     fields:       { checkpoint: true, vae: true, clipName: true, cfgScale: true },
     notes:       'Requires kijai/ComfyUI-CogVideoXWrapper. The wrapper auto-downloads models to models/CogVideo/. T5 encoder goes in models/clip/. Available in 2B, 5B, and 5B-I2V variants — no 9B variant exists.',
   },

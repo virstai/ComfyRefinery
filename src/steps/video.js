@@ -5,6 +5,7 @@ const llm      = require('../services/llm');
 const skills   = require('../services/skills');
 const { buildWorkflow, getDefaults, archMeta } = require('../workflows');
 const { parsePromptResponse } = require('../lib/parsers');
+const { imageSize, fitToBudget, roundToMultiple } = require('../lib/imageSize');
 const { LOCAL_PREAMBLE }      = require('../services/skillRefresher');
 
 function label(stepDef, cfg) {
@@ -43,16 +44,39 @@ function buildVideoMessages(userPrompt, architecture, { isI2V, refCount = 0 }, c
   ];
 }
 
-// Resolve an uploaded ComfyUI input ref into a base64 string for vision context.
-async function fetchRefBase64(inputRef, comfyuiUrl) {
+// Resolve an uploaded ComfyUI input ref into a Buffer.
+async function fetchRefBuffer(inputRef, comfyuiUrl) {
   try {
     const url = `${comfyuiUrl}/view?filename=${encodeURIComponent(inputRef.filename)}&subfolder=${encodeURIComponent(inputRef.subfolder ?? '')}&type=${encodeURIComponent(inputRef.type ?? 'input')}`;
     const r = await fetch(url);
     if (!r.ok) return null;
-    return Buffer.from(await r.arrayBuffer()).toString('base64');
+    return Buffer.from(await r.arrayBuffer());
   } catch {
     return null;
   }
+}
+
+async function fetchRefBase64(inputRef, comfyuiUrl) {
+  const buf = await fetchRefBuffer(inputRef, comfyuiUrl);
+  return buf ? buf.toString('base64') : null;
+}
+
+// I2V dimension auto-follow: when the step doesn't pin both width and height,
+// derive them from the input image's aspect ratio — fitted to the arch's
+// default pixel budget and rounded to its dimension grid. An explicitly set
+// single dimension is respected and the other follows the image's ratio.
+function autoSizeFromImage(dims, stepDef, architecture) {
+  if (!dims?.width || !dims?.height) return null;
+  const explicitW = stepDef.params?.width;
+  const explicitH = stepDef.params?.height;
+  if (explicitW && explicitH) return null;
+
+  const mult = archMeta[architecture]?.dimMultiple ?? 16;
+  const ar   = dims.width / dims.height;
+  if (explicitW) return { height: roundToMultiple(explicitW / ar, mult) };
+  if (explicitH) return { width:  roundToMultiple(explicitH * ar, mult) };
+  const d = getDefaults(architecture);
+  return fitToBudget(dims.width, dims.height, d.width, d.height, mult);
 }
 
 // prepare() resolves the init image (if any) and builds the LLM-refined prompt.
@@ -68,6 +92,7 @@ async function prepare(stepDef, ctx, _previousIterations, onToken) {
   let isI2V         = false;
   let referenceRefs = [];
   let isR2V         = false;
+  let inputBuffer   = null;
 
   if (ctx.inputImage) {
     const url       = new URL(ctx.inputImage, 'http://localhost');
@@ -78,8 +103,8 @@ async function prepare(stepDef, ctx, _previousIterations, onToken) {
     const fetchUrl = `${cfg.comfyuiUrl}/view?filename=${encodeURIComponent(filename)}&subfolder=${encodeURIComponent(subfolder)}&type=${encodeURIComponent(type)}`;
     const res = await fetch(fetchUrl);
     if (!res.ok) throw new Error(`Failed to fetch init image for video: ${res.status}`);
-    const buffer = Buffer.from(await res.arrayBuffer());
-    inputRef = await comfyui.uploadImage(buffer, filename);
+    inputBuffer = Buffer.from(await res.arrayBuffer());
+    inputRef = await comfyui.uploadImage(inputBuffer, filename);
     isI2V    = true;
   } else if (ctx.references?.length) {
     if (archMeta[architecture]?.referenceToVideo && modelConfig.refUnetName) {
@@ -92,9 +117,16 @@ async function prepare(stepDef, ctx, _previousIterations, onToken) {
     }
   }
 
+  // ── I2V: follow the input image's aspect ratio unless dims are pinned ────
+  let autoSize = null;
+  if (isI2V && inputRef && !(stepDef.params?.width && stepDef.params?.height)) {
+    if (!inputBuffer) inputBuffer = await fetchRefBuffer(inputRef, cfg.comfyuiUrl);
+    autoSize = autoSizeFromImage(inputBuffer ? imageSize(inputBuffer) : null, stepDef, architecture);
+  }
+
   // ── Prompt refinement ────────────────────────────────────────────────────
   if (cfg.promptRefinement === false) {
-    return { prompt: userPrompt, inputRef, isI2V, referenceRefs, isR2V };
+    return { prompt: userPrompt, inputRef, isI2V, referenceRefs, isR2V, autoSize };
   }
 
   const skillSummary = cfg.skillRefinement !== false ? skills.getSummary(skillId) : null;
@@ -126,7 +158,7 @@ async function prepare(stepDef, ctx, _previousIterations, onToken) {
     console.warn('[video] prompt build failed, falling back to raw prompt:', e.message);
   }
 
-  return { prompt: builtPrompt, inputRef, isI2V, referenceRefs, isR2V };
+  return { prompt: builtPrompt, inputRef, isI2V, referenceRefs, isR2V, autoSize };
 }
 
 function buildComfyWorkflow(stepDef, prepareResult, ctx) {
@@ -141,6 +173,7 @@ function buildComfyWorkflow(stepDef, prepareResult, ctx) {
   const params = {
     ...archDefaults,
     ...modelConfig,
+    ...(prepareResult.autoSize ?? {}),
     ...(stepDef.params ?? {}),
     positivePrompt: prepareResult.prompt ?? ctx.userPrompt ?? '',
     inputRef:       prepareResult.inputRef,

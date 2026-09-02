@@ -71,3 +71,46 @@ test('buildComfyWorkflow: throws if modelConfig not on ctx', () => {
     /modelConfig/,
   );
 });
+
+// ── autoSize (I2V aspect-ratio follow) ───────────────────────────────────────
+
+const MMX_MODEL = {
+  id: 'h3', architecture: 'minimaxh3',
+  unetName: 'fl2va.safetensors', clipName: 'clip.safetensors', vaeName: 'vae.safetensors',
+};
+const MMX_CTX = { cfg: { models: { h3: MMX_MODEL } }, userPrompt: 'a scene', modelConfig: MMX_MODEL };
+const REF = { filename: 'in.png', subfolder: '', type: 'input' };
+
+function h3Node(wf) {
+  return Object.values(wf).find(n => n.class_type === 'MiniMaxH3ImageToVideo');
+}
+
+test('buildComfyWorkflow: prepare autoSize replaces arch default dimensions', () => {
+  const wf = video.buildComfyWorkflow(
+    { type: 'video', modelId: 'h3', params: {} },
+    { inputRef: REF, isI2V: true, autoSize: { width: 768, height: 1344 } },
+    MMX_CTX,
+  );
+  assert.equal(h3Node(wf).inputs.width, 768);
+  assert.equal(h3Node(wf).inputs.height, 1344);
+});
+
+test('buildComfyWorkflow: explicit step params beat autoSize', () => {
+  const wf = video.buildComfyWorkflow(
+    { type: 'video', modelId: 'h3', params: { width: 1024, height: 1024 } },
+    { inputRef: REF, isI2V: true, autoSize: { width: 768, height: 1344 } },
+    MMX_CTX,
+  );
+  assert.equal(h3Node(wf).inputs.width, 1024);
+  assert.equal(h3Node(wf).inputs.height, 1024);
+});
+
+test('buildComfyWorkflow: single-dimension autoSize fills the missing axis only', () => {
+  const wf = video.buildComfyWorkflow(
+    { type: 'video', modelId: 'h3', params: { width: 640 } },
+    { inputRef: REF, isI2V: true, autoSize: { height: 928 } },
+    MMX_CTX,
+  );
+  assert.equal(h3Node(wf).inputs.width, 640);
+  assert.equal(h3Node(wf).inputs.height, 928);
+});

@@ -262,6 +262,8 @@
         </div>
         <p class="hint">
           Video step is always last — no review loop; use ↻ Redo on the run view to roll extra takes.
+          Leave width/height blank to match the input image's aspect ratio (fitted to the model's
+          pixel budget); text-to-video falls back to the defaults shown.
           Input: previous step's accepted image → uploaded references
           ({{ archMeta[stepArch(si)]?.referenceToVideo ? 'reference-to-video when the Ref2VA model is set, else first-frame' : 'first reference as first-frame' }})
           → text-to-video.
