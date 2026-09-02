@@ -31,6 +31,7 @@ const MODEL_LOADER_FIELDS = new Set([
   'clipName', 'vaeName', 'vae', 'useRefiner', 'refinerCheckpoint',
   'adapterModel', 'clipVisionModel', 'adapterWeight', 'controlNetModel', 'tileControlNetModel', 'structuralControlNetModel', 'structuralControlNetPreprocessor',
   'distilledLoraName', 'enableAudio',
+  'refUnetName', 'audioVaeName', 'refDistilledLoraName',
 ]);
 
 function load() {

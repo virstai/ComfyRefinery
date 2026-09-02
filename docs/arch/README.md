@@ -24,3 +24,4 @@ Per-architecture guides for setting up model files in ComfyUI to use with ComfyR
 | HunyuanVideo | `hunyuanvideo` | [hunyuanvideo.md](hunyuanvideo.md) |
 | LTX-Video | `ltxvideo` | [ltxvideo.md](ltxvideo.md) |
 | CogVideoX | `cogvideox` | [cogvideox.md](cogvideox.md) |
+| MiniMax H3 (Hailuo 3) | `minimaxh3` | [minimaxh3.md](minimaxh3.md) |

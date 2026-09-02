@@ -3,9 +3,9 @@
 const { test } = require('node:test');
 const assert   = require('node:assert/strict');
 
-test('all 4 video archs are in archMeta with videoArch: true', () => {
+test('all 5 video archs are in archMeta with videoArch: true', () => {
   const { archMeta } = require('../../src/workflows');
-  for (const arch of ['wanvideo', 'hunyuanvideo', 'ltxvideo', 'cogvideox']) {
+  for (const arch of ['wanvideo', 'hunyuanvideo', 'ltxvideo', 'cogvideox', 'minimaxh3']) {
     assert.ok(archMeta[arch], `${arch} present in archMeta`);
     assert.equal(archMeta[arch].videoArch, true, `${arch}.videoArch is true`);
     assert.ok(archMeta[arch].label,        `${arch} has a label`);
@@ -15,7 +15,7 @@ test('all 4 video archs are in archMeta with videoArch: true', () => {
 
 test('video archs each have defaults', () => {
   const { getDefaults } = require('../../src/workflows');
-  for (const arch of ['wanvideo', 'hunyuanvideo', 'ltxvideo', 'cogvideox']) {
+  for (const arch of ['wanvideo', 'hunyuanvideo', 'ltxvideo', 'cogvideox', 'minimaxh3']) {
     const d = getDefaults(arch);
     assert.ok(d.frames, `${arch} defaults has frames`);
     assert.ok(d.fps,    `${arch} defaults has fps`);

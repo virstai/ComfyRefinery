@@ -66,6 +66,15 @@
     </label>
     <p v-if="showSplitField && fieldHint('unetName2')" class="hint">{{ fieldHint('unetName2') }}</p>
 
+    <!-- Reference-to-video UNet (MiniMax H3 Ref2VA) -->
+    <label v-if="showSplitField && hasField('refUnetName')">{{ fieldLabel('refUnetName') || 'Reference UNet file' }} <span class="hint">(optional)</span>
+      <select v-model="form.refUnetName">
+        <option value="">— none —</option>
+        <option v-for="u in assets.comfyui?.unets" :key="u" :value="u">{{ u }}</option>
+      </select>
+    </label>
+    <p v-if="showSplitField && hasField('refUnetName') && fieldHint('refUnetName')" class="hint">{{ fieldHint('refUnetName') }}</p>
+
     <!-- Enum fields (e.g. model quantization) rendered after UNet fields -->
     <label v-if="showSplitField && fieldOptions('modelQuantization')">{{ fieldLabel('modelQuantization') }}
       <select v-model="form.modelQuantization">
@@ -99,14 +108,23 @@
     </label>
     <p v-if="(showSplitField || hasFieldAlways('clipName')) && hasField('clipName') && fieldHint('clipName')" class="hint">{{ fieldHint('clipName') }}</p>
 
-    <!-- Distilled guidance LoRA (LTX-2.3) -->
-    <label v-if="hasField('distilledLoraName')">Distilled guidance LoRA <span class="hint">(optional)</span>
+    <!-- Distilled guidance / turbo LoRA (LTX-2.3, MiniMax H3) -->
+    <label v-if="hasField('distilledLoraName')">{{ fieldLabel('distilledLoraName') || 'Distilled guidance LoRA' }} <span class="hint">(optional)</span>
       <select v-model="form.distilledLoraName">
         <option value="">— none —</option>
         <option v-for="l in assets.comfyui?.loras ?? []" :key="l" :value="l">{{ l }}</option>
       </select>
     </label>
     <p v-if="hasField('distilledLoraName') && fieldHint('distilledLoraName')" class="hint">{{ fieldHint('distilledLoraName') }}</p>
+
+    <!-- Reference-mode turbo LoRA (MiniMax H3 Ref2VA) -->
+    <label v-if="hasField('refDistilledLoraName')">{{ fieldLabel('refDistilledLoraName') || 'Reference turbo LoRA' }} <span class="hint">(optional)</span>
+      <select v-model="form.refDistilledLoraName">
+        <option value="">— none —</option>
+        <option v-for="l in assets.comfyui?.loras ?? []" :key="l" :value="l">{{ l }}</option>
+      </select>
+    </label>
+    <p v-if="hasField('refDistilledLoraName') && fieldHint('refDistilledLoraName')" class="hint">{{ fieldHint('refDistilledLoraName') }}</p>
 
     <!-- Audio generation toggle (LTX-AV) -->
     <div v-if="hasField('enableAudio')">
@@ -123,6 +141,15 @@
         <option v-for="v in assets.comfyui?.vaes" :key="v" :value="v">{{ v }}</option>
       </select>
     </label>
+
+    <!-- Audio VAE (MiniMax H3) -->
+    <label v-if="showSplitField && hasField('audioVaeName')">{{ fieldLabel('audioVaeName') || 'Audio VAE file' }} <span class="hint">(optional)</span>
+      <select v-model="form.audioVaeName">
+        <option value="">— none (no audio) —</option>
+        <option v-for="v in assets.comfyui?.vaes" :key="v" :value="v">{{ v }}</option>
+      </select>
+    </label>
+    <p v-if="showSplitField && hasField('audioVaeName') && fieldHint('audioVaeName')" class="hint">{{ fieldHint('audioVaeName') }}</p>
 
     <!-- VAE precision enum (e.g. WanVideo) -->
     <label v-if="showSplitField && fieldOptions('vaePrecision')">{{ fieldLabel('vaePrecision') }}
@@ -511,6 +538,7 @@ const form = reactive({
   adapterModel: '', clipVisionModel: '', adapterWeight: '', controlNetModel: '', tileControlNetModel: '', structuralControlNetModel: '', structuralControlNetPreprocessor: 'depth',
   modelQuantization: '', vaePrecision: '',
   distilledLoraName: '', enableAudio: false,
+  refUnetName: '', audioVaeName: '', refDistilledLoraName: '',
 });
 
 watch(() => props.model, m => {
@@ -539,6 +567,9 @@ watch(() => props.model, m => {
   form.adapterWeight             = m.adapterWeight             ?? '';
   form.distilledLoraName         = m.distilledLoraName         ?? '';
   form.enableAudio               = !!m.enableAudio;
+  form.refUnetName               = m.refUnetName               ?? '';
+  form.audioVaeName              = m.audioVaeName              ?? '';
+  form.refDistilledLoraName      = m.refDistilledLoraName      ?? '';
 }, { immediate: true });
 
 const arch           = computed(() => form.architecture);
@@ -601,6 +632,9 @@ async function save() {
     clipName:          ((isSplit.value || hasFieldAlways('clipName')) && form.clipName) ? form.clipName : null,
     distilledLoraName: hasField('distilledLoraName') ? (form.distilledLoraName || null) : null,
     enableAudio:       hasField('enableAudio') ? form.enableAudio : null,
+    refUnetName:          (isSplit.value && hasField('refUnetName'))  ? (form.refUnetName  || null) : null,
+    audioVaeName:         (isSplit.value && hasField('audioVaeName')) ? (form.audioVaeName || null) : null,
+    refDistilledLoraName: hasField('refDistilledLoraName') ? (form.refDistilledLoraName || null) : null,
     vae:               form.vae              || null,
     refinerCheckpoint: (form.useRefiner && form.refinerCheckpoint) ? form.refinerCheckpoint : null,
     adapterModel:              form.adapterModel              || null,

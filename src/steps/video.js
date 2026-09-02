@@ -18,8 +18,14 @@ function label(stepDef, cfg) {
   return `${modelLabel} ×${frames}f @ ${fps}fps`;
 }
 
-function buildVideoMessages(userPrompt, architecture, isI2V, context) {
-  const medium = isI2V ? 'image-to-video' : 'text-to-video';
+function buildVideoMessages(userPrompt, architecture, { isI2V, refCount = 0 }, context) {
+  const medium = refCount > 0 ? 'reference-to-video' : isI2V ? 'image-to-video' : 'text-to-video';
+  const refGuidance = refCount > 0
+    ? `${refCount} reference image${refCount !== 1 ? 's are' : ' is'} provided. ` +
+      `Cite each one in the prompt as <Picture 1>${refCount > 1 ? ` through <Picture ${refCount}>` : ''} ` +
+      `and assign it an explicit role — identity (a person or character to keep consistent), style, or scene/object. ` +
+      `Example: "The woman from <Picture 1> walks through the market, rendered in the painterly style of <Picture 2>." `
+    : '';
   return [
     {
       role: 'system',
@@ -27,6 +33,7 @@ function buildVideoMessages(userPrompt, architecture, isI2V, context) {
         `${LOCAL_PREAMBLE}\n\n` +
         `You are an expert at writing video generation prompts for ${architecture.toUpperCase()} models. ` +
         `This is a ${medium} generation. ` +
+        refGuidance +
         `Convert the user description into the most effective prompt for this video model. ` +
         `Video prompts should describe motion, camera movement, and scene dynamics alongside visual content. ` +
         `Output only the prompt text — no preamble, no explanation, no labels.` +
@@ -54,9 +61,13 @@ async function prepare(stepDef, ctx, _previousIterations, onToken) {
   const { userPrompt, modelConfig, skillId, cfg } = ctx;
   const { architecture } = modelConfig;
 
-  // ── Resolve init image (priority: previous step output → first reference) ──
-  let inputRef = null;
-  let isI2V    = false;
+  // ── Resolve inputs ───────────────────────────────────────────────────────
+  // Priority: previous step output → I2V; else uploaded references → R2V when
+  // the arch + model support reference-to-video, otherwise refs[0] as I2V init.
+  let inputRef      = null;
+  let isI2V         = false;
+  let referenceRefs = [];
+  let isR2V         = false;
 
   if (ctx.inputImage) {
     const url       = new URL(ctx.inputImage, 'http://localhost');
@@ -71,28 +82,36 @@ async function prepare(stepDef, ctx, _previousIterations, onToken) {
     inputRef = await comfyui.uploadImage(buffer, filename);
     isI2V    = true;
   } else if (ctx.references?.length) {
-    const ref = ctx.references[0];
-    inputRef  = { filename: ref.filename, subfolder: ref.subfolder ?? '', type: ref.type ?? 'input' };
-    isI2V     = true;
+    if (archMeta[architecture]?.referenceToVideo && modelConfig.refUnetName) {
+      referenceRefs = ctx.references.map(ref => ({ filename: ref.filename, subfolder: ref.subfolder ?? '', type: ref.type ?? 'input' }));
+      isR2V = true;
+    } else {
+      const ref = ctx.references[0];
+      inputRef  = { filename: ref.filename, subfolder: ref.subfolder ?? '', type: ref.type ?? 'input' };
+      isI2V     = true;
+    }
   }
 
   // ── Prompt refinement ────────────────────────────────────────────────────
   if (cfg.promptRefinement === false) {
-    return { prompt: userPrompt, inputRef, isI2V };
+    return { prompt: userPrompt, inputRef, isI2V, referenceRefs, isR2V };
   }
 
   const skillSummary = cfg.skillRefinement !== false ? skills.getSummary(skillId) : null;
-  const messages = buildVideoMessages(userPrompt, architecture, isI2V, skillSummary);
+  const messages = buildVideoMessages(userPrompt, architecture, { isI2V, refCount: referenceRefs.length }, skillSummary);
 
-  // For I2V: inject the init image so the LLM can describe it and suggest
-  // motion that fits the content — inserted before the user description.
-  if (isI2V && inputRef && cfg.llmExtras !== false) {
-    const b64 = await fetchRefBase64(inputRef, cfg.comfyuiUrl);
-    if (b64) {
+  // Inject the input image(s) so the LLM can describe them and suggest motion
+  // that fits the content — inserted before the user description.
+  if (cfg.llmExtras !== false) {
+    const visionRefs = isR2V ? referenceRefs : (isI2V && inputRef ? [inputRef] : []);
+    const images = (await Promise.all(visionRefs.map(r => fetchRefBase64(r, cfg.comfyuiUrl)))).filter(Boolean);
+    if (images.length) {
       messages.splice(1, 0, {
         role: 'user',
-        content: 'Reference image for this video generation:',
-        images: [b64],
+        content: isR2V
+          ? `Reference images for this video generation, in order (<Picture 1>…<Picture ${images.length}>):`
+          : 'Reference image for this video generation:',
+        images,
       });
     }
   }
@@ -107,7 +126,7 @@ async function prepare(stepDef, ctx, _previousIterations, onToken) {
     console.warn('[video] prompt build failed, falling back to raw prompt:', e.message);
   }
 
-  return { prompt: builtPrompt, inputRef, isI2V };
+  return { prompt: builtPrompt, inputRef, isI2V, referenceRefs, isR2V };
 }
 
 function buildComfyWorkflow(stepDef, prepareResult, ctx) {
@@ -126,6 +145,8 @@ function buildComfyWorkflow(stepDef, prepareResult, ctx) {
     positivePrompt: prepareResult.prompt ?? ctx.userPrompt ?? '',
     inputRef:       prepareResult.inputRef,
     isI2V:          prepareResult.isI2V,
+    referenceRefs:  prepareResult.referenceRefs ?? [],
+    isR2V:          prepareResult.isR2V ?? false,
   };
 
   const { workflow } = buildWorkflow(modelConfig, params);

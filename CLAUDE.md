@@ -13,7 +13,7 @@ OpenAI, LM Studio, etc.) can be pointed at via `llmBaseUrl` in settings.
 ```bash
 npm start              # production (serve public/)
 npm run dev            # API --watch + Vite hot-reload UI
-npm test               # all 281 tests
+npm test               # all 299 tests
 npm run ui:build       # compile Vue → public/
 ```
 
@@ -234,7 +234,7 @@ Back-compat: existing configs with `ollamaUrl` are migrated automatically.
 `src/steps/index.js` — `get(type)` → step module.
 `src/steps/generate.js` — generate step: LLM prompt build, vision notes, adapter/img2img routing, review.
 `src/steps/upscale.js` — upscale step: model upscaler (ESRGAN) or hires fix (re-diffusion).
-`src/steps/video.js` — video step: T2V / I2V routing, uploads init image, delegates to wanvideo (or other video arch).
+`src/steps/video.js` — video step: T2V / I2V / R2V routing, uploads init image, delegates to wanvideo (or other video arch). R2V (reference-to-video) activates when the arch declares `referenceToVideo: true` in ARCH_META **and** the model config has `refUnetName` set **and** the session has uploaded references with no chained input image — all references are passed as `referenceRefs` and the prompt refiner cites them as `<Picture N>` with explicit roles. Only minimaxh3 supports it today.
 
 Step interface:
 ```js
@@ -389,6 +389,7 @@ Notes have `auto: bool` and `enabled: bool`:
 | `zimage.md` | Z-Image |
 | `krea2.md` | Krea 2 |
 | `wanvideo.md` | WanVideo |
+| `minimaxh3.md` | MiniMax H3 (Hailuo 3) |
 | `hunyuanvideo.md` | HunyuanVideo |
 | `ltxvideo.md` | LTX-Video |
 | `cogvideox.md` | CogVideoX |
@@ -432,6 +433,7 @@ src/
     zimage.js         — Z-Image (KSampler + ModelSamplingAuraFlow, split-load only); supports initImage, LoRA
     krea2.js          — Krea 2 (plain KSampler, no ModelSampling node, split-load only); LoraLoaderModelOnly LoRAs, CFG-gated negative (ConditioningZeroOut at cfg<=1), supports initImage
     wanvideo.js       — WanVideo I2V/T2V; native ComfyUI nodes only; MoE cascade for 14B
+    minimaxh3.js      — MiniMax H3 T2V/I2V/R2V; guidance-free (BasicGuider, no negative/CFG); native audio via VAEDecodeAudio when audioVaeName set; frames snap to 17k+5; Ref2VA checkpoint + MiniMaxH3ReferenceToVideo for reference images
     sd3.js / chroma.js / anima.js
   lib/
     parsers.js        — parsePromptResponse, parseReview
@@ -469,7 +471,7 @@ data/
 ## Testing
 
 ```bash
-npm test               # all 281 tests
+npm test               # all 299 tests
 npm run test:unit      # unit tests only
 npm run test:int       # integration tests only
 ```
@@ -520,6 +522,7 @@ Integration tests write to a tmpDir; set `DATA_DIR` / `SESSIONS_DIR` / `SKILLS_D
   - The `windsingai` tile model (`Illustrious-XL-Tile`) is **v-pred only** — do not use with eps Illustrious v0.1.
   - Preprocessor choice: `depth` preserves spatial layout and lighting; `softedge` preserves shape outlines loosely (more style freedom); `lineart_anime` traces anime contours precisely (strongest guidance, transfers art style too). For cross-model style transfer, `softedge` or `depth` are preferred — `lineart_anime` can over-constrain when the goal is aesthetic freedom.
   - Recommended starting strength: **0.85–0.9** for depth/softedge. Above 1.0 overwhelms prompt composition.
+- **MiniMax H3**: needs ComfyUI ≥ 0.30.0 (native `MiniMaxH3ImageToVideo` / `MiniMaxH3ReferenceToVideo` nodes). Guidance-free — the video step's guidance/negative params are ignored by this arch. R2V requires the optional `refUnetName` (Ref2VA checkpoint) on the model config; without it, uploaded references fall back to I2V first-frame conditioning. The R2V builder passes reference images as dotted dynamic inputs (`ref_images.ref_image_0` …) as serialized in the official Comfy-Org templates — if a ComfyUI update rejects them, re-export a template via "Save (API format)" to confirm the current serialization. Open weights are 768p-capped and region-restricted (see docs/arch/minimaxh3.md).
 - **Anima IP-Adapter disabled**: builder support exists (`AnimaIPAdapterApply`), but
   `capabilities.adapter` is `false` for anima because the adapter weights are not yet
   publicly released — flip the flag in `src/workflows/index.js` when they ship.

@@ -96,6 +96,15 @@ Address every region of the frame: plain areas (sky, water, solid backgrounds) s
 Match prompt length to clip duration — a 3-sentence prompt extended to 10 seconds causes looping or abrupt motion changes.
 Cinematography vocabulary: "wide establishing shot", "close-up", "tracking shot", "slow push in". Motion texture: "slow motion", "film grain", "lingering shot".`,
 
+  minimaxh3: `Write video prompts as structured natural-language direction — MiniMax H3 uses a Qwen3-VL-32B encoder that understands long, precise briefs. No tag lists, no weighting syntax.
+
+Structure: overall look/style first, then the action. For multi-beat clips use a timeline: "[0s-2s] ..., [2s-4s] ..." — H3 follows timestamped beats and hard cuts reliably.
+Always describe the soundtrack — H3 generates native stereo audio in the same pass. End with an "Audio:" line covering music, ambience, and effects, with timing when it matters ("a low drone joins at 3s").
+Dialogue is supported: quote exact lines and attribute them ("the man says: \\"...\\""); specify language and tone.
+On-screen text must be quoted exactly and kept short; add "all text clearly legible, do not misspell" when text matters.
+For reference-to-video, cite each reference as <Picture 1>…<Picture N> and give it an explicit role: identity ("the woman from <Picture 1>"), style, or object. Uncited references are used loosely.
+Camera direction works well in plain terms: "slow push in", "handheld tracking shot", "static wide". One move per beat.`,
+
   cogvideox: `Write video prompts as natural language narrative (50–100 words). No tag lists. English only — translate before prompting.
 
 Start directly with the subject — skip filler openers like "The video shows..." or "In this scene...".
