@@ -1,5 +1,7 @@
 'use strict';
 
+const { normalizeDevices } = require('../workflows/lib/devicePlacement');
+
 const fs   = require('fs');
 const path = require('path');
 
@@ -20,6 +22,7 @@ const GLOBAL_DEFAULTS = {
   reviewEnabled:          true,
   promptRefinement:       true,
   llmExtras:              true,
+  fileArchTags:           {},  // "<kind>:<filename>" → [arch, ...]; filters model-file pickers (System page)
   models:                 {},
   workflows:              {},
   loras:                  {},
@@ -31,6 +34,8 @@ const MODEL_LOADER_FIELDS = new Set([
   'clipName', 'vaeName', 'vae', 'useRefiner', 'refinerCheckpoint',
   'adapterModel', 'clipVisionModel', 'adapterWeight', 'controlNetModel', 'tileControlNetModel', 'structuralControlNetModel', 'structuralControlNetPreprocessor',
   'distilledLoraName', 'enableAudio',
+  'refUnetName', 'audioVaeName', 'refDistilledLoraName',
+  'devices',   // per-component placement (ComfyUI-MultiGPU) — see workflows/lib/devicePlacement.js
 ]);
 
 function load() {
@@ -95,9 +100,20 @@ function saveModel(id, modelData) {
   );
   const existingNotes = cfg.models[resolvedId]?.notes;
   const notes = modelData.notes !== undefined ? modelData.notes : existingNotes;
+  const devices = normalizeDevices(loaderData.devices);
+  if (devices) loaderData.devices = devices; else delete loaderData.devices;
   cfg.models[resolvedId] = { ...loaderData, id: resolvedId, ...(notes?.length ? { notes } : {}) };
   save(cfg);
   return cfg.models[resolvedId];
+}
+
+// Tag a model file with the architectures it belongs to; [] removes the tag.
+function setFileArchTags(key, archs) {
+  const cfg  = load();
+  const tags = { ...(cfg.fileArchTags ?? {}) };
+  if (archs?.length) tags[key] = [...new Set(archs)]; else delete tags[key];
+  save({ fileArchTags: tags });
+  return tags;
 }
 
 // Update only the notes field on a model (user and auto notes).
@@ -119,4 +135,4 @@ function slugify(str) {
   return str.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || Date.now().toString();
 }
 
-module.exports = { load, save, activeWorkflow, saveWorkflow, deleteWorkflow, saveModel, saveModelNotes, deleteModel };
+module.exports = { load, save, activeWorkflow, saveWorkflow, deleteWorkflow, saveModel, saveModelNotes, deleteModel, setFileArchTags };

@@ -214,6 +214,15 @@ ComfyUI generates the image, and the AI reviews it — repeating until accepted 
 iteration limit is reached. Disable any or all LLM features in Settings to simplify or
 remove the LLM from the loop entirely.
 
+After a session finishes, each step keeps its results and can be revisited:
+
+- **↻ Redo** (step header) re-runs just that step, appending a new variant/take —
+  earlier steps keep their outputs (e.g. keep the generated image, roll new video takes).
+- **▶ From here** re-runs a step *and everything after it*.
+- Click any variant and **Use as step output** (detail pane) to choose which one feeds
+  the next step on the following "From here" run; the effective variant shows an
+  `Output` badge. Navigate variants with the ‹ › arrows or arrow keys.
+
 ---
 
 ## Settings
@@ -301,11 +310,14 @@ Structural CN: extracts depth/edges from a previous step's output as structure-o
 ### Video
 
 Video architectures are used in **video steps** within a workflow. They generate a short
-clip from the final prompt text (T2V) or the previous step's output image (I2V). All
-video steps run LLM prompt refinement with a video-specific system prompt (motion, camera
-movement, scene dynamics) before submitting to ComfyUI. For I2V, the reference image is
-included in the LLM prompt to guide motion description. Duration is set in seconds in the
-workflow editor and converted to frames automatically.
+clip from the final prompt text (T2V), the previous step's output image (I2V), or
+uploaded reference images (R2V, where supported). All video steps run LLM prompt
+refinement with a video-specific system prompt (motion, camera movement, scene dynamics)
+before submitting to ComfyUI. For I2V/R2V, the input image(s) are included in the LLM
+prompt to guide motion description. Duration is set in seconds in the workflow editor
+and converted to frames automatically. When the step's width/height are left blank,
+I2V runs match the input image's aspect ratio (fitted to the model's pixel budget) —
+so a portrait generate step chains into a portrait video.
 
 | Key | Name | Loader | Audio |
 |---|---|---|---|
@@ -313,8 +325,11 @@ workflow editor and converted to frames automatically.
 | `hunyuanvideo` | HunyuanVideo | Split (UNet + CLIP/T5 + VAE) | — |
 | `ltxvideo` | LTX-Video / LTX-Video 2.3 AV | Checkpoint (`LTXAVTextEncoderLoader` for 2.3 AV: Gemma 3 12B + T5 from checkpoint) | ✓ ¹ |
 | `cogvideox` | CogVideoX | Checkpoint + VAE + CLIP | — |
+| `minimaxh3` | MiniMax H3 (Hailuo 3) | Split (UNet + Qwen3-VL-32B + video/audio VAEs) | ✓ ² |
 
 ¹ LTX-Video 2.3 AV (`ltx-2.3-22b-dev-fp8.safetensors`) embeds an audio VAE in the same checkpoint — no additional download needed. Enable the **Generate audio** toggle in model settings. Output is a single MP4 with the audio track embedded. Requires a Gemma 3 12B text encoder (`gemma_3_12B_it_fp4_mixed.safetensors`) in `models/text_encoders/`; earlier LTX-Video models use a standard T5-XXL CLIP loader instead.
+
+² MiniMax H3 generates native stereo audio in the same sampling pass — set the **Audio VAE file** in model settings (leave blank to skip audio). It is also the first architecture with reference-to-video: configure the optional **Ref2VA UNet file** and uploaded references route to `MiniMaxH3ReferenceToVideo` automatically, cited in the prompt as `<Picture 1>…<Picture N>`. Guidance-free (no negative prompt / CFG); optional 8-step (FL2VA) and 4-step (Ref2VA) turbo LoRAs. Requires ComfyUI ≥ 0.30.0 — see [docs/arch/minimaxh3.md](docs/arch/minimaxh3.md).
 
 ---
 
@@ -335,7 +350,12 @@ All endpoints under `/api`.
 
 **`POST /api/generate`** — start a new session using the active workflow.
 
-**`POST /api/generate/continue/:id`** — resume an existing session.
+**`POST /api/generate/continue/:id`** — resume an existing session (full re-run).
+
+**`POST /api/generate/rerun/:id`** — partial re-run: body `{ "fromStep": 1, "toStep": 1 }`.
+Runs only steps `fromStep..toStep` (default `toStep` = last), chaining from the kept
+output of the step before `fromStep` (honoring any variant selection). Streams the same
+SSE events, replaying full history first.
 
 ```json
 {
@@ -378,7 +398,7 @@ All three SSE endpoints emit:
 | `progress` | `{ step, iteration, pct }` — ComfyUI progress 0–100 |
 | `preview` | `{ step, iteration, url }` — base64 data URL preview frame |
 | `image` | `{ step, iteration, url }` |
-| `video` | `{ step, url }` — final video URL for video steps |
+| `video` | `{ step, iteration, url }` — final video URL for a video-step take |
 | `pose` | `{ step, iteration, url }` — extracted pose skeleton image |
 | `warning` | `{ step, iteration, message }` — non-fatal issue (e.g. unknown LoRA dropped) |
 | `review` | `{ step, iteration, verdict, diagnosis, loras?, poseUsed? }` |
@@ -403,7 +423,20 @@ All three SSE endpoints emit:
 
 **`POST /api/generate/sessions/:id/refuse-accepted`**
 
-Marks the most recent accepted iteration as refused. Safe on completed sessions.
+Marks an accepted iteration as refused. Pass `{ "stepIndex": 0, "iterationN": 2 }` to
+target a specific iteration; with an empty body the most recent accepted iteration is
+used. Safe on completed sessions.
+
+### Selecting a variant
+
+**`POST /api/generate/sessions/:id/select`**
+
+```json
+{ "stepIndex": 0, "iteration": 2 }
+```
+
+Picks which iteration (variant) of a step feeds downstream steps on the next partial
+re-run. Recomputes the step's output URLs; a fresh run of the step clears the selection.
 
 ### Kill a running generation
 

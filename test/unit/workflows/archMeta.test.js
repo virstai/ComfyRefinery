@@ -18,7 +18,7 @@ test('image archs support lora; video archs support nothing', () => {
   for (const arch of ['sd15', 'sdxl', 'flux', 'flux2', 'sd3', 'chroma', 'anima', 'zimage', 'krea2']) {
     assert.equal(archMeta[arch].capabilities.lora, true, `${arch} lora`);
   }
-  for (const arch of ['wanvideo', 'hunyuanvideo', 'ltxvideo', 'cogvideox']) {
+  for (const arch of ['wanvideo', 'hunyuanvideo', 'ltxvideo', 'cogvideox', 'minimaxh3']) {
     assert.deepEqual(archMeta[arch].capabilities, { lora: false, adapter: false, controlNet: false }, arch);
   }
 });

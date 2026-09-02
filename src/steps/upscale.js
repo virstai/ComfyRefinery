@@ -63,9 +63,11 @@ function label(stepDef, cfg) {
   return `${stepDef.upscaleModel ?? 'upscale'} ×${stepDef.factor ?? 2}`;
 }
 
-async function prepare(_stepDef, ctx) {
+async function prepare(stepDef, ctx) {
   const inputRef = await fetchAndUpload(ctx);
-  return { inputRef };
+  // Hires re-diffuses, so it has a seed worth recording — the pipeline fills
+  // params.seed in before building the graph. Model upscales are deterministic.
+  return stepDef.upscaleType === 'hires' ? { inputRef, params: {} } : { inputRef };
 }
 
 function buildComfyWorkflow(stepDef, prepareResult, ctx) {
@@ -151,6 +153,7 @@ function buildHiresWorkflow(stepDef, prepareResult, ctx) {
     ...modelConfig,
     positivePrompt: ctx.userPrompt ?? '',
     initImage:  inputRef,
+    seed:       prepareResult.params?.seed,
     denoise:    stepDef.denoise   ?? 0.35,
     steps:      stepDef.steps     ?? archDefaults.steps,
     cfgScale:   stepDef.cfgScale  ?? archDefaults.cfgScale,

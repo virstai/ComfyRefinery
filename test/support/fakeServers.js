@@ -24,7 +24,8 @@ function messageText(m) {
 
 // getVerdict is called per review request so callers can change it at any time.
 function makeFakeOllama(getVerdict, opts = {}) {
-  return http.createServer((req, res) => {
+  const requests = []; // every /v1/chat/completions body, for assertions
+  const server = http.createServer((req, res) => {
     if (req.method !== 'POST' || req.url !== '/v1/chat/completions') {
       // Return empty model list for /v1/models
       if (req.method === 'GET' && req.url === '/v1/models') {
@@ -40,6 +41,7 @@ function makeFakeOllama(getVerdict, opts = {}) {
     req.on('end', () => {
       const parsed  = JSON.parse(body);
       const { messages, stream = true } = parsed;
+      requests.push(parsed);
 
       const isReview = messages.some(m =>
         messageText(m).toLowerCase().includes('reviewing'),
@@ -100,6 +102,8 @@ function makeFakeOllama(getVerdict, opts = {}) {
       }
     });
   });
+  server.requests = requests;
+  return server;
 }
 
 function makeFakeComfyUI(opts = {}) {
@@ -177,7 +181,10 @@ function makeFakeComfyUI(opts = {}) {
   return httpServer;
 }
 
-function makeVideoFakeComfyUI() {
+// opts.withImages: history also lists an image output, so generate steps
+// (which collect `images`) and video steps (which collect video files) can
+// share one fake within a single session.
+function makeVideoFakeComfyUI(opts = {}) {
   const promptId = 'test-video-prompt-001';
   const uploads  = [];
   const prompts  = [];
@@ -206,7 +213,10 @@ function makeVideoFakeComfyUI() {
       const pid = req.url.split('/').pop();
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({
-        [pid]: { outputs: { '9': { gifs: [{ filename: 'fake_video.mp4', subfolder: '', type: 'output', format: 'video/h264-mp4' }] } } },
+        [pid]: { outputs: {
+          '9': { gifs: [{ filename: 'fake_video.mp4', subfolder: '', type: 'output', format: 'video/h264-mp4' }] },
+          ...(opts.withImages ? { '7': { images: [{ filename: 'fake_00001_.png', subfolder: '', type: 'output' }] } } : {}),
+        } },
       }));
       return;
     }

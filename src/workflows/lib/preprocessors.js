@@ -17,7 +17,8 @@ function buildPreprocessorNode(type, imageRef, resolution) {
     case 'softedge':
       return { class_type: 'HEDPreprocessor', inputs: { image: imageRef, safe: 'enable', resolution } };
     case 'lineart_realistic':
-      return { class_type: 'LineartRealisticPreprocessor', inputs: { image: imageRef, resolution } };
+      // comfyui_controlnet_aux's realistic lineart node is LineArtPreprocessor (coarse=disable)
+      return { class_type: 'LineArtPreprocessor', inputs: { image: imageRef, resolution, coarse: 'disable' } };
     case 'lineart_anime':
       return { class_type: 'AnimeLineArtPreprocessor', inputs: { image: imageRef, resolution } };
     case 'canny':

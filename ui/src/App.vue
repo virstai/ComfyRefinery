@@ -70,6 +70,8 @@
         @load-session="onLoadSession"
       />
 
+      <SystemPanel v-else-if="activeView === 'system'" />
+
       <SettingsPanel
         v-else-if="activeView === 'settings'"
         :config="configState.config"
@@ -81,9 +83,10 @@
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue';
+import { ref, watch, onMounted } from 'vue';
 import Sidebar         from './components/Sidebar.vue';
 import GenerateSection from './components/GenerateSection.vue';
+import SystemPanel     from './components/SystemPanel.vue';
 import RunSection      from './components/RunSection.vue';
 import WorkflowsPanel  from './components/WorkflowsPanel.vue';
 import ModelsPanel     from './components/ModelsPanel.vue';
@@ -95,7 +98,21 @@ import QueuePanel      from './components/QueuePanel.vue';
 import { configState, loadConfig, loadAssets, setActiveWorkflow as storeSetActiveWorkflow } from './stores/config.js';
 import { genState, startGeneration, continueSession, loadSession, clearSession, killGeneration, connectToBroadcast, returnToLive } from './stores/generate.js';
 
-const activeView = ref('generate');
+// ── Routing: the URL hash mirrors the current view (and loaded session) so a
+// refresh lands back where you were — #/history, #/generate/<sessionId>, …
+const VIEWS = ['generate', 'queue', 'workflows', 'models', 'loras', 'history', 'system', 'settings'];
+function parseHash() {
+  const m = location.hash.match(/^#\/([a-z]+)(?:\/([^/?#]+))?/);
+  return { view: VIEWS.includes(m?.[1]) ? m[1] : 'generate', sessionId: m?.[2] ?? null };
+}
+const initialRoute = parseHash();
+const activeView   = ref(initialRoute.view);
+
+watch([activeView, () => genState.sessionId], ([view, sessionId]) => {
+  const target = view === 'generate' && sessionId ? `#/generate/${sessionId}` : `#/${view}`;
+  if (location.hash !== target) history.replaceState(null, '', target);
+});  // not immediate: the URL is already right on load, and a session id must survive until restore runs
+window.addEventListener('hashchange', () => { activeView.value = parseHash().view; });
 
 onMounted(async () => {
   connectToBroadcast();
@@ -104,6 +121,12 @@ onMounted(async () => {
     await loadAssets();
   } catch (err) {
     console.error('Init error:', err);
+  }
+  // Restore the session that was open before the refresh (unless a live run
+  // has already taken over the view).
+  if (initialRoute.sessionId && !genState.sessionId && !genState.liveRunning) {
+    try { await loadSession(initialRoute.sessionId); }
+    catch (err) { console.warn('Could not restore session from URL:', err.message); }
   }
 });
 

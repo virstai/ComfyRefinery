@@ -13,7 +13,7 @@ OpenAI, LM Studio, etc.) can be pointed at via `llmBaseUrl` in settings.
 ```bash
 npm start              # production (serve public/)
 npm run dev            # API --watch + Vite hot-reload UI
-npm test               # all 272 tests
+npm test               # all 346 tests
 npm run ui:build       # compile Vue → public/
 ```
 
@@ -59,8 +59,22 @@ All planned phases complete. Ready to merge to main.
   // anima with pose controlnet: controlNetModel (LLLite weights from models/controlnet/)
   // flux with adapter: adapterModel (redux model), clipVisionModel
   // flux2: no adapter fields (native ReferenceLatent, no external model needed)
+  // optional per-component placement (needs ComfyUI-MultiGPU in ComfyUI): 'cpu' | 'cuda:N'; absent = auto
+  "devices": { "clip": "cuda:1", "vae": "cuda:1", "audioVae": "cuda:1" }
 }
 ```
+
+**Device placement (multi-GPU).** `src/workflows/lib/devicePlacement.js` runs as a post-pass in
+`buildWorkflow`: for each role in `model.devices` (`unet`, `clip`, `vae`, `audioVae`, `clipVision`,
+`controlNet`) it swaps the native loader (`UNETLoader`, `CheckpointLoaderSimple`, `CLIPLoader`/`Dual`/`Triple`/`Quadruple`,
+`VAELoader`, `CLIPVisionLoader`, `ControlNetLoader`) for its `…MultiGPU` twin with a `device` input, so
+arch builders never know about it. The audio VAE is told apart from the video VAE by `audioVaeName`.
+`comfyui.getDevices()` reads `/system_stats` (only GPUs visible to ComfyUI's process appear — set
+`HIP_VISIBLE_DEVICES` / `CUDA_VISIBLE_DEVICES` or `--cuda-device` accordingly) and `getAssets()` returns
+`devices` + `multiGpu` (probe: `UNETLoaderMultiGPU`). ModelEditor shows a device dropdown beside each loader
+field only when the pack is present; `config.saveModel` drops `auto` entries. Queuing a graph with MultiGPU
+nodes when the pack is missing fails with a clear error. Intended use: keep the UNet on the compute GPU and
+push text encoder / VAEs to a second card or CPU so the UNet and its activations get the whole card.
 
 **Workflow** (`cfg.workflows[id]`) — the driver. Owns skill + notes, gen params,
 reference strategy, ordered steps, per-step review. **Active-selected entity.**
@@ -159,17 +173,46 @@ Skill + notes live in `data/skills/<workflowId>.json`, keyed by workflow ID.
   "steps": [
     { "type": "generate", "label": "SDXL Base", "modelId": "sdxl-base",
       "iterations": [ { "prompt": "...", "imageUrl": "...", "verdict": "ACCEPT", "diagnosis": "...",
+                        "seed": 1234567890,  // sampling seed, recorded for reproducibility
                         "loras": [{ "name": "anima_turbo.safetensors", "weight": 1.0, "source": "step" }],  // source: "step" | "llm"
                         "poseUsed": true, "poseImageUrl": "/api/image?...",
                         "warnings": ["DWPreprocessor not found — skipping pose"] } ],  // optional, only when non-empty
+      "selectedIteration": null,  // 1-based user pick of which variant feeds the next step; null = latest
       "outputImageUrl": "/api/image?..." },
     { "type": "upscale", "label": "4x-UltraSharp.pth ×4",
       "iterations": [ { "imageUrl": "...", "verdict": "ACCEPT", "diagnosis": "..." } ],
-      "outputImageUrl": "/api/image?..." }
+      "outputImageUrl": "/api/image?..." },
+    // session video steps may carry `steering`: director's notes for the *next take* (framing, camera, pacing,
+    // sound), set from the run view (PUT /sessions/:id/steps/:index/steering) — a reaction to what earlier
+    // steps produced, so it lives on the session, never the workflow. video.js appends it to the prompt request.
+    { "type": "video", "label": "LTX 2.3 ×97f @ 24fps", "modelId": "ltx-2-3", "steering": "slow push-in; sound: rain only",
+      // each run of a video step appends a "take" (variant) — no review loop
+      "iterations": [ { "prompt": "...", "videoUrl": "/api/video?...", "verdict": "ACCEPT", "diagnosis": "video step (no review)" } ],
+      "outputVideoUrl": "/api/video?..." }
   ],
+  // Ad-hoc steps appended in the UI (e.g. "Make video" on any image variant). They run after the
+  // workflow's steps; `inputFrom` names the step whose output they build on.
+  "extraSteps": [ { "type": "video", "modelId": "ltx-2-3", "params": {}, "inputFrom": 0 } ],
   "status": "complete" | "stopped" | "error", "createdAt": "..."
 }
 ```
+
+### Step replay & variants
+Iterations double as **variants**: `POST /api/generate/rerun/:id` `{ fromStep, toStep? }` re-runs
+only steps `fromStep..toStep` (SSE stream like `/continue`, full history replayed first). Earlier
+steps keep their outputs — the run chains from `stepOutput(steps[fromStep-1])`, which honors
+`selectedIteration`. `fromStep === toStep` redoes one step, appending a new iteration/take.
+`POST /api/generate/sessions/:id/select` `{ stepIndex, iteration }` picks which variant feeds
+downstream steps (recomputes `outputImageUrl`/`outputVideoUrl`); a fresh run of a step clears its
+selection. `PUT /api/generate/sessions/:id/steps/:index/steering` `{ steering }` sets a video step's
+director's notes for its next take (RunSection textarea; allowed while running). `POST /api/generate/sessions/:id/steps` `{ type: 'video', modelId, params?, inputFrom, iteration?, steering? }`
+appends an ad-hoc video step (`session.extraSteps`) that animates `inputFrom`'s image and returns its
+`stepIndex` — the UI then calls `/rerun { fromStep: stepIndex }`. A session's pipeline on re-run is
+`sessionPipeline()`: the current workflow steps followed by `extraSteps`, so workflow edits still apply
+while the extra steps persist. Only video steps can be added this way for now. `/continue` is now `rerun` with `fromStep: 0`. A kill only discards iterations added by
+the current run. UI: per-step **↻ Redo** / **▶ From here** buttons (RunSection), `Output` badge on
+the effective variant (IterationCard), prev/next variant navigation + **Use as step output** +
+**🎬 Make video** (video-model picker, any accepted image variant) in DetailPane.
 
 ### SSE events
 All events carry `step` (0-indexed). Full event list:
@@ -177,7 +220,7 @@ All events carry `step` (0-indexed). Full event list:
 | Event | Payload | Notes |
 |---|---|---|
 | `session` | `{ id, prompt, resume? }` | First event; client sets sessionId |
-| `step` | `{ index, type, label, total }` | Start of each pipeline step |
+| `step` | `{ index, type, label, total, steering? }` | Start of each pipeline step; `steering` = the session step's current notes (video steps, also on replay) |
 | `phase` | `{ step, phase, iteration }` | `prompt_building`, `posing`, `generating`, `reviewing` |
 | `token` | `{ step, iteration, phase, token }` | LLM streaming token |
 | `prompt` | `{ step, iteration, prompt }` | Final built prompt |
@@ -191,12 +234,12 @@ All events carry `step` (0-indexed). Full event list:
 | `acceptance_refused` | `{ step, iteration }` | User refused during grace period |
 | `pose` | `{ step, iteration, url }` | Extracted pose skeleton image URL (DWPreprocessor output) |
 | `warning` | `{ step, iteration, message }` | Non-fatal warning (e.g. pose pre-pass failed) |
-| `video` | `{ step, url }` | Final video URL for video steps |
-| `step_complete` | `{ step, imageUrl?, videoUrl?, accepted }` | Step finished; pipeline stops if `!accepted` |
+| `video` | `{ step, iteration, url }` | Final video URL for a video-step take |
+| `step_complete` | `{ step, imageUrl?, videoUrl?, accepted, selectedIteration }` | Step finished; pipeline stops if `!accepted`. `selectedIteration` is `null` after a fresh run (the client mirrors it) |
 | `done` | `{ accepted, imageUrl?, videoUrl?, sessionId, prompt, iterations }` | Pipeline complete |
-| `stopped` | `{ step }` | User clicked Stop; in-progress step cleared |
+| `stopped` | `{ step, keptIterations, selectedIteration }` | User clicked Stop; the client truncates the step to `keptIterations` (everything the stopped run added is discarded server-side, verdicted or not) |
 | `error` | `{ message }` | Unexpected pipeline error |
-| `history` | `{ step, ...iteration }` | Replayed on `/continue` |
+| `history` | `{ step, ...iteration, selected? }` | Replayed on `/continue` and `/rerun`; carries `videoUrl`/`seed` when present, `selected: true` on the chosen variant |
 
 `pendingReviews` / `pendingAcceptances` keyed by `"${sessionId}:${stepIndex}"`.
 
@@ -216,7 +259,7 @@ Back-compat: existing configs with `ollamaUrl` are migrated automatically.
 `src/steps/index.js` — `get(type)` → step module.
 `src/steps/generate.js` — generate step: LLM prompt build, vision notes, adapter/img2img routing, review.
 `src/steps/upscale.js` — upscale step: model upscaler (ESRGAN) or hires fix (re-diffusion).
-`src/steps/video.js` — video step: T2V / I2V routing, uploads init image, delegates to wanvideo (or other video arch).
+`src/steps/video.js` — video step: T2V / I2V / R2V routing, uploads init image, delegates to wanvideo (or other video arch). **I2V aspect-ratio follow**: on archs with `ARCH_META[arch].followInputAspect: true` (all video archs except cogvideox, whose weights are fixed 720×480), when the step doesn't pin both width and height the video dimensions are derived from the input image's aspect ratio — fitted to the arch's default pixel budget, rounded to `ARCH_META[arch].dimMultiple` (16 wan/hunyuan, 32 ltx/minimaxh3), and with neither edge exceeding the default long edge (`fitToBudget`'s `maxDim`) via `src/lib/imageSize.js` (dependency-free PNG/JPEG/WebP dimension reader + `fitToBudget`). A single explicitly set dimension is kept and the other follows the image ratio (capped the same way). R2V (reference-to-video) activates when the arch declares `referenceToVideo: true` in ARCH_META **and** the model config has `refUnetName` set **and** the session has uploaded references with no chained input image — all references are passed as `referenceRefs` (capped at `ARCH_META[arch].maxReferences`, extras dropped with a `warning` event recorded on the take) and the prompt refiner cites them as `<Picture N>` with explicit roles. Only minimaxh3 supports it today. Video steps get `skillId` like generate steps; since they never record outcomes, `skills.getSummary(id, architecture)` falls back to the arch's default skill when no skill file exists.
 
 Step interface:
 ```js
@@ -276,7 +319,11 @@ Always split-load: `UNETLoader` + `CLIPLoader(type:"flux2")` + `VAELoader`.
 
 ### ComfyUI asset discovery
 `comfyui.fetchInputList(nodeType, inputName)` — handles both old and new `object_info` formats.
-`comfyui.getAssets()` → `{ checkpoints, vaes, clips, unets, upscaleModels, ipAdapterModels, clipVisionModels, reduxModels, errors }`.
+`comfyui.getAssets()` → `{ checkpoints, vaes, clips, unets, upscaleModels, ipAdapterModels, clipVisionModels, reduxModels, loras, controlNets, devices, multiGpu, errors }`.
+`comfyui.getNodeIndex()` → `{ nodeClass: python_module }` from the full `/object_info` (core = `nodes` / `comfy_extras.*`, custom packs = `custom_nodes.<pack>`); `getSystemStats()` → raw `/system_stats`.
+
+### System page
+`GET /api/system/info` (`src/routes/system.js`) feeds the **System** view: ComfyUI version / torch / RAM / launch args / package versions, GPUs (+ MultiGPU availability), LLM reachability, and `src/services/nodeRequirements.js`'s report — `PACKS` (custom node packs an optional feature or wrapper-based arch needs, checked by node presence or sampler name) and per-arch availability, which is derived by building each arch's base graph with a dummy config and checking every emitted node class against ComfyUI. `installedPacks` lists every `custom_nodes.*` module ComfyUI loaded (pack versions are not exposed by ComfyUI's API). The page also tags model files with architectures: `cfg.fileArchTags = { "<kind>:<filename>": [arch, …] }` via `PUT /api/system/file-tags { key, archs }` (`config.setFileArchTags`); ModelEditor then lists only the tagged files of a kind for that architecture (plus the current value, with a "show all" escape) once any file of that kind is tagged.
 
 ### Kill / stop mechanism
 `runPipeline` creates an `AbortController` and puts `signal` on `ctx`. The kill function in `activeKills`:
@@ -285,9 +332,9 @@ Always split-load: `UNETLoader` + `CLIPLoader(type:"flux2")` + `VAELoader`.
 3. Calls `comfyui.interrupt()` — cancels current ComfyUI generation
 4. Resolves any pending reviews/acceptances
 
-`isKilled()` is checked at: iteration start, after `prepare()` returns, after `comfyui.generate()` returns, and after the review `chatStream` returns. On kill, the pipeline emits `stopped { step }` (not `error`), clears the in-progress step's iterations from the session, and sets `session.status = 'stopped'`.
+`isKilled()` is checked at: iteration start, after `prepare()` returns, after `comfyui.generate()` returns, and after the review `chatStream` returns. `ctx.signal` is also passed to `comfyui.generate` / `generateVideo` (and the pose pre-pass), so a kill rejects the ComfyUI wait with `Stopped` immediately instead of waiting for an `execution_interrupted` frame that an idle or restarted ComfyUI never sends. On kill, the pipeline emits `stopped { step }` (not `error`), clears the in-progress step's iterations from the session, and sets `session.status = 'stopped'`.
 
-`comfyui.waitForCompletion` handles `execution_interrupted` — the `prompt_id` check is lenient (accepts messages without `prompt_id` for older ComfyUI compatibility).
+`comfyui.waitForCompletion` handles `execution_interrupted` — the `prompt_id` check is lenient (accepts messages without `prompt_id` for older ComfyUI compatibility). After a WebSocket drop it reconnects with backoff; once back online it checks `/queue` and `/history` for the prompt and fails with "ComfyUI lost the job" if neither knows it (a ComfyUI crash/restart mid-job used to hang the pipeline forever). On boot, `server.js` marks any session still `running` as `error` — its pipeline died with the previous process.
 
 ### Skill / notes system
 `data/skills/<workflowId>.json` — per-workflow knowledge base.
@@ -304,17 +351,22 @@ Notes have `auto: bool` and `enabled: bool`:
 - New suggestions always start `enabled: false`.
 
 ### Orchestration
-`runPipeline(session, pipelineDef, cfg, res)` — iterates steps, threads `ctx.inputImage`.
+`runPipeline(session, pipelineDef, cfg, res, imageContext, opts)` — iterates steps, threads `ctx.inputImage`.
+- `opts = { startStep, endStep, initialInputImage }` enables partial re-runs (`/rerun` route).
 - Creates `AbortController`; kill fn aborts it + interrupts ComfyUI.
 - Emits `step_complete` after each step.
 - Stops early (skips remaining steps) if a step finishes without acceptance.
-- On kill: emits `stopped`; on unexpected error: emits `error`.
+- On kill: emits `stopped`; discards only iterations added by the current run. A manual variant selection among the surviving iterations is kept.
+- `/rerun` refuses a session whose workflow changed shape (step count **or** per-index step type) and refreshes step labels otherwise.
+- On unexpected error: emits `error`.
 
-`runStep(stepDef, stepIndex, session, ctx, cfg, res, isKilled)` — per-step loop:
+`_runIterativeLoop(stepType, stepDef, stepIndex, session, ctx, cfg, res, isKilled)` — per-step loop
+(wrapped by `runGenerateStep` / `runUpscaleStep`; video steps use `runVideoStep`, no review loop):
 - Per-step review settings (`stepDef.review`) override global `cfg.*`.
 - For generate steps with a previous step output: pre-uploads `ctx.inputImage` as `chainedInputRef`.
 - Forwards ComfyUI binary WebSocket preview frames as `preview` SSE events.
 - `isKilled()` checked at multiple points; all LLM calls receive `ctx.signal`.
+- Picks the sampling seed before building the graph and records it on the iteration (generate steps and hires upscales via `prepResult.params`; `runVideoStep` does the same for video takes; model upscales are deterministic and record none).
 
 ### Config shape
 ```jsonc
@@ -367,6 +419,7 @@ Notes have `auto: bool` and `enabled: bool`:
 | `zimage.md` | Z-Image |
 | `krea2.md` | Krea 2 |
 | `wanvideo.md` | WanVideo |
+| `minimaxh3.md` | MiniMax H3 (Hailuo 3) |
 | `hunyuanvideo.md` | HunyuanVideo |
 | `ltxvideo.md` | LTX-Video |
 | `cogvideox.md` | CogVideoX |
@@ -378,16 +431,18 @@ Notes have `auto: bool` and `enabled: bool`:
 ```
 src/
   routes/
-    generate.js       — runPipeline + runStep, SSE, session CRUD, kill route
+    generate.js       — runPipeline + _runIterativeLoop, SSE, session CRUD, rerun/select/kill routes
     references.js     — POST /api/references/upload (base64 JSON → ComfyUI)
     sessions.js       — config/models/workflows/skills/assets API
     sdapi.js          — A1111 compat shim (calls /api/generate/run internally)
+    system.js         — GET /api/system/info (versions, devices, packs, arch availability, files) + file → arch tags
   services/
     config.js         — load/save, model + workflow CRUD, activeWorkflow()
     db.js             — session persistence (JSON files in data/sessions/)
     skills.js         — skill/notes read/write (data/skills/<workflowId>.json)
     skillRefresher.js — LLM-driven skill synthesis; locked notes preserved
     llm.js            — provider router
+    nodeRequirements.js — PACKS registry + inspect(): per-arch node availability (built from each arch's base graph) and custom-pack status for the System page
     agent.js          — generic tool-calling agent loop (guidance injection, execute handlers, bounded rounds)
     comfyui.js        — ComfyUI HTTP + WebSocket client; preview frame handling
     loraRegistry.js   — cfg.loras CRUD; scan via /api/sessions/loras/scan (reads ComfyUI LoRA list + auto-detects arch via loraMeta.js)
@@ -398,11 +453,12 @@ src/
     index.js          — step-type registry (generate, upscale, video)
     generate.js       — generate step: vision notes, adapter/img2img routing, chain input, review
     upscale.js        — upscale step: model (ESRGAN) + hires (re-diffusion) types
-    video.js          — video step: T2V / I2V, uploads init image, routes to video arch builder
+    video.js          — video step: T2V / I2V / R2V, uploads init image, routes to video arch builder
   workflows/
     index.js          — buildWorkflow(modelConfig, params) + getDefaults(arch) + archMeta (incl. per-arch capabilities)
     lib/loraChain.js    — shared LoraLoader chain helper used by all image arch builders; applyModelOnlyLoraChain (LoraLoaderModelOnly) for DiT-only-trained LoRAs (krea2)
     lib/preprocessors.js — buildPreprocessorNode(type, imageRef, resolution) → ComfyUI node; maps depth/softedge/lineart_realistic/lineart_anime/canny to comfyui_controlnet_aux node classes
+    lib/devicePlacement.js — applyDevicePlacement(workflow, modelConfig): swaps loaders for ComfyUI-MultiGPU twins per model.devices; normalizeDevices, usesMultiGpuNodes
     sd15.js           — SD1.5; supports initImage, ipAdapterImages, tileControlNet, structuralControlNet
     sdxl.js           — SDXL + refiner; supports initImage, ipAdapterImages, tileControlNet, structuralControlNet
     flux.js           — Flux 1 (SamplerCustomAdvanced); supports initImage, reduxImages
@@ -410,31 +466,35 @@ src/
     zimage.js         — Z-Image (KSampler + ModelSamplingAuraFlow, split-load only); supports initImage, LoRA
     krea2.js          — Krea 2 (plain KSampler, no ModelSampling node, split-load only); LoraLoaderModelOnly LoRAs, CFG-gated negative (ConditioningZeroOut at cfg<=1), supports initImage
     wanvideo.js       — WanVideo I2V/T2V; native ComfyUI nodes only; MoE cascade for 14B
+    minimaxh3.js      — MiniMax H3 T2V/I2V/R2V; guidance-free (BasicGuider, no negative/CFG); native audio via VAEDecodeAudio when audioVaeName set (plus a silent `_noaudio` SaveVideo fallback written before the audio path — insurance against a mux failure; `comfyui.generateVideo` returns any video written before an execution error with a `warning`, and `video.pickPrimaryVideo` prefers the muxed file. The NaN-audio failures that motivated it were a ComfyUI 0.31 / ROCm kernel bug fixed by updating ComfyUI to ≥ 0.34, not a duration limit — see docs/arch/minimaxh3.md); frames snap to 17k+5; Ref2VA checkpoint + MiniMaxH3ReferenceToVideo for reference images
     sd3.js / chroma.js / anima.js
   lib/
     parsers.js        — parsePromptResponse, parseReview
     loraMeta.js       — auto-detect LoRA architecture from ComfyUI /view_metadata response
     png.js            — dependency-free PNG pixel inspector (blank-skeleton detection)
+    imageSize.js      — dependency-free PNG/JPEG/WebP dimension reader + fitToBudget (video I2V aspect-ratio follow)
     loraTools.js      — lora catalog helpers + agent tool factories (add_lora, request_pose) with per-tool guidance
 ui/src/
   stores/
     config.js         — configState, loadConfig, saveConfig, model/workflow CRUD
-    generate.js       — genState, handleEvent (incl. stopped), SSE stream helpers, killGeneration
+    generate.js       — genState, handleEvent (incl. stopped), SSE stream helpers, killGeneration, rerunFrom, selectIteration, addVideoStep
+  App.vue               — view switch + hash routing (#/<view>, #/generate/<sessionId>) so a refresh restores the page and loaded session
   components/
-    AppHeader.vue       — WorkflowSelect + panel buttons
+    Sidebar.vue         — nav, live status block, Stop button
     WorkflowSelect.vue  — custom dropdown for active workflow
-    GenerateSection.vue — prompt input + reference drop zone; restores refs on session load
+    GenerateSection.vue — prompt input + reference drop zone; restores refs on session load; Continue button
     RefGrid.vue         — presentational reference image grid + drop zone shell
     RefImage.vue        — single reference image tile (thumbnail + remove button)
-    RunSection.vue      — step group renderer; type-badged headers; Stop button
-    IterationCard.vue   — single iteration thumbnail; live preview via data URL
-    IterationModal.vue  — full detail + human review + refuse
+    RunSection.vue      — step group renderer; type-badged headers; per-step Redo / From-here buttons
+    IterationCard.vue   — iteration/take thumbnail (image or video); Output badge on the effective variant
+    DetailPane.vue      — iteration detail + human review + refuse + variant nav/selection
     ModelsPanel.vue     — model building-blocks list
     ModelEditor.vue     — loader fields, data-driven from archMeta.fields
     WorkflowsPanel.vue  — workflow list + active selector
     WorkflowEditor.vue  — step builder: generate (with adapter picker, LoRA list, ControlNet) + upscale (model/hires)
     SettingsPanel.vue   — global settings (llmBaseUrl, llmApiKey, comfyuiUrl, llmModel)
     HistoryPanel.vue    — past sessions list
+    SystemPanel.vue     — System page: ComfyUI/LLM/GPU status, arch availability, node packs, model-file arch tags
     LorasPanel.vue      — LoRA registry: scan, list, edit label/description/defaultWeight/triggerWords
 data/
   config.json         — models, workflows, activeWorkflow, global settings
@@ -447,7 +507,7 @@ data/
 ## Testing
 
 ```bash
-npm test               # all 272 tests
+npm test               # all 346 tests
 npm run test:unit      # unit tests only
 npm run test:int       # integration tests only
 ```
@@ -498,6 +558,7 @@ Integration tests write to a tmpDir; set `DATA_DIR` / `SESSIONS_DIR` / `SKILLS_D
   - The `windsingai` tile model (`Illustrious-XL-Tile`) is **v-pred only** — do not use with eps Illustrious v0.1.
   - Preprocessor choice: `depth` preserves spatial layout and lighting; `softedge` preserves shape outlines loosely (more style freedom); `lineart_anime` traces anime contours precisely (strongest guidance, transfers art style too). For cross-model style transfer, `softedge` or `depth` are preferred — `lineart_anime` can over-constrain when the goal is aesthetic freedom.
   - Recommended starting strength: **0.85–0.9** for depth/softedge. Above 1.0 overwhelms prompt composition.
+- **MiniMax H3**: needs ComfyUI ≥ 0.30.0 (native `MiniMaxH3ImageToVideo` / `MiniMaxH3ReferenceToVideo` nodes); on ROCm use ≥ 0.34.0 — 0.31 produced NaN audio / GPU faults on 243-frame takes. Long takes are attention-bound: on ROCm, launching ComfyUI with `--use-ck-attention` roughly halves step time versus PyTorch SDPA (see docs/arch/minimaxh3.md, performance notes). On ROCm the nvfp4 text encoder yields all-NaN conditioning (prompt ignored) — use the int8_convrot encoder (docs/arch/minimaxh3.md). Guidance-free — the video step's guidance/negative params are ignored by this arch. R2V requires the optional `refUnetName` (Ref2VA checkpoint) on the model config; without it, uploaded references fall back to I2V first-frame conditioning. The R2V builder passes reference images as dotted dynamic inputs (`ref_images.ref_image_0` …) as serialized in the official Comfy-Org templates — if a ComfyUI update rejects them, re-export a template via "Save (API format)" to confirm the current serialization. Open weights are 768p-capped and region-restricted (see docs/arch/minimaxh3.md).
 - **Anima IP-Adapter disabled**: builder support exists (`AnimaIPAdapterApply`), but
   `capabilities.adapter` is `false` for anima because the adapter weights are not yet
   publicly released — flip the flag in `src/workflows/index.js` when they ship.

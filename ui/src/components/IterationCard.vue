@@ -8,11 +8,13 @@
       'iter-thumb--refused':          iteration.verdict === 'REFUSED',
       'iter-thumb--pending':          iteration.humanPending || iteration.acceptedPending,
       'iter-thumb--selected':         selected,
+      'iter-thumb--output':           isOutput,
     }"
     @click="$emit('open')"
   >
     <div class="thumb-img">
-      <img v-if="iteration.imageUrl" :src="iteration.imageUrl" :alt="`Iteration ${iteration.n}`">
+      <video v-if="iteration.videoUrl" :src="iteration.videoUrl" muted loop style="pointer-events:none"></video>
+      <img v-else-if="iteration.imageUrl" :src="iteration.imageUrl" :alt="`Iteration ${iteration.n}`">
       <div v-else class="thumb-placeholder">
         <span>{{ iteration.status || 'Waiting…' }}</span>
       </div>
@@ -22,6 +24,7 @@
       <div v-if="iteration.humanPending"    class="thumb-badge">Review</div>
       <div v-if="iteration.acceptedPending" class="thumb-badge">Pending</div>
       <div v-if="iteration.poseImageUrl"    class="thumb-badge thumb-badge--pose" title="Pose guide used">Pose</div>
+      <div v-if="isOutput"                  class="thumb-badge thumb-badge--output" title="This variant feeds the next step">Output</div>
     </div>
     <div class="thumb-footer">
       <span class="thumb-num">#{{ iteration.n }}</span>
@@ -36,6 +39,7 @@ import { computed } from 'vue';
 const props = defineProps({
   iteration: { type: Object, required: true },
   selected:  { type: Boolean, default: false },
+  isOutput:  { type: Boolean, default: false },
 });
 defineEmits(['open']);
 

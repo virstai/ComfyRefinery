@@ -85,6 +85,7 @@ const navItems = [
   { view: 'models',    icon: '⬡', label: 'Models'    },
   { view: 'loras',     icon: '✦', label: 'LoRAs'     },
   { view: 'history',   icon: '☰', label: 'History'   },
+  { view: 'system',    icon: '⌬', label: 'System'    },
   { view: 'settings',  icon: '⚙', label: 'Settings'  },
 ];
 

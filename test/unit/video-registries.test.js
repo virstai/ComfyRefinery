@@ -3,9 +3,9 @@
 const { test } = require('node:test');
 const assert   = require('node:assert/strict');
 
-test('all 4 video archs are in archMeta with videoArch: true', () => {
+test('all 5 video archs are in archMeta with videoArch: true', () => {
   const { archMeta } = require('../../src/workflows');
-  for (const arch of ['wanvideo', 'hunyuanvideo', 'ltxvideo', 'cogvideox']) {
+  for (const arch of ['wanvideo', 'hunyuanvideo', 'ltxvideo', 'cogvideox', 'minimaxh3']) {
     assert.ok(archMeta[arch], `${arch} present in archMeta`);
     assert.equal(archMeta[arch].videoArch, true, `${arch}.videoArch is true`);
     assert.ok(archMeta[arch].label,        `${arch} has a label`);
@@ -15,7 +15,7 @@ test('all 4 video archs are in archMeta with videoArch: true', () => {
 
 test('video archs each have defaults', () => {
   const { getDefaults } = require('../../src/workflows');
-  for (const arch of ['wanvideo', 'hunyuanvideo', 'ltxvideo', 'cogvideox']) {
+  for (const arch of ['wanvideo', 'hunyuanvideo', 'ltxvideo', 'cogvideox', 'minimaxh3']) {
     const d = getDefaults(arch);
     assert.ok(d.frames, `${arch} defaults has frames`);
     assert.ok(d.fps,    `${arch} defaults has fps`);
@@ -37,4 +37,14 @@ test('video step type is registered', () => {
   assert.equal(typeof step.label,              'function', 'has label');
   assert.equal(typeof step.prepare,            'function', 'has prepare');
   assert.equal(typeof step.buildComfyWorkflow, 'function', 'has buildComfyWorkflow');
+});
+
+test('video archs declare whether I2V may follow the input aspect ratio', () => {
+  const { archMeta } = require('../../src/workflows');
+  for (const [k, m] of Object.entries(archMeta)) {
+    if (!m.videoArch) continue;
+    assert.equal(typeof m.followInputAspect, 'boolean', `${k} declares followInputAspect`);
+  }
+  assert.equal(archMeta.cogvideox.followInputAspect, false, 'CogVideoX weights are fixed-resolution');
+  assert.equal(archMeta.minimaxh3.maxReferences, 9);
 });

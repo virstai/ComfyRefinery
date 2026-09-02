@@ -106,7 +106,21 @@ label textarea { resize: vertical; }
 .row > * { flex: 1; min-width: 100px; }
 .row label { margin-bottom: 12px; }
 
-.hint { font-size: 11px; color: var(--muted); }
+.hint { font-size: 11px; color: var(--muted); line-height: 1.45; }
+
+/* model editor: file picker + device picker side by side */
+.loader-row { display: flex; gap: 6px; align-items: stretch; }
+.loader-row > select:first-child { flex: 1 1 auto; min-width: 0; }
+.loader-row > .device-select { flex: 0 1 auto; max-width: 44%; }
+
+/* A hint paragraph directly after a field describes THAT field — tuck it up
+   under its own input (labels carry 12px bottom margin) and leave clear air
+   before the next field's title so it can't read as the next field's subtext. */
+label + .hint, .checkbox-label + .hint {
+  margin-top: -9px;
+  margin-bottom: 16px;
+  padding-left: 1px;
+}
 
 .panel-actions { display: flex; gap: 8px; margin-top: 6px; flex-wrap: wrap; }
 
@@ -226,7 +240,8 @@ button:disabled  { opacity: .45; cursor: not-allowed; }
 .thumb-img {
   aspect-ratio: 1; background: var(--bg); position: relative; overflow: hidden;
 }
-.thumb-img img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.thumb-img img,
+.thumb-img video { width: 100%; height: 100%; object-fit: cover; display: block; }
 
 .thumb-placeholder {
   width: 100%; height: 100%; display: flex; align-items: center; justify-content: center;
@@ -246,6 +261,15 @@ button:disabled  { opacity: .45; cursor: not-allowed; }
 
 .thumb-badge--pose {
   background: color-mix(in srgb, #0ea5e9 80%, transparent);
+}
+
+.thumb-badge--output {
+  top: auto; bottom: 9px;
+  background: color-mix(in srgb, var(--accept) 85%, transparent);
+}
+
+.iter-thumb--output {
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accept) 70%, transparent);
 }
 
 .thumb-footer {
@@ -738,3 +762,31 @@ button:disabled  { opacity: .45; cursor: not-allowed; }
 .arch-help-body th, .arch-help-body td { padding: 6px 10px; border: 1px solid var(--border); font-size: 12px; text-align: left; }
 .arch-help-body th { background: var(--surface2); font-weight: 600; color: var(--muted); }
 .arch-help-body hr { border: none; border-top: 1px solid var(--border); margin: 14px 0; }
+
+/* ── System page ─────────────────────────────────────────────────────────── */
+.sys-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 12px; margin-bottom: 18px; }
+.sys-card { border: 1px solid var(--border); border-radius: 6px; background: var(--bg); padding: 12px 14px; font-size: 12px; }
+.sys-card-title { display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 600; margin-bottom: 8px; }
+.sys-kv { display: flex; justify-content: space-between; gap: 12px; padding: 3px 0; border-bottom: 1px dashed color-mix(in srgb, var(--border) 60%, transparent); }
+.sys-kv > span:first-child { color: var(--muted); white-space: nowrap; }
+.sys-kv > *:last-child { text-align: right; overflow-wrap: anywhere; }
+.sys-kv code, .sys-argv { font-size: 11px; }
+.sys-warn { color: var(--reject); }
+.sys-h3 { font-size: 13px; font-weight: 600; margin: 18px 0 6px; }
+.sys-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+.sys-table th { text-align: left; font-weight: 600; color: var(--muted); font-size: 11px; padding: 6px 8px; border-bottom: 1px solid var(--border); }
+.sys-table td { padding: 8px; border-bottom: 1px solid color-mix(in srgb, var(--border) 60%, transparent); vertical-align: top; }
+.sys-table a { color: var(--accent); text-decoration: none; }
+.sys-dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; margin-right: 6px; background: var(--muted); }
+.sys-dot.ok { background: var(--accept); } .sys-dot.bad { background: var(--reject); } .sys-dot.off { background: var(--border); }
+.sys-filters { display: flex; gap: 8px; align-items: center; margin-bottom: 8px; }
+.sys-filters select, .sys-filters input { background: var(--bg); border: 1px solid var(--border); border-radius: 4px; color: var(--text); padding: 5px 8px; font-size: 12px; font-family: inherit; }
+.sys-file { display: flex; align-items: center; gap: 10px; padding: 5px 0; border-bottom: 1px dashed color-mix(in srgb, var(--border) 60%, transparent); font-size: 12px; }
+.sys-file-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sys-chips { display: flex; flex-wrap: wrap; gap: 4px; justify-content: flex-end; }
+.chip { font-size: 10px; padding: 2px 7px; border-radius: 9px; border: 1px solid var(--border); background: transparent; color: var(--muted); cursor: pointer; font-family: inherit; }
+.chip:hover { border-color: var(--accent); color: var(--text); }
+.chip.on { background: color-mix(in srgb, var(--accent) 22%, transparent); color: var(--accent); border-color: color-mix(in srgb, var(--accent) 50%, transparent); }
+
+.steering-input { width: 100%; box-sizing: border-box; margin: 6px 0 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 4px; color: var(--text); padding: 6px 8px; font-size: 12px; font-family: inherit; resize: vertical; }
+.steering-block { margin: 6px 0 10px; }

@@ -3,20 +3,33 @@
 const { v4: uuidv4 } = require('uuid');
 const WebSocket = require('ws');
 const config = require('./config');
+const { usesMultiGpuNodes, PROBE_NODE } = require('../workflows/lib/devicePlacement');
 
 const baseUrl = () => config.load().comfyuiUrl;
 const wsUrl   = () => baseUrl().replace(/^http/, 'ws');
 
 // ── Generation ─────────────────────────────────────────────────────────────
 
-async function generate(workflow, onProgress, onPreview) {
+// opts.signal — AbortSignal; aborting rejects the wait with Error('Stopped')
+// so a killed pipeline never sits on a ComfyUI job that will not report back.
+async function generate(workflow, onProgress, onPreview, opts = {}) {
   const clientId = uuidv4();
   const promptId = await queuePrompt(workflow, clientId);
-  await waitForCompletion(promptId, clientId, onProgress, onPreview);
+  await waitForCompletion(promptId, clientId, onProgress, onPreview, opts.signal);
   return getOutputImages(promptId);
 }
 
+// Placement swaps loaders for ComfyUI-MultiGPU nodes; make the failure mode a
+// sentence rather than ComfyUI's generic "class_type not found".
+let multiGpuConfirmed = false;
+async function ensureMultiGpuNodes(workflow) {
+  if (multiGpuConfirmed || !usesMultiGpuNodes(workflow)) return;
+  if (await hasNode(PROBE_NODE)) { multiGpuConfirmed = true; return; }
+  throw new Error('This model places components on specific devices, but ComfyUI-MultiGPU is not installed in ComfyUI (custom_nodes/ComfyUI-MultiGPU) — install it or set the devices back to Auto.');
+}
+
 async function queuePrompt(workflow, clientId) {
+  await ensureMultiGpuNodes(workflow);
   const res = await fetch(`${baseUrl()}/prompt`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -26,18 +39,40 @@ async function queuePrompt(workflow, clientId) {
   return (await res.json()).prompt_id;
 }
 
-function waitForCompletion(promptId, clientId, onProgress, onPreview) {
+function waitForCompletion(promptId, clientId, onProgress, onPreview, signal) {
   return new Promise((resolve, reject) => {
     let done        = false;
     let ws          = null;
     let reconnects  = 0;
     const MAX_RECONNECTS = 30;
 
+    const onAbort = () => finish(new Error('Stopped'));
+
     const finish = (err) => {
       if (done) return;
       done = true;
+      signal?.removeEventListener('abort', onAbort);
       try { ws?.close(); } catch {}
       err ? reject(err) : resolve();
+    };
+
+    if (signal?.aborted) return onAbort();
+    signal?.addEventListener('abort', onAbort, { once: true });
+
+    // Is the prompt still in ComfyUI's running/pending queue? A restarted server
+    // comes back with an empty queue and no history entry for the job, so
+    // without this check a reconnect would wait forever for a completion that
+    // never comes. Returns true on network errors (can't tell — keep waiting).
+    const isQueued = async () => {
+      try {
+        const res = await fetch(`${baseUrl()}/queue`);
+        if (!res.ok) return true;
+        const data = await res.json();
+        const ids  = [...(data.queue_running ?? []), ...(data.queue_pending ?? [])].map(item => item?.[1]);
+        return ids.includes(promptId);
+      } catch {
+        return true;
+      }
     };
 
     // Poll /history to check whether the prompt completed while the WS was down.
@@ -106,7 +141,18 @@ function waitForCompletion(promptId, clientId, onProgress, onPreview) {
     const connect = () => {
       if (done) return;
       ws = new WebSocket(`${wsUrl()}/ws?clientId=${clientId}`);
-      ws.on('open',    ()          => { reconnects = 0; });
+      ws.on('open',    async ()    => {
+        const wasReconnect = reconnects > 0;
+        reconnects = 0;
+        if (!wasReconnect || done) return;
+        // Back online after a drop: make sure ComfyUI still has the job. Queue
+        // first, then history — a job that just left the queue is in history.
+        try {
+          if (await isQueued()) return;
+          if (await checkHistory()) return finish();
+          finish(new Error('ComfyUI lost the job (server restarted?) — re-run the step'));
+        } catch (e) { finish(e); }
+      });
       ws.on('message', handleMessage);
       // Log WS errors but don't finish — the 'close' event fires after 'error' and
       // handles the reconnect/fail decision there.
@@ -172,10 +218,23 @@ async function getOutputVideos(promptId) {
   return { videos };
 }
 
-async function generateVideo(workflow, onProgress) {
+// Returns { videos, warning? }. Video graphs may write a fallback file before
+// a later node fails (e.g. a silent copy saved before the audio mux, which has
+// thrown on NaN audio samples) — ComfyUI keeps the outputs of nodes that
+// finished, so on an execution error we hand back whatever video was written
+// with the error as a warning rather than losing a half-hour take.
+async function generateVideo(workflow, onProgress, opts = {}) {
   const clientId = uuidv4();
   const promptId = await queuePrompt(workflow, clientId);
-  await waitForCompletion(promptId, clientId, onProgress, null);
+  try {
+    await waitForCompletion(promptId, clientId, onProgress, null, opts.signal);
+  } catch (err) {
+    if (err.message === 'Stopped' || !err.message.startsWith('ComfyUI')) throw err;
+    const { videos } = await getOutputVideos(promptId).catch(() => ({ videos: [] }));
+    if (!videos.length) throw err;
+    console.warn(`[comfyui] job failed after writing a video — keeping it. ${err.message}`);
+    return { videos, warning: `Kept a video written before ComfyUI failed — ${err.message}` };
+  }
   return getOutputVideos(promptId);
 }
 
@@ -218,12 +277,44 @@ async function hasNode(nodeType) {
   } catch { return false; }
 }
 
+// Devices ComfyUI's process can see. Only GPUs exposed to that process show up
+// (HIP_VISIBLE_DEVICES / CUDA_VISIBLE_DEVICES / --cuda-device), so a card that
+// is missing here is hidden from ComfyUI, not from the machine.
+async function getDevices() {
+  const res = await fetch(`${baseUrl()}/system_stats`);
+  if (!res.ok) throw new Error(`ComfyUI system_stats error ${res.status}`);
+  const { devices = [] } = await res.json();
+  return devices
+    .filter(d => d?.type && d.type !== 'cpu')
+    .map(d => {
+      const id   = `${d.type}:${d.index ?? 0}`;
+      const raw  = String(d.name ?? '');
+      const name = (raw.startsWith(id) ? raw.slice(id.length) : raw).replace(/\s*:\s*native\s*$/, '').trim() || id;
+      return { id, name, vramTotal: d.vram_total ?? null, vramFree: d.vram_free ?? null };
+    });
+}
+
+async function getSystemStats() {
+  const res = await fetch(`${baseUrl()}/system_stats`);
+  if (!res.ok) throw new Error(`ComfyUI system_stats error ${res.status}`);
+  return res.json();
+}
+
+// { nodeClass: pythonModule } for every node ComfyUI has loaded — core nodes
+// come from "nodes" / "comfy_extras.*", custom packs from "custom_nodes.<pack>".
+async function getNodeIndex() {
+  const res = await fetch(`${baseUrl()}/object_info`);
+  if (!res.ok) throw new Error(`ComfyUI object_info error ${res.status}`);
+  const all = await res.json();
+  return Object.fromEntries(Object.entries(all).map(([name, info]) => [name, info?.python_module ?? 'unknown']));
+}
+
 async function getAssets() {
   // Ask ComfyUI to flush its in-memory model file cache before we query.
   // POST /api/models/refresh exists in ComfyUI 0.3+; silently ignored on older builds.
   await fetch(`${baseUrl()}/api/models/refresh`, { method: 'POST' }).catch(() => {});
 
-  const [checkpoints, vaes, clips, unets, upscaleModels, ipAdapterModels, clipVisionModels, reduxModels, loras, controlNets] = await Promise.allSettled([
+  const [checkpoints, vaes, clips, unets, upscaleModels, ipAdapterModels, clipVisionModels, reduxModels, loras, controlNets, devices, multiGpu] = await Promise.allSettled([
     fetchInputList('CheckpointLoaderSimple', 'ckpt_name'),
     fetchInputList('VAELoader',              'vae_name'),
     fetchInputList('CLIPLoader',             'clip_name'),
@@ -234,6 +325,8 @@ async function getAssets() {
     fetchInputList('StyleModelLoader',       'style_model_name'),
     fetchInputList('LoraLoader',             'lora_name'),
     fetchInputList('ControlNetLoader',       'control_net_name'),
+      getDevices(),
+    hasNode(PROBE_NODE),
   ]);
 
   const all = [checkpoints, vaes, clips, unets, upscaleModels, ipAdapterModels, clipVisionModels, reduxModels, loras, controlNets];
@@ -248,6 +341,8 @@ async function getAssets() {
     reduxModels:      reduxModels.status      === 'fulfilled' ? reduxModels.value      : [],
     loras:            loras.status            === 'fulfilled' ? loras.value            : [],
     controlNets:      controlNets.status      === 'fulfilled' ? controlNets.value      : [],
+    devices:          devices.status          === 'fulfilled' ? devices.value          : [],
+    multiGpu:         multiGpu.status         === 'fulfilled' ? !!multiGpu.value       : false,
     errors: all.filter(r => r.status === 'rejected').map(r => r.reason.message),
   };
 }
@@ -267,4 +362,4 @@ async function interrupt() {
   try { await fetch(`${baseUrl()}/interrupt`, { method: 'POST' }); } catch { /* best effort */ }
 }
 
-module.exports = { generate, generateVideo, getOutputVideos, getAssets, listLoras, getLoraMetadata, hasNode, uploadImage, interrupt };
+module.exports = { generate, generateVideo, getOutputVideos, getAssets, getDevices, getSystemStats, getNodeIndex, fetchInputList, listLoras, getLoraMetadata, hasNode, uploadImage, interrupt };

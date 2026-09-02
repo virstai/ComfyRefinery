@@ -13,9 +13,11 @@ function sessionPath(id) {
   return path.join(sessionsDir(), `${id}.json`);
 }
 
-function saveSession(session) {
+// `touch: false` keeps the existing updatedAt — for housekeeping writes that
+// must not reorder the history list (which sorts by updatedAt).
+function saveSession(session, { touch = true } = {}) {
   ensureDir();
-  const data = { ...session, updatedAt: new Date().toISOString() };
+  const data = { ...session, updatedAt: touch ? new Date().toISOString() : (session.updatedAt ?? session.createdAt) };
   fs.writeFileSync(sessionPath(session.id), JSON.stringify(data, null, 2));
 }
 

@@ -1,5 +1,7 @@
 'use strict';
 
+const { applyDevicePlacement } = require('./lib/devicePlacement');
+
 const profiles = {
   sd15:         require('./sd15'),
   sdxl:         require('./sdxl'),
@@ -12,6 +14,7 @@ const profiles = {
   hunyuanvideo: require('./hunyuanvideo'),
   ltxvideo:     require('./ltxvideo'),
   cogvideox:    require('./cogvideox'),
+  minimaxh3:    require('./minimaxh3'),
   zimage:       require('./zimage'),
   krea2:        require('./krea2'),
 };
@@ -68,6 +71,8 @@ const ARCH_META = {
     loadingMode:  'split',
     capabilities: { lora: false, adapter: false, controlNet: false },
     videoArch:    true,
+    dimMultiple:  16,
+    followInputAspect: true,
     fields:      {
       unetName:          true,
       unetName2:         true,
@@ -90,6 +95,8 @@ const ARCH_META = {
     loadingMode:  'split',
     capabilities: { lora: false, adapter: false, controlNet: false },
     videoArch:    true,
+    dimMultiple:  16,
+    followInputAspect: true,
     fields:       { unetName: true, clipName: true, vaeName: true, guidance: true },
     notes:       'Main model goes in models/diffusion_models/ (not checkpoints). Requires two text encoders: clip_l.safetensors and llava_llama3_fp8_scaled.safetensors — set CLIP to clip_l. Has native ComfyUI support (no custom nodes needed on recent ComfyUI).',
   },
@@ -98,6 +105,8 @@ const ARCH_META = {
     loadingMode:  'checkpoint',
     capabilities: { lora: false, adapter: false, controlNet: false },
     videoArch:    true,
+    dimMultiple:  32,
+    followInputAspect: true,
     fields:       { checkpoint: true, clipName: 'always', distilledLoraName: 'lora', enableAudio: 'toggle', guidance: true },
     fieldHints:   {
       clipName:          'Text encoder — e.g. gemma_3_12B_it_fp4_mixed.safetensors (models/text_encoders/)',
@@ -106,11 +115,51 @@ const ARCH_META = {
     },
     notes:       'Checkpoint goes in models/checkpoints/. Text encoder (Gemma 3 for LTX-2.3) goes in models/text_encoders/. Distilled guidance LoRA goes in models/loras/. Uses built-in ComfyUI nodes (LTXAVTextEncoderLoader, LTXVConditioning, etc.) — no custom node pack required.',
   },
+  minimaxh3: {
+    label:           'MiniMax H3 (Hailuo 3)',
+    loadingMode:     'split',
+    capabilities:    { lora: false, adapter: false, controlNet: false },
+    videoArch:       true,
+    dimMultiple:  32,
+    followInputAspect: true,
+    referenceToVideo: true,
+    maxReferences:    9,
+    fields:      {
+      unetName:             true,
+      refUnetName:          true,
+      clipName:             true,
+      vaeName:              true,
+      audioVaeName:         true,
+      distilledLoraName:    'lora',
+      refDistilledLoraName: 'lora',
+    },
+    fieldHints:  {
+      unetName:             'FL2VA model (T2V + I2V) — e.g. minimax_h3_fl2va_pruned_int8_convrot.safetensors',
+      refUnetName:          'Optional Ref2VA model (reference-to-video) — e.g. minimax_h3_ref2va_pruned_int8_convrot.safetensors. Uploaded reference images route to it automatically.',
+      clipName:             'Qwen3-VL-32B text encoder — e.g. qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors (models/text_encoders/)',
+      vaeName:              'Video VAE — minimax_h3_video_vae_fp16.safetensors',
+      audioVaeName:         'Audio VAE — minimax_h3_audio_vae_fp32.safetensors. Leave blank to skip audio generation.',
+      distilledLoraName:    'Optional 8-step turbo LoRA for FL2VA (~2× faster, small quality cost). Step count defaults to 8 automatically while active — clear this field for maximum quality at 20 steps.',
+      refDistilledLoraName: 'Optional 4-step turbo LoRA for Ref2VA. Step count defaults to 4 automatically while active.',
+    },
+    fieldLabels: {
+      unetName:             'FL2VA UNet file',
+      refUnetName:          'Ref2VA UNet file',
+      vaeName:              'Video VAE file',
+      audioVaeName:         'Audio VAE file',
+      distilledLoraName:    'Turbo LoRA (FL2VA)',
+      refDistilledLoraName: 'Turbo LoRA (Ref2VA)',
+    },
+    notes:       'Native ComfyUI nodes only, requires ComfyUI ≥ 0.30.0. Model files go in models/diffusion_models/, text encoder in models/text_encoders/, both VAEs in models/vae/, turbo LoRAs in models/loras/. Generates video with native stereo audio in one pass (audio VAE required for sound). Guidance-free — no negative prompt or CFG. Frame counts snap to 17k+5 (73 ≈ 3s at 24fps); native resolution 1344×768.',
+  },
   cogvideox: {
     label:        'CogVideoX',
     loadingMode:  'checkpoint',
     capabilities: { lora: false, adapter: false, controlNet: false },
     videoArch:    true,
+    dimMultiple:  8,
+    // CogVideoX weights are fixed-resolution (720×480) — never follow the input image's ratio.
+    followInputAspect: false,
     fields:       { checkpoint: true, vae: true, clipName: true, cfgScale: true },
     notes:       'Requires kijai/ComfyUI-CogVideoXWrapper. The wrapper auto-downloads models to models/CogVideo/. T5 encoder goes in models/clip/. Available in 2B, 5B, and 5B-I2V variants — no 9B variant exists.',
   },
@@ -138,7 +187,7 @@ function buildWorkflow(modelConfig, generationParams) {
   // Strip null/undefined so each profile's defaults fill in properly
   const merged = { ...modelConfig, ...generationParams };
   const params = Object.fromEntries(Object.entries(merged).filter(([, v]) => v != null));
-  return { workflow: profile.build(params), architecture };
+  return { workflow: applyDevicePlacement(profile.build(params), modelConfig), architecture };
 }
 
 function getDefaults(architecture) {

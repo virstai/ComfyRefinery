@@ -16,9 +16,22 @@
           <div :class="['step-label', `type-${step.type}`]">
             <span class="step-type-badge">{{ step.type }}</span>
             {{ step.label || step.type }}
+            <span v-if="canRerun" class="step-actions">
+              <button class="step-action-btn" :title="step.type === 'video' ? 'New take using the previous step\'s selected image — nothing else is regenerated' : 'Generate a fresh variant of just this step — later steps are not run'" @click.stop="rerunFrom(sessionId, step.index, step.index)">↻ Redo</button>
+              <button v-if="step.index < steps.length - 1" class="step-action-btn" title="Regenerate this step from scratch, then run everything after it. To reuse an existing image instead, click it and press “Use for … step”." @click.stop="rerunFrom(sessionId, step.index)">▶ From here</button>
+            </span>
           </div>
-          <!-- Video step: clickable thumbnail → pins into detail pane -->
-          <template v-if="step.type === 'video'">
+          <!-- Steering for the next take: a reaction to what the earlier steps produced -->
+          <div v-if="step.type === 'video' && sessionId" class="steering-block">
+            <textarea
+              class="steering-input" rows="2" :disabled="running"
+              :value="step.steering || ''"
+              placeholder="Steer the next take: framing, camera moves, pacing, sound… saved when you click away; used by ↻ Redo and ▶ From here"
+              @change="saveSteering(step, $event.target.value)"
+            ></textarea>
+          </div>
+          <!-- Legacy video step (no persisted takes): clickable thumbnail → pins into detail pane -->
+          <template v-if="step.type === 'video' && !step.iterations.length">
             <div
               v-if="step.videoUrl"
               :class="['video-output', { selected: isPinnedStep(step.index) }]"
@@ -36,14 +49,11 @@
               </template>
               <template v-else>
                 {{ step.status || 'Waiting…' }}
-                <div v-if="step.iterations[0]?.streamingPrompt || step.iterations[0]?.prompt" class="video-prompt-preview">
-                  {{ step.iterations[0].streamingPrompt || step.iterations[0].prompt }}
-                </div>
               </template>
             </div>
           </template>
 
-          <!-- Normal steps: iteration card grid -->
+          <!-- Iteration / take card grid -->
           <template v-else>
             <div v-if="!step.iterations.length" style="font-size:11px;color:var(--muted);padding:4px 0">
               Waiting…
@@ -54,6 +64,7 @@
                 :key="it.n"
                 :iteration="it"
                 :selected="isPinned(step.index, it.n)"
+                :is-output="isOutputCard(step, it)"
                 @open="onCardClick(step.index, it.n)"
               />
             </div>
@@ -68,15 +79,26 @@
         :running="running"
         :session-id="sessionId"
         @unpinned="onDetailUnpinned"
+        @pinned="key => { pinnedKey = key; }"
       />
     </div>
   </div>
 </template>
 
 <script setup>
-import { ref, watch } from 'vue';
+import { computed, ref, watch } from 'vue';
 import IterationCard from './IterationCard.vue';
 import DetailPane   from './DetailPane.vue';
+import { genState, rerunFrom, setStepSteering } from '../stores/generate.js';
+
+async function saveSteering(step, text) {
+  try {
+    await setStepSteering(props.sessionId, step.index, text.trim());
+    genState.status = text.trim() ? `Steering saved for step ${step.index + 1}` : `Steering cleared for step ${step.index + 1}`;
+  } catch (e) {
+    genState.status = `Error: ${e.message}`;
+  }
+}
 
 const props = defineProps({
   steps:     { type: Array,   default: () => [] },
@@ -88,6 +110,16 @@ const props = defineProps({
 
 const detailPane = ref(null);
 const pinnedKey  = ref(null); // { stepIndex, iterN } or null
+
+const canRerun = computed(() => !!props.sessionId && !props.running);
+
+// The variant that feeds the next step: the selected one, else the latest.
+// Only badge it once there is an actual choice to make.
+function isOutputCard(step, it) {
+  if (step.iterations.length < 2) return false;
+  const effective = step.selectedIteration ?? step.iterations.length;
+  return it.n === effective && !!it.verdict;
+}
 
 function isPinned(stepIndex, iterN) {
   return pinnedKey.value?.stepIndex === stepIndex && pinnedKey.value?.iterN === iterN;
@@ -177,14 +209,26 @@ watch(
   transition: width 0.3s;
 }
 
-.video-prompt-preview {
-  margin-top: 6px;
+.step-actions {
+  margin-left: auto;
+  display: inline-flex;
+  gap: 6px;
+}
+.step-action-btn {
   font-size: 10px;
+  text-transform: none;
+  letter-spacing: normal;
+  padding: 1px 8px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: var(--surface);
   color: var(--muted);
-  font-style: italic;
-  line-height: 1.4;
-  max-height: 80px;
-  overflow-y: auto;
+  cursor: pointer;
+  transition: color .15s, border-color .15s;
+}
+.step-action-btn:hover {
+  color: var(--accent);
+  border-color: var(--accent);
 }
 
 .video-output {

@@ -2,14 +2,19 @@
   <div class="pipeline-detail">
     <div class="detail-pane-header">
       <template v-if="displayed">
-        <div>
+        <div class="detail-pane-titles">
           <div class="detail-pane-title">{{ displayed.isVideo ? 'Video Output' : `Iteration #${displayed.iteration.n}` }}</div>
-          <div class="detail-pane-subtitle">{{ displayed.stepLabel }}</div>
+          <div class="detail-pane-subtitle" :title="displayed.stepLabel">{{ displayed.stepLabel }}</div>
         </div>
       </template>
       <template v-else>
-        <div class="detail-pane-title">Detail</div>
+        <div class="detail-pane-title" style="flex:1">Detail</div>
       </template>
+
+      <div v-if="canNavigate" class="detail-nav">
+        <button class="detail-nav-btn" :disabled="!hasPrev" title="Previous variant (←)" @click="navigate(-1)">‹</button>
+        <button class="detail-nav-btn" :disabled="!hasNext" title="Next variant (→)" @click="navigate(1)">›</button>
+      </div>
 
       <div
         class="active-badge"
@@ -61,10 +66,16 @@
       </template>
 
       <template v-else>
-        <!-- Image iteration -->
+        <!-- Iteration (image or video take) -->
         <div class="detail-image-wrap">
+          <video
+            v-if="displayed.iteration.videoUrl"
+            :src="displayed.iteration.videoUrl"
+            controls loop
+            style="width:100%;border-radius:4px"
+          ></video>
           <img
-            v-if="displayed.iteration.imageUrl"
+            v-else-if="displayed.iteration.imageUrl"
             :src="displayed.iteration.imageUrl"
             :alt="`Iteration ${displayed.iteration.n}`"
           >
@@ -103,6 +114,12 @@
           <div class="detail-field">
             <label>Prompt</label>
             <div class="val">{{ displayPrompt }}</div>
+          </div>
+
+          <!-- Seed -->
+          <div v-if="displayed.iteration.seed != null" class="detail-field">
+            <label>Seed</label>
+            <div class="val">{{ displayed.iteration.seed }}</div>
           </div>
 
           <!-- Applied LoRAs -->
@@ -170,9 +187,33 @@
         </div>
 
         <!-- Refuse acceptance (post grace period, still ACCEPT) -->
-        <div v-else-if="displayed.iteration.verdict === 'ACCEPT' && !displayed.iteration.acceptedPending" class="human-review">
+        <div v-else-if="displayed.iteration.verdict === 'ACCEPT' && !displayed.iteration.acceptedPending && !displayed.iteration.videoUrl" class="human-review">
           <div class="hr-actions">
             <button class="secondary" :disabled="submitting" @click="refuse">Refuse acceptance</button>
+          </div>
+        </div>
+
+        <!-- Variant selection / send downstream -->
+        <div v-if="canSendNext || canSelectOutput" class="human-review">
+          <span class="hr-ai-note">
+            <template v-if="canSendNext">Run the remaining step{{ props.steps.length - displayed.stepIndex > 2 ? 's' : '' }} now with this image as input — nothing before it is regenerated.</template>
+            <template v-else>Downstream steps use this variant on the next “Run from here”.</template>
+          </span>
+          <div class="hr-actions">
+            <button v-if="canSendNext" class="primary" :disabled="submitting" @click="sendToNext">▶ Use for {{ nextStepType }} step</button>
+            <button v-if="canSelectOutput" class="secondary" :disabled="submitting" @click="selectOutput">Mark as step output only</button>
+          </div>
+        </div>
+
+        <!-- Ad-hoc video from this image -->
+        <div v-if="canMakeVideo" class="human-review">
+          <span class="hr-ai-note">Animate this image: adds a video step to this session and runs it now — nothing else is regenerated.</span>
+          <textarea v-model="videoSteering" class="steering-input" rows="2" :disabled="submitting" placeholder="Steering notes (optional): framing, camera, pacing, sound…"></textarea>
+          <div class="hr-actions">
+            <select v-model="videoModelId" :disabled="submitting">
+              <option v-for="m in videoModels" :key="m.id" :value="m.id">{{ m.label }}</option>
+            </select>
+            <button class="secondary" :disabled="submitting || !videoModelId" @click="makeVideo">🎬 Make video</button>
           </div>
         </div>
       </template>
@@ -181,8 +222,9 @@
 </template>
 
 <script setup>
-import { ref, computed, watch } from 'vue';
-import { submitHumanReview, refuseAccepted } from '../stores/generate.js';
+import { ref, computed, watch, onMounted, onUnmounted } from 'vue';
+import { genState, submitHumanReview, refuseAccepted, selectIteration, rerunFrom, addVideoStep } from '../stores/generate.js';
+import { configState } from '../stores/config.js';
 
 const props = defineProps({
   steps:     { type: Array,   default: () => [] },
@@ -195,13 +237,14 @@ const pinnedKey  = ref(null);
 const feedback   = ref('');
 const submitting = ref(false);
 
-const emit = defineEmits(['unpinned']);
+const emit = defineEmits(['unpinned', 'pinned']);
 
 // Expose pin/unpin/pinStep for RunSection to drive from card/video clicks
 defineExpose({ pin, pinStep, unpin });
 
 function pin(stepIndex, iterN) {
   pinnedKey.value = { stepIndex, iterN };
+  emit('pinned', { stepIndex, iterN });
 }
 function pinStep(stepIndex) {
   pinnedKey.value = { stepIndex, iterN: null };
@@ -221,14 +264,12 @@ function videoEntry(step, i) {
 const activeEntry = computed(() => {
   for (let i = props.steps.length - 1; i >= 0; i--) {
     const step = props.steps[i];
-    if (step.type === 'video') {
-      if (step.videoUrl || step.progress > 0) return videoEntry(step, i);
-      continue;
-    }
     if (step.iterations.length) {
       const iter = step.iterations[step.iterations.length - 1];
       return { iteration: iter, stepIndex: i, stepLabel: `${step.type} · ${step.label}` };
     }
+    // Legacy video sessions carry only an output URL, no takes
+    if (step.type === 'video' && (step.videoUrl || step.progress > 0)) return videoEntry(step, i);
   }
   return null;
 });
@@ -238,7 +279,7 @@ const pinnedEntry = computed(() => {
   if (!pinnedKey.value) return null;
   const step = props.steps[pinnedKey.value.stepIndex];
   if (!step) return null;
-  if (step.type === 'video') return videoEntry(step, pinnedKey.value.stepIndex);
+  if (step.type === 'video' && pinnedKey.value.iterN == null) return videoEntry(step, pinnedKey.value.stepIndex);
   const iter = step.iterations.find(it => it.n === pinnedKey.value.iterN);
   if (!iter) return null;
   return { iteration: iter, stepIndex: pinnedKey.value.stepIndex, stepLabel: `${step.type} · ${step.label}` };
@@ -261,6 +302,118 @@ const displayReview = computed(() => {
   const it = displayed.value?.iteration;
   return it?.fullReview ?? it?.diagnosis ?? (it?.streamingReview || '—');
 });
+
+// ── Variant navigation ("swipe" between a step's iterations) ─────────────────
+
+const displayedStep = computed(() => {
+  const d = displayed.value;
+  return d ? props.steps[d.stepIndex] : null;
+});
+
+const canNavigate = computed(() =>
+  !!displayed.value?.iteration && (displayedStep.value?.iterations.length ?? 0) > 1);
+const hasPrev = computed(() => canNavigate.value && displayed.value.iteration.n > 1);
+const hasNext = computed(() =>
+  canNavigate.value && displayed.value.iteration.n < displayedStep.value.iterations.length);
+
+function navigate(delta) {
+  const d = displayed.value;
+  const step = displayedStep.value;
+  if (!d?.iteration || !step) return;
+  const next = d.iteration.n + delta;
+  if (next < 1 || next > step.iterations.length) return;
+  pin(d.stepIndex, next);
+}
+
+function onKeydown(e) {
+  if (['INPUT', 'TEXTAREA', 'SELECT'].includes(e.target?.tagName)) return;
+  if (e.key === 'ArrowLeft')  { navigate(-1); e.preventDefault(); }
+  if (e.key === 'ArrowRight') { navigate(1);  e.preventDefault(); }
+}
+onMounted(() => window.addEventListener('keydown', onKeydown));
+onUnmounted(() => window.removeEventListener('keydown', onKeydown));
+
+// ── Variant selection ────────────────────────────────────────────────────────
+
+const canSelectOutput = computed(() => {
+  const d = displayed.value;
+  const step = displayedStep.value;
+  if (!props.sessionId || props.running || !d?.iteration || !step) return false;
+  if (!d.iteration.verdict || (!d.iteration.imageUrl && !d.iteration.videoUrl)) return false;
+  if (step.iterations.length < 2) return false;
+  const effective = step.selectedIteration ?? step.iterations.length;
+  return d.iteration.n !== effective;
+});
+
+async function selectOutput() {
+  if (!props.sessionId || !displayed.value) return;
+  submitting.value = true;
+  try {
+    await selectIteration(props.sessionId, displayed.value.stepIndex, displayed.value.iteration.n);
+  } catch (e) {
+    genState.status = `Error: ${e.message}`;
+  } finally {
+    submitting.value = false;
+  }
+}
+
+// ── Ad-hoc video step from any image variant ─────────────────────────────────
+
+const videoModels = computed(() =>
+  Object.entries(configState.config.models ?? {})
+    .filter(([, m]) => configState.archMeta[m.architecture]?.videoArch)
+    .map(([id, m]) => ({ id, label: m.label ?? id })));
+const videoModelId = ref(null);
+const videoSteering = ref('');
+watch(videoModels, list => { if (!list.some(m => m.id === videoModelId.value)) videoModelId.value = list[0]?.id ?? null; }, { immediate: true });
+
+const canMakeVideo = computed(() => {
+  const d = displayed.value;
+  if (!props.sessionId || props.running || !d?.iteration) return false;
+  if (!d.iteration.verdict || !d.iteration.imageUrl) return false;
+  return videoModels.value.length > 0;
+});
+
+async function makeVideo() {
+  const d = displayed.value;
+  if (!d || !canMakeVideo.value || !videoModelId.value) return;
+  submitting.value = true;
+  try {
+    await addVideoStep(props.sessionId, { modelId: videoModelId.value, fromStep: d.stepIndex, iteration: d.iteration.n, steering: videoSteering.value.trim() });
+  } catch (e) {
+    genState.status = `Error: ${e.message}`;
+  } finally {
+    submitting.value = false;
+  }
+}
+
+// ── Send a variant into the next step (select + run downstream) ──────────────
+
+const canSendNext = computed(() => {
+  const d = displayed.value;
+  if (!props.sessionId || props.running || !d?.iteration) return false;
+  if (!d.iteration.verdict || !d.iteration.imageUrl) return false; // video takes are terminal
+  return d.stepIndex < props.steps.length - 1;
+});
+
+const nextStepType = computed(() => {
+  const d = displayed.value;
+  return (d && props.steps[d.stepIndex + 1]?.type) || 'next';
+});
+
+async function sendToNext() {
+  const d = displayed.value;
+  if (!d || !canSendNext.value) return;
+  submitting.value = true;
+  try {
+    await selectIteration(props.sessionId, d.stepIndex, d.iteration.n);
+    await rerunFrom(props.sessionId, d.stepIndex + 1);
+  } catch (e) {
+    genState.status = `Error: ${e.message}`;
+  } finally {
+    submitting.value = false;
+  }
+}
 
 
 async function submitReview(accept) {
@@ -286,6 +439,25 @@ async function refuse() {
 </script>
 
 <style scoped>
+/* Title block owns the flexible space; the nav/badge controls keep a fixed
+   right-aligned position instead of having wrapped subtitle text flow under them */
+.detail-pane-titles { flex: 1; min-width: 0; }
+.detail-pane-titles .detail-pane-subtitle {
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+
+.detail-nav {
+  display: inline-flex; gap: 4px; flex: 0 0 auto; margin-right: 4px;
+}
+.detail-nav-btn {
+  width: 24px; height: 24px; line-height: 1;
+  border-radius: 6px; border: 1px solid var(--border);
+  background: var(--surface); color: var(--muted);
+  cursor: pointer; font-size: 14px;
+}
+.detail-nav-btn:hover:not(:disabled) { color: var(--accent); border-color: var(--accent); }
+.detail-nav-btn:disabled { opacity: .35; cursor: default; }
+
 .lora-chip {
   display: inline-block; font-size: 10px; padding: 1px 6px; margin: 0 4px 4px 0;
   border-radius: 8px; background: color-mix(in srgb, var(--accent, #7c3aed) 18%, transparent);

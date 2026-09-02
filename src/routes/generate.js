@@ -11,6 +11,7 @@ const skills  = require('../services/skills');
 const db      = require('../services/db');
 const { refreshSkill } = require('../services/skillRefresher');
 const steps   = require('../steps');
+const { archMeta } = require('../workflows');
 const { parseReview } = require('../lib/parsers');
 
 const sessions           = new Map(); // active sessions (in-memory cache)
@@ -25,6 +26,16 @@ genEmitter.setMaxListeners(100);
 function emit(res, event, data) {
   res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
   genEmitter.emit('gen', event, data);
+}
+
+// The iteration whose output feeds the next step: the user-selected one when set,
+// otherwise the most recent.
+function stepOutput(stepData) {
+  if (!stepData?.iterations?.length) return null;
+  const sel = stepData.selectedIteration;
+  return (sel >= 1 && sel <= stepData.iterations.length)
+    ? stepData.iterations[sel - 1]
+    : stepData.iterations[stepData.iterations.length - 1];
 }
 
 function waitForHumanReview(key) {
@@ -116,6 +127,12 @@ async function _runIterativeLoop(stepType, stepDef, stepIndex, session, ctx, cfg
       emit(res, 'phase', { step: stepIndex, phase: 'generating', iteration: iterNum });
       console.log(`[${tag}] step ${stepIndex} iter ${iterNum}: queuing ComfyUI job…`);
 
+      // Pick the sampling seed here (instead of inside the arch builder) so it
+      // can be recorded on the iteration for reproducibility.
+      if (prepResult.params && typeof prepResult.params === 'object' && prepResult.params.seed == null) {
+        prepResult.params.seed = Math.floor(Math.random() * 2 ** 32);
+      }
+
       const workflow = stepType.buildComfyWorkflow(stepDef, prepResult, ctx);
       const { images } = await comfyui.generate(
         workflow,
@@ -124,6 +141,7 @@ async function _runIterativeLoop(stepType, stepDef, stepIndex, session, ctx, cfg
           process.stdout.write(`\r[${tag}] step ${stepIndex} iter ${iterNum}: generating ${pct}%   `);
         },
         previewUrl => emit(res, 'preview', { step: stepIndex, iteration: iterNum, url: previewUrl }),
+        { signal: ctx.signal },
       );
       process.stdout.write('\n');
 
@@ -177,6 +195,7 @@ async function _runIterativeLoop(stepType, stepDef, stepIndex, session, ctx, cfg
         ...(prepResult.poseImageUrl  ? { poseUsed: true }          : {}) });
 
       const iteration = { prompt: prepResult.prompt, imageUrl, verdict, diagnosis };
+      if (prepResult.params?.seed != null) iteration.seed = prepResult.params.seed;
       if (prepResult.loras?.length) iteration.loras = prepResult.loras;
       if (prepResult.poseImageUrl) {
         iteration.poseUsed     = true;
@@ -231,8 +250,9 @@ async function _runIterativeLoop(stepType, stepDef, stepIndex, session, ctx, cfg
     }
   }
 
-  const lastIter = stepData.iterations[stepData.iterations.length - 1];
-  stepData.outputImageUrl = lastIter?.imageUrl ?? null;
+  // A fresh run supersedes any earlier manual variant selection on this step.
+  stepData.selectedIteration = null;
+  stepData.outputImageUrl = stepOutput(stepData)?.imageUrl ?? null;
   return { accepted, outputImageUrl: stepData.outputImageUrl };
 }
 
@@ -272,56 +292,96 @@ async function runVideoStep(stepDef, stepIndex, session, ctx, cfg, res, isKilled
 
   const modelConfig = cfg.models?.[stepDef.modelId];
   if (!modelConfig) throw new Error(`Video model "${stepDef.modelId}" not found in config`);
-  ctx = { ...ctx, modelConfig };
+  ctx = { ...ctx, modelConfig, skillId: modelConfig.id ?? stepDef.modelId };
 
-  emit(res, 'step', { index: stepIndex, type: 'video', label: stepData.label, total: session.steps.length });
+  // Steering notes live on the session's step (set from the run view for the
+  // next take); an ad-hoc step may also have been created with them.
+  const steering = (stepData.steering ?? stepDef.steering ?? '').trim();
+  if (steering) stepDef = { ...stepDef, steering };
+
+  emit(res, 'step', { index: stepIndex, type: 'video', label: stepData.label, total: session.steps.length, steering: steering || null });
   console.log(`[${tag}] step ${stepIndex} (video: ${stepData.label})`);
 
   if (isKilled()) throw new Error('Generation stopped by user');
 
-  emit(res, 'phase', { step: stepIndex, phase: 'prompt_building', iteration: 1 });
+  // Each run of a video step appends a new take (variant), like image iterations.
+  const iterNum = stepData.iterations.length + 1;
+
+  emit(res, 'phase', { step: stepIndex, phase: 'prompt_building', iteration: iterNum });
   console.log(`[${tag}] step ${stepIndex}: building video prompt…`);
 
-  const prepResult = await stepType.prepare(stepDef, ctx, [], token => {
-    emit(res, 'token', { step: stepIndex, iteration: 1, phase: 'prompt', token });
+  const prepResult = await stepType.prepare(stepDef, ctx, stepData.iterations, token => {
+    emit(res, 'token', { step: stepIndex, iteration: iterNum, phase: 'prompt', token });
   });
 
   if (isKilled()) throw new Error('Generation stopped by user');
 
-  emit(res, 'prompt', { step: stepIndex, iteration: 1, prompt: prepResult.prompt });
-  emit(res, 'phase',  { step: stepIndex, phase: 'generating', iteration: 1 });
+  for (const w of prepResult.warnings ?? []) {
+    emit(res, 'warning', { step: stepIndex, iteration: iterNum, message: w });
+    console.warn(`[${tag}] step ${stepIndex}: ${w}`);
+  }
+
+  emit(res, 'prompt', { step: stepIndex, iteration: iterNum, prompt: prepResult.prompt });
+  emit(res, 'phase',  { step: stepIndex, phase: 'generating', iteration: iterNum });
   console.log(`[${tag}] step ${stepIndex}: queuing video ComfyUI job…`);
+  // Pick the seed here (as _runIterativeLoop does) so the take records it.
+  prepResult.params = { ...(prepResult.params ?? {}) };
+  if (prepResult.params.seed == null) prepResult.params.seed = Math.floor(Math.random() * 2 ** 32);
   const workflow = stepType.buildComfyWorkflow(stepDef, prepResult, ctx);
 
-  const { videos } = await comfyui.generateVideo(
+  const { videos, warning: videoWarning } = await comfyui.generateVideo(
     workflow,
     pct => {
       emit(res, 'progress', { step: stepIndex, pct });
       process.stdout.write(`\r[${tag}] step ${stepIndex}: generating ${pct}%   `);
     },
+    { signal: ctx.signal },
   );
   process.stdout.write('\n');
 
   if (isKilled()) throw new Error('Generation stopped by user');
   if (!videos.length) throw new Error('ComfyUI returned no video output');
 
-  const vid      = videos[0];
+  if (videoWarning) {
+    (prepResult.warnings ??= []).push(videoWarning);
+    emit(res, 'warning', { step: stepIndex, iteration: iterNum, message: videoWarning });
+    console.warn(`[${tag}] step ${stepIndex}: ${videoWarning}`);
+  }
+
+  const vid      = stepType.pickPrimaryVideo(videos);
   const videoUrl = `/api/video?filename=${encodeURIComponent(vid.filename)}&subfolder=${encodeURIComponent(vid.subfolder ?? '')}&type=${encodeURIComponent(vid.type ?? 'output')}`;
   console.log(`[${tag}] step ${stepIndex}: video ready — ${vid.filename}`);
 
-  emit(res, 'video', { step: stepIndex, url: videoUrl });
-  stepData.outputVideoUrl = videoUrl;
+  emit(res, 'video', { step: stepIndex, iteration: iterNum, url: videoUrl });
+  stepData.iterations.push({
+    prompt:    prepResult.prompt,
+    videoUrl,
+    seed:      prepResult.params.seed,
+    verdict:   'ACCEPT',
+    diagnosis: 'video step (no review)',
+    ...(prepResult.warnings?.length ? { warnings: [...prepResult.warnings] } : {}),
+  });
+  stepData.selectedIteration = null;
+  stepData.outputVideoUrl = stepOutput(stepData)?.videoUrl ?? null;
   db.saveSession(session);
 
-  return { accepted: true, outputVideoUrl: videoUrl };
+  return { accepted: true, outputVideoUrl: stepData.outputVideoUrl };
 }
 
 // ── Pipeline execution ────────────────────────────────────────────────────────────
 
-async function runPipeline(session, pipelineDef, cfg, res, imageContext = []) {
+async function runPipeline(session, pipelineDef, cfg, res, imageContext = [], opts = {}) {
   const tag = session.id.slice(0, 8);
+  const startStep = opts.startStep ?? 0;
+  const endStep   = opts.endStep ?? pipelineDef.length - 1;
   const abortController = new AbortController();
   const ctx = { userPrompt: session.prompt, references: session.references ?? [], imageContext, cfg, signal: abortController.signal };
+  // Partial re-run: chain from the kept output of the step before startStep
+  if (opts.initialInputImage) ctx.inputImage = opts.initialInputImage;
+
+  // Iteration counts before this run — a kill must only discard work from this
+  // run, not takes kept from earlier runs of the same step.
+  const preRunCounts = session.steps.map(st => st.iterations.length);
 
   let killed = false;
 
@@ -346,13 +406,20 @@ async function runPipeline(session, pipelineDef, cfg, res, imageContext = []) {
     }
   });
 
-  let currentStep = 0;
+  let currentStep = startStep;
   try {
     let overallAccepted = false;
 
-    for (let si = 0; si < pipelineDef.length; si++) {
+    for (let si = startStep; si <= endStep; si++) {
       currentStep = si;
       const stepDef = pipelineDef[si];
+
+      // Ad-hoc steps can name the step whose output they build on.
+      if (stepDef.inputFrom != null) {
+        const src = stepOutput(session.steps[stepDef.inputFrom])?.imageUrl;
+        if (!src) throw new Error(`Step ${stepDef.inputFrom + 1} has no output image for step ${si + 1} to build on`);
+        ctx.inputImage = src;
+      }
 
       let result;
       if (stepDef.type === 'video') {
@@ -366,20 +433,23 @@ async function runPipeline(session, pipelineDef, cfg, res, imageContext = []) {
       const { accepted, outputImageUrl, outputVideoUrl } = result;
       overallAccepted = accepted;
 
+      // selectedIteration rides along so the client drops any stale manual pick
+      // (a fresh run of a step supersedes it — see _runIterativeLoop / runVideoStep).
+      const selectedIteration = session.steps[si]?.selectedIteration ?? null;
       if (outputImageUrl) {
         ctx.inputImage = outputImageUrl;
-        emit(res, 'step_complete', { step: si, imageUrl: outputImageUrl, accepted });
+        emit(res, 'step_complete', { step: si, imageUrl: outputImageUrl, accepted, selectedIteration });
       } else if (outputVideoUrl) {
-        emit(res, 'step_complete', { step: si, videoUrl: outputVideoUrl, accepted });
+        emit(res, 'step_complete', { step: si, videoUrl: outputVideoUrl, accepted, selectedIteration });
       }
 
       // Don't run subsequent steps on a rejected output
-      if (!accepted && si < pipelineDef.length - 1) break;
+      if (!accepted && si < endStep) break;
     }
 
     session.status = 'complete';
     console.log(`[${tag}] done — ${overallAccepted ? 'ACCEPTED' : 'max iterations reached'}`);
-    const lastStep = session.steps[session.steps.length - 1];
+    const lastStep = session.steps[endStep];
     emit(res, 'done', {
       accepted:   overallAccepted,
       imageUrl:   lastStep?.outputImageUrl ?? null,
@@ -390,15 +460,25 @@ async function runPipeline(session, pipelineDef, cfg, res, imageContext = []) {
     });
   } catch (err) {
     if (killed) {
-      // Clear partial data from the interrupted step so session reflects only finished work
-      if (session.steps[currentStep]) {
-        session.steps[currentStep].iterations    = [];
-        session.steps[currentStep].outputImageUrl = null;
-        session.steps[currentStep].outputVideoUrl = null;
+      // Discard partial data from the interrupted step so the session reflects
+      // only finished work — but keep iterations from earlier runs of that step.
+      const st = session.steps[currentStep];
+      if (st) {
+        st.iterations.length = preRunCounts[currentStep] ?? 0;
+        // The surviving iterations are exactly the pre-run set, so a manual
+        // selection among them is still valid — only drop it if it now dangles.
+        if (st.selectedIteration != null && st.selectedIteration > st.iterations.length) st.selectedIteration = null;
+        const kept = stepOutput(st);
+        st.outputImageUrl = kept?.imageUrl ?? null;
+        st.outputVideoUrl = kept?.videoUrl ?? null;
       }
       session.status = 'stopped';
       console.log(`[${tag}] stopped by user at step ${currentStep}`);
-      emit(res, 'stopped', { step: currentStep });
+      emit(res, 'stopped', {
+        step: currentStep,
+        keptIterations:    st?.iterations.length ?? 0,
+        selectedIteration: st?.selectedIteration ?? null,
+      });
     } else {
       session.status = 'error';
       console.error(`[${tag}] error: ${err.message}`);
@@ -446,12 +526,22 @@ function buildPipelineFromWorkflow(workflow, genParams, review) {
   });
 }
 
+// A session's pipeline = the current workflow definition (so parameter edits
+// apply on re-run) followed by any ad-hoc steps added to this session in the
+// UI (session.extraSteps — e.g. "make a video from this image"). Extra steps
+// may carry `inputFrom` (a step index) to build on that step's output instead
+// of the immediately preceding step's.
+function sessionPipeline(session, workflow, genParams = {}, review = {}) {
+  return [...buildPipelineFromWorkflow(workflow, genParams, review), ...(session.extraSteps ?? [])];
+}
+
 function buildSessionSteps(pipelineDef, cfg) {
   return pipelineDef.map(stepDef => ({
     type:           stepDef.type,
     label:          steps.get(stepDef.type).label(stepDef, cfg),
     modelId:        stepDef.modelId ?? null,
     iterations:     [],
+    selectedIteration: null,
     outputImageUrl: null,
     outputVideoUrl: null,
   }));
@@ -495,8 +585,10 @@ router.post('/', async (req, res) => {
   await runPipeline(session, pipelineDef, cfg, res);
 });
 
-// POST /api/generate/continue/:id — resume an existing session
-router.post('/continue/:id', async (req, res) => {
+// Shared by /continue (full re-run) and /rerun (partial re-run): validates the
+// session against the current workflow, replays history for the client, then
+// runs the pipeline over [fromStep, toStep].
+async function resumeSession(req, res, { fromStep = 0, toStep = null } = {}) {
   const cfg = config.load();
 
   if (!cfg.llmModel) return res.status(400).json({ error: 'No LLM model configured.' });
@@ -504,16 +596,49 @@ router.post('/continue/:id', async (req, res) => {
   const session = sessions.get(req.params.id) ?? db.loadSession(req.params.id);
   if (!session) return res.status(404).json({ error: 'Session not found' });
   if (!session.steps?.length) return res.status(400).json({ error: 'Session has no steps.' });
+  if (activeKills.has(session.id)) return res.status(409).json({ error: 'Session is already running' });
 
   const workflow = cfg.workflows?.[session.workflowId];
   if (!workflow) return res.status(400).json({ error: `Workflow "${session.workflowId}" not found.` });
 
-  session.status = 'running';
-  sessions.set(session.id, session);
-
   const { overrides = {} } = req.body;
   const { genParams, review } = splitOverrides(overrides);
-  const pipelineDef = buildPipelineFromWorkflow(workflow, genParams, review);
+  const pipelineDef = sessionPipeline(session, workflow, genParams, review);
+
+  // The session's steps were built from this workflow — if it changed shape
+  // since, step indexes no longer line up and a re-run would corrupt the session.
+  if (pipelineDef.length !== session.steps.length) {
+    return res.status(400).json({ error: `Workflow "${session.workflowId}" changed shape since this session ran (${pipelineDef.length} steps vs ${session.steps.length}) — start a new session.` });
+  }
+  const drifted = pipelineDef.findIndex((d, i) => d.type !== session.steps[i].type);
+  if (drifted !== -1) {
+    return res.status(400).json({ error: `Workflow "${session.workflowId}" changed shape since this session ran (step ${drifted + 1} is now ${pipelineDef[drifted].type}, was ${session.steps[drifted].type}) — start a new session.` });
+  }
+  // Same shape — refresh labels so an edited model name shows up on re-run.
+  for (let i = 0; i < pipelineDef.length; i++) {
+    session.steps[i].label = steps.get(pipelineDef[i].type).label(pipelineDef[i], cfg);
+  }
+
+  const last    = pipelineDef.length - 1;
+  const endStep = toStep ?? last;
+  if (!Number.isInteger(fromStep) || fromStep < 0 || fromStep > last) {
+    return res.status(400).json({ error: `fromStep out of range (0–${last})` });
+  }
+  if (!Number.isInteger(endStep) || endStep < fromStep || endStep > last) {
+    return res.status(400).json({ error: `toStep out of range (${fromStep}–${last})` });
+  }
+
+  let initialInputImage = null;
+  const sourceStep = pipelineDef[fromStep].inputFrom ?? (fromStep > 0 ? fromStep - 1 : null);
+  if (sourceStep != null) {
+    initialInputImage = stepOutput(session.steps[sourceStep])?.imageUrl ?? null;
+    if (!initialInputImage) {
+      return res.status(400).json({ error: `Step ${sourceStep} has no output image to chain from — re-run it first.` });
+    }
+  }
+
+  session.status = 'running';
+  sessions.set(session.id, session);
 
   res.set({ 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', 'Connection': 'keep-alive', 'X-Session-Id': session.id });
   res.flushHeaders();
@@ -522,13 +647,26 @@ router.post('/continue/:id', async (req, res) => {
   // Replay all steps' history so the client can reconstruct the UI
   for (let si = 0; si < session.steps.length; si++) {
     const st = session.steps[si];
-    emit(res, 'step', { index: si, type: st.type, label: st.label, total: session.steps.length });
+    emit(res, 'step', { index: si, type: st.type, label: st.label, total: session.steps.length, steering: st.steering ?? null });
     for (let i = 0; i < st.iterations.length; i++) {
-      emit(res, 'history', { step: si, ...st.iterations[i], iteration: i + 1 });
+      emit(res, 'history', {
+        step: si, ...st.iterations[i], iteration: i + 1,
+        ...(st.selectedIteration === i + 1 ? { selected: true } : {}),
+      });
     }
   }
 
-  await runPipeline(session, pipelineDef, cfg, res);
+  await runPipeline(session, pipelineDef, cfg, res, [], { startStep: fromStep, endStep, initialInputImage });
+}
+
+// POST /api/generate/continue/:id — resume an existing session (full re-run)
+router.post('/continue/:id', (req, res) => resumeSession(req, res));
+
+// POST /api/generate/rerun/:id — re-run part of a session: { fromStep, toStep? }.
+// Earlier steps keep their outputs; fromStep === toStep redoes a single step.
+router.post('/rerun/:id', (req, res) => {
+  const { fromStep = 0, toStep = null } = req.body ?? {};
+  return resumeSession(req, res, { fromStep, toStep });
 });
 
 // GET /api/generate/sessions — list all persisted sessions
@@ -634,16 +772,112 @@ router.post('/human-review/:sessionId', (req, res) => {
   res.status(204).end();
 });
 
+// POST /api/generate/sessions/:id/select — pick which iteration (variant) of a
+// step feeds downstream steps on the next partial re-run. Body: { stepIndex, iteration }.
+router.post('/sessions/:id/select', (req, res) => {
+  const session = sessions.get(req.params.id) ?? db.loadSession(req.params.id);
+  if (!session) return res.status(404).json({ error: 'Session not found' });
+  if (activeKills.has(req.params.id)) return res.status(409).json({ error: 'Session is running — wait for it to finish' });
+
+  const { stepIndex, iteration } = req.body ?? {};
+  const st = session.steps?.[stepIndex];
+  if (!st) return res.status(400).json({ error: `No step ${stepIndex} in this session` });
+  if (!Number.isInteger(iteration) || iteration < 1 || iteration > st.iterations.length) {
+    return res.status(400).json({ error: `iteration out of range (1–${st.iterations.length})` });
+  }
+
+  st.selectedIteration = iteration;
+  const sel = stepOutput(st);
+  st.outputImageUrl = sel?.imageUrl ?? null;
+  st.outputVideoUrl = sel?.videoUrl ?? null;
+  sessions.set(session.id, session);
+  db.saveSession(session);
+
+  res.json({ stepIndex, selectedIteration: st.selectedIteration, outputImageUrl: st.outputImageUrl, outputVideoUrl: st.outputVideoUrl });
+});
+
 // POST /api/generate/sessions/:id/refuse-accepted
+// POST /api/generate/sessions/:id/steps — append an ad-hoc step to a session,
+// e.g. "make a video from this image" on a session whose workflow has no video
+// step (an API-driven generate, say). Body:
+//   { type: 'video', modelId, params?, inputFrom, iteration?, steering? }
+// `inputFrom` is the step whose output the video animates; `iteration` (1-based)
+// optionally picks that step's variant first; `steering` seeds the new step's
+// notes (see PUT /sessions/:id/steps/:index/steering). Returns { stepIndex } —
+// run it with POST /rerun/:id { fromStep: stepIndex }.
+router.post('/sessions/:id/steps', (req, res) => {
+  const cfg     = config.load();
+  const session = sessions.get(req.params.id) ?? db.loadSession(req.params.id);
+  if (!session) return res.status(404).json({ error: 'Session not found' });
+  if (activeKills.has(req.params.id)) return res.status(409).json({ error: 'Session is running — wait for it to finish' });
+
+  const { type = 'video', modelId, params = {}, inputFrom, iteration, steering } = req.body ?? {};
+  if (type !== 'video') return res.status(400).json({ error: 'Only video steps can be added to an existing session' });
+  const model = cfg.models?.[modelId];
+  if (!model) return res.status(400).json({ error: `Model "${modelId}" not found in config` });
+  if (!archMeta[model.architecture]?.videoArch) return res.status(400).json({ error: `"${model.label ?? modelId}" is not a video model` });
+
+  const src = Number.isInteger(inputFrom) ? session.steps?.[inputFrom] : null;
+  if (!src) return res.status(400).json({ error: `No step ${inputFrom} in this session` });
+  if (iteration != null) {
+    if (!Number.isInteger(iteration) || iteration < 1 || iteration > src.iterations.length) {
+      return res.status(400).json({ error: `iteration out of range (1–${src.iterations.length})` });
+    }
+    src.selectedIteration = iteration;
+    src.outputImageUrl = stepOutput(src)?.imageUrl ?? null;
+    src.outputVideoUrl = stepOutput(src)?.videoUrl ?? null;
+  }
+  if (!stepOutput(src)?.imageUrl) return res.status(400).json({ error: `Step ${inputFrom + 1} has no output image to build a video from` });
+
+  const stepDef = { type: 'video', modelId, params: params && typeof params === 'object' ? params : {}, inputFrom };
+  session.extraSteps = [...(session.extraSteps ?? []), stepDef];
+  session.steps.push(...buildSessionSteps([stepDef], cfg));
+  if (typeof steering === 'string' && steering.trim()) session.steps.at(-1).steering = steering.trim().slice(0, 4000);
+  sessions.set(session.id, session);
+  db.saveSession(session);
+
+  res.json({ stepIndex: session.steps.length - 1 });
+});
+
+// PUT /api/generate/sessions/:id/steps/:index/steering { steering } — director's
+// notes for a video step's next take (framing, camera, pacing, sound). They are
+// a reaction to what the earlier steps produced, so they live on the session,
+// not the workflow. Empty clears them. Allowed while running: applies to the
+// next take.
+router.put('/sessions/:id/steps/:index/steering', (req, res) => {
+  const session = sessions.get(req.params.id) ?? db.loadSession(req.params.id);
+  if (!session) return res.status(404).json({ error: 'Session not found' });
+  const index = Number(req.params.index);
+  const st = session.steps?.[index];
+  if (!st) return res.status(400).json({ error: `No step ${req.params.index} in this session` });
+  if (st.type !== 'video') return res.status(400).json({ error: 'Steering notes apply to video steps only' });
+  const { steering } = req.body ?? {};
+  if (steering != null && typeof steering !== 'string') return res.status(400).json({ error: 'steering must be a string' });
+  const text = (steering ?? '').trim().slice(0, 4000);
+  if (text) st.steering = text; else delete st.steering;
+  sessions.set(session.id, session);
+  db.saveSession(session, { touch: false });
+  res.json({ stepIndex: index, steering: st.steering ?? null });
+});
+
 router.post('/sessions/:id/refuse-accepted', (req, res) => {
   const session = sessions.get(req.params.id) ?? db.loadSession(req.params.id);
   if (!session) return res.status(404).json({ error: 'Session not found' });
 
+  const { stepIndex, iterationN } = req.body ?? {};
   let found = null;
   let foundStepIndex = -1;
-  for (let si = session.steps.length - 1; si >= 0 && !found; si--) {
-    const it = [...session.steps[si].iterations].reverse().find(it => it.verdict === 'ACCEPT');
-    if (it) { found = it; foundStepIndex = si; }
+
+  if (Number.isInteger(stepIndex) && Number.isInteger(iterationN)) {
+    // Explicit target from the client
+    const it = session.steps?.[stepIndex]?.iterations?.[iterationN - 1];
+    if (it?.verdict === 'ACCEPT') { found = it; foundStepIndex = stepIndex; }
+  } else {
+    // Legacy: last accepted iteration anywhere in the session
+    for (let si = session.steps.length - 1; si >= 0 && !found; si--) {
+      const it = [...session.steps[si].iterations].reverse().find(it => it.verdict === 'ACCEPT');
+      if (it) { found = it; foundStepIndex = si; }
+    }
   }
 
   if (!found) return res.status(400).json({ error: 'No accepted iteration to refuse' });

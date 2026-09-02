@@ -42,11 +42,13 @@ function blankIteration(n) {
     poseImageUrl:       null,
     loras:              null,
     warnings:           [],
+    videoUrl:           null,
+    seed:               null,
   };
 }
 
 function blankStep(index) {
-  return { index, type: '', label: '', iterations: [], outputImageUrl: null, videoUrl: null, progress: 0, status: '' };
+  return { index, type: '', label: '', iterations: [], selectedIteration: null, outputImageUrl: null, videoUrl: null, progress: 0, status: '', steering: '' };
 }
 
 function ensureStep(index) {
@@ -72,13 +74,16 @@ export function handleEvent(event, data) {
     case 'session':
       genState.sessionId = data.id;
       genState.status    = data.resume ? 'Resuming session…' : 'Session started';
-      if (!data.resume) genState.steps = [];
+      // A resume replays the full history, so clearing always keeps the view in
+      // sync with the server (e.g. after a stop truncated iterations server-side).
+      genState.steps = [];
       break;
 
     case 'step': {
       const step  = ensureStep(data.index);
       step.type   = data.type;
       step.label  = data.label;
+      if ('steering' in data) step.steering = data.steering ?? '';
       genState.activeStepIndex = data.index;
       genState.totalSteps      = data.total ?? genState.steps.length;
       genState.activeStepLabel = data.label;
@@ -102,7 +107,14 @@ export function handleEvent(event, data) {
       if (data.humanFeedback) it.humanFeedback = data.humanFeedback;
       it.poseImageUrl = data.poseImageUrl ?? it.poseImageUrl;
       it.loras        = data.loras        ?? it.loras;
+      it.videoUrl     = data.videoUrl     ?? it.videoUrl;
+      it.seed         = data.seed         ?? it.seed;
       if (data.warnings) it.warnings = data.warnings;
+      if (data.selected) ensureStep(si).selectedIteration = data.iteration;
+      if (it.videoUrl) {
+        const step = ensureStep(si);
+        if (!step.videoUrl) step.videoUrl = it.videoUrl;
+      }
       break;
     }
 
@@ -135,6 +147,9 @@ export function handleEvent(event, data) {
       if (step.type === 'video') {
         step.progress = data.pct;
         step.status   = `Generating… ${data.pct}%`;
+        // Mirror onto the in-flight take card (video progress events carry no iteration)
+        const it = step.iterations[step.iterations.length - 1];
+        if (it && !it.verdict) { it.progress = data.pct; it.status = `Generating… ${data.pct}%`; }
         if (si === genState.activeStepIndex) genState.activeStepPct = data.pct;
       } else {
         const it = ensureIteration(si, data.iteration);
@@ -174,6 +189,13 @@ export function handleEvent(event, data) {
       step.videoUrl = data.url;
       step.status   = 'Done';
       step.progress = 100;
+      if (data.iteration) {
+        const it = ensureIteration(si, data.iteration);
+        it.videoUrl = data.url;
+        it.verdict  = it.verdict ?? 'ACCEPT';
+        it.progress = 100;
+        it.status   = 'Done';
+      }
       if (si === genState.activeStepIndex) genState.activeStepPct = 100;
       break;
     }
@@ -182,6 +204,9 @@ export function handleEvent(event, data) {
       const step = ensureStep(si);
       if (data.imageUrl) step.outputImageUrl = data.imageUrl;
       if (data.videoUrl) step.videoUrl       = data.videoUrl;
+      // A fresh run supersedes any manual variant pick — mirror the server so
+      // the Output badge lands on the variant that really feeds the next step.
+      if ('selectedIteration' in data) step.selectedIteration = data.selectedIteration ?? null;
       break;
     }
 
@@ -249,8 +274,22 @@ export function handleEvent(event, data) {
       genState.loadedDesc = data.accepted ? null : (data.prompt || '');
       break;
 
-    case 'stopped':
-      genState.steps.splice(data.step ?? genState.steps.length - 1);
+    case 'stopped': {
+      // Drop only in-flight (unverdicted) iterations of the stopped step —
+      // earlier steps and kept takes stay visible. The next resume replays the
+      // authoritative history anyway.
+      const st = genState.steps[data.step];
+      if (st) {
+        // The server discards everything the stopped run added (verdicted or
+        // not) and tells us how many iterations survived — match it exactly so
+        // no ghost cards offer actions on takes that no longer exist.
+        st.iterations = typeof data.keptIterations === 'number'
+          ? st.iterations.filter(it => it.n <= data.keptIterations)
+          : st.iterations.filter(it => it.verdict);
+        if ('selectedIteration' in data) st.selectedIteration = data.selectedIteration ?? null;
+        st.status     = '';
+        st.progress   = 0;
+      }
       genState.status    = 'Stopped';
       genState.iterBadge = '';
       genState.running   = false;
@@ -259,6 +298,7 @@ export function handleEvent(event, data) {
       genState.activeStepLabel = '';
       genState.activeStepPct   = 0;
       break;
+    }
 
     case 'error':
       genState.status    = `Error: ${data.message}`;
@@ -366,13 +406,21 @@ export async function loadSession(sessionId) {
 
   for (let si = 0; si < (session.steps ?? []).length; si++) {
     const step = session.steps[si];
-    handleEvent('step', { index: si, type: step.type, label: step.label, total: session.steps.length });
-    if (step.type === 'video') {
-      if (step.outputVideoUrl) handleEvent('video', { step: si, url: step.outputVideoUrl });
-    } else {
-      for (let i = 0; i < step.iterations.length; i++) {
-        handleEvent('history', { step: si, ...step.iterations[i], iteration: i + 1 });
-      }
+    handleEvent('step', { index: si, type: step.type, label: step.label, total: session.steps.length, steering: step.steering ?? null });
+    for (let i = 0; i < step.iterations.length; i++) {
+      handleEvent('history', {
+        step: si, ...step.iterations[i], iteration: i + 1,
+        ...(step.selectedIteration === i + 1 ? { selected: true } : {}),
+      });
+    }
+    // Legacy video sessions have no iterations — only an output URL
+    if (step.type === 'video' && !step.iterations.length && step.outputVideoUrl) {
+      handleEvent('video', { step: si, url: step.outputVideoUrl });
+    }
+    const uiStep = genState.steps[si];
+    if (uiStep) {
+      uiStep.outputImageUrl = step.outputImageUrl ?? null;
+      if (step.outputVideoUrl) uiStep.videoUrl = step.outputVideoUrl;
     }
   }
 
@@ -391,6 +439,59 @@ export function returnToLive() {
   genState.steps   = [];
   genState.status  = '';
   genState.running = true;
+}
+
+// Re-run part of a session: fromStep..toStep (toStep null = to the end).
+// Earlier steps keep their outputs; fromStep === toStep redoes a single step.
+// Append an ad-hoc video step that animates `fromStep`'s image (variant
+// `iteration`, 1-based) and run it — the rest of the session is untouched.
+export async function addVideoStep(sessionId, { modelId, fromStep, iteration, steering }) {
+  const { stepIndex } = await api('POST', `/api/generate/sessions/${sessionId}/steps`, {
+    type: 'video', modelId, inputFrom: fromStep, iteration, ...(steering ? { steering } : {}),
+  });
+  await rerunFrom(sessionId, stepIndex, stepIndex);
+}
+
+// Director's notes for a video step's next take (run view). Empty clears.
+export async function setStepSteering(sessionId, stepIndex, steering) {
+  const r = await api('PUT', `/api/generate/sessions/${sessionId}/steps/${stepIndex}/steering`, { steering });
+  const step = genState.steps[stepIndex];
+  if (step) step.steering = r.steering ?? '';
+  return r;
+}
+
+export async function rerunFrom(sessionId, fromStep, toStep = null) {
+  _hasDirectStream   = true;
+  _livePaused        = false;
+  genState.running   = true;
+  genState.status    = toStep === fromStep ? `Redoing step ${fromStep + 1}…` : `Re-running from step ${fromStep + 1}…`;
+  genState.iterBadge = '';
+
+  const response = await fetch(`/api/generate/rerun/${sessionId}`, {
+    method:  'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body:    JSON.stringify({ fromStep, toStep }),
+  });
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({ error: response.statusText }));
+    genState.status  = `Error: ${err.error}`;
+    genState.running = false;
+    _hasDirectStream = false;
+    return;
+  }
+  readSSEStream(response, () => { genState.running = false; _hasDirectStream = false; });
+}
+
+// Pick which iteration (variant) of a step feeds downstream steps.
+export async function selectIteration(sessionId, stepIndex, iteration) {
+  const result = await api('POST', `/api/generate/sessions/${sessionId}/select`, { stepIndex, iteration });
+  const step = genState.steps[stepIndex];
+  if (step) {
+    step.selectedIteration = result.selectedIteration;
+    step.outputImageUrl    = result.outputImageUrl;
+    if (result.outputVideoUrl) step.videoUrl = result.outputVideoUrl;
+  }
+  return result;
 }
 
 export async function submitHumanReview(sessionId, stepIndex, accept, feedback) {
