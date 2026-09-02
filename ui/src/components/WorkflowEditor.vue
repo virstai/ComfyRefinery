@@ -243,21 +243,28 @@
           <span v-if="!videoModels.length" class="hint">No video models found. Add one in the Models panel.</span>
         </label>
         <div class="row">
-          <label>Width    <input type="number" v-model.number="step.width"    step="16"  placeholder="832"></label>
-          <label>Height   <input type="number" v-model.number="step.height"   step="16"  placeholder="480"></label>
-          <label>Duration (s) <input type="number" v-model.number="step.duration" step="0.5" min="0.5" placeholder="4"></label>
-          <label>FPS      <input type="number" v-model.number="step.fps"      step="1"   placeholder="24"></label>
+          <label>Width    <input type="number" v-model.number="step.width"    step="16"  :placeholder="archDefault(si, 'width')"></label>
+          <label>Height   <input type="number" v-model.number="step.height"   step="16"  :placeholder="archDefault(si, 'height')"></label>
+          <label>Duration (s) <input type="number" v-model.number="step.duration" step="0.5" min="0.5" :placeholder="archDefaultDuration(si)"></label>
+          <label>FPS      <input type="number" v-model.number="step.fps"      step="1"   :placeholder="archDefault(si, 'fps')"></label>
         </div>
         <p v-if="step.duration !== ''" class="hint">
           = {{ secondsToFrames(Number(step.duration), effectiveFps(step)) }} frames at {{ effectiveFps(step) }} fps
         </p>
         <div class="row">
-          <label>Steps    <input type="number" v-model.number="step.steps"    min="1"   placeholder="30"></label>
-          <label>Guidance <input type="number" v-model.number="step.guidance" step="0.5" placeholder="6"></label>
+          <label>Steps    <input type="number" v-model.number="step.steps"    min="1"   :placeholder="archDefault(si, 'steps')"></label>
+          <label v-if="showGuidance(si)">Guidance
+            <input type="number" v-model.number="step.guidance" step="0.5" :placeholder="archDefault(si, 'guidance')">
+          </label>
+          <label v-if="showCfg(si)">CFG scale
+            <input type="number" v-model.number="step.cfgScale" step="0.5" :placeholder="archDefault(si, 'cfgScale')">
+          </label>
         </div>
         <p class="hint">
-          Video step is always terminal — generates once with no review or iteration.
-          Input: previous step's accepted image → first reference → text-to-video.
+          Video step is always last — no review loop; use ↻ Redo on the run view to roll extra takes.
+          Input: previous step's accepted image → uploaded references
+          ({{ archMeta[stepArch(si)]?.referenceToVideo ? 'reference-to-video when the Ref2VA model is set, else first-frame' : 'first reference as first-frame' }})
+          → text-to-video.
         </p>
       </template>
 
@@ -464,6 +471,12 @@ function archDefault(si, key) {
   const arch = stepArch(si);
   const d = arch ? props.archMeta[arch]?.defaults : null;
   return d?.[key] != null ? String(d[key]) : 'default';
+}
+
+// Default clip length in seconds, derived from the arch's frames/fps defaults
+function archDefaultDuration(si) {
+  const d = props.archMeta[stepArch(si)]?.defaults;
+  return d?.frames && d?.fps ? String(framesToSeconds(d.frames, d.fps)) : 'default';
 }
 
 function archCap(si, name) {
