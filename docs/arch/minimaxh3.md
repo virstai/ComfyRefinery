@@ -66,6 +66,15 @@ up to 9 reference images — extra uploads are dropped with a warning on the tak
 (`maxReferences: 9` in `ARCH_META`). If the Ref2VA UNet is not configured, the first
 reference falls back to plain I2V first-frame conditioning instead.
 
+## ROCm: use the int8 text encoder, not nvfp4
+
+On AMD (gfx1201, ROCm 7.13, ComfyUI 0.34) the `qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors` encoder returns **all-NaN
+conditioning for every prompt** — the NaN is created inside an nvfp4 `QuantizedTensor` Linear (`layers.10.mlp.up_proj`) on
+the *emulated* nvfp4 path, and bf16/fp32 encoder flags do not help. The symptom is a video that ignores the prompt entirely
+(text-to-video with "red car", "ocean" and an empty prompt produced the same clip). Use `qwen3vl_32b_minimax_h3_int8_convrot.safetensors`
+(25 GB, Comfy-Org/MiniMax-H3) instead: int8 convrot is a native op on this GPU and the same probe returns real embeddings.
+Verify with a text-to-video A/B on a fixed seed — different prompts must give clearly different clips.
+
 ## Performance notes (measured on an AMD R9700 32 GB, ROCm 7.13, ComfyUI 0.34)
 
 H3 is attention-bound: token count = latent frames × (W/16 × H/16)/4, and 1024×1024 × 243 frames is ~73k tokens.
