@@ -294,7 +294,12 @@ async function runVideoStep(stepDef, stepIndex, session, ctx, cfg, res, isKilled
   if (!modelConfig) throw new Error(`Video model "${stepDef.modelId}" not found in config`);
   ctx = { ...ctx, modelConfig, skillId: modelConfig.id ?? stepDef.modelId };
 
-  emit(res, 'step', { index: stepIndex, type: 'video', label: stepData.label, total: session.steps.length });
+  // Steering notes live on the session's step (set from the run view for the
+  // next take); an ad-hoc step may also have been created with them.
+  const steering = (stepData.steering ?? stepDef.steering ?? '').trim();
+  if (steering) stepDef = { ...stepDef, steering };
+
+  emit(res, 'step', { index: stepIndex, type: 'video', label: stepData.label, total: session.steps.length, steering: steering || null });
   console.log(`[${tag}] step ${stepIndex} (video: ${stepData.label})`);
 
   if (isKilled()) throw new Error('Generation stopped by user');
@@ -642,7 +647,7 @@ async function resumeSession(req, res, { fromStep = 0, toStep = null } = {}) {
   // Replay all steps' history so the client can reconstruct the UI
   for (let si = 0; si < session.steps.length; si++) {
     const st = session.steps[si];
-    emit(res, 'step', { index: si, type: st.type, label: st.label, total: session.steps.length });
+    emit(res, 'step', { index: si, type: st.type, label: st.label, total: session.steps.length, steering: st.steering ?? null });
     for (let i = 0; i < st.iterations.length; i++) {
       emit(res, 'history', {
         step: si, ...st.iterations[i], iteration: i + 1,
@@ -797,9 +802,9 @@ router.post('/sessions/:id/select', (req, res) => {
 // step (an API-driven generate, say). Body:
 //   { type: 'video', modelId, params?, inputFrom, iteration?, steering? }
 // `inputFrom` is the step whose output the video animates; `iteration` (1-based)
-// optionally picks that step's variant first; `steering` is free-text
-// director's notes for the prompt builder. Returns { stepIndex } — run it
-// with POST /rerun/:id { fromStep: stepIndex }.
+// optionally picks that step's variant first; `steering` seeds the new step's
+// notes (see PUT /sessions/:id/steps/:index/steering). Returns { stepIndex } —
+// run it with POST /rerun/:id { fromStep: stepIndex }.
 router.post('/sessions/:id/steps', (req, res) => {
   const cfg     = config.load();
   const session = sessions.get(req.params.id) ?? db.loadSession(req.params.id);
@@ -824,14 +829,35 @@ router.post('/sessions/:id/steps', (req, res) => {
   }
   if (!stepOutput(src)?.imageUrl) return res.status(400).json({ error: `Step ${inputFrom + 1} has no output image to build a video from` });
 
-  const stepDef = { type: 'video', modelId, params: params && typeof params === 'object' ? params : {}, inputFrom,
-    ...(typeof steering === 'string' && steering.trim() ? { steering: steering.trim().slice(0, 4000) } : {}) };
+  const stepDef = { type: 'video', modelId, params: params && typeof params === 'object' ? params : {}, inputFrom };
   session.extraSteps = [...(session.extraSteps ?? []), stepDef];
   session.steps.push(...buildSessionSteps([stepDef], cfg));
+  if (typeof steering === 'string' && steering.trim()) session.steps.at(-1).steering = steering.trim().slice(0, 4000);
   sessions.set(session.id, session);
   db.saveSession(session);
 
   res.json({ stepIndex: session.steps.length - 1 });
+});
+
+// PUT /api/generate/sessions/:id/steps/:index/steering { steering } — director's
+// notes for a video step's next take (framing, camera, pacing, sound). They are
+// a reaction to what the earlier steps produced, so they live on the session,
+// not the workflow. Empty clears them. Allowed while running: applies to the
+// next take.
+router.put('/sessions/:id/steps/:index/steering', (req, res) => {
+  const session = sessions.get(req.params.id) ?? db.loadSession(req.params.id);
+  if (!session) return res.status(404).json({ error: 'Session not found' });
+  const index = Number(req.params.index);
+  const st = session.steps?.[index];
+  if (!st) return res.status(400).json({ error: `No step ${req.params.index} in this session` });
+  if (st.type !== 'video') return res.status(400).json({ error: 'Steering notes apply to video steps only' });
+  const { steering } = req.body ?? {};
+  if (steering != null && typeof steering !== 'string') return res.status(400).json({ error: 'steering must be a string' });
+  const text = (steering ?? '').trim().slice(0, 4000);
+  if (text) st.steering = text; else delete st.steering;
+  sessions.set(session.id, session);
+  db.saveSession(session, { touch: false });
+  res.json({ stepIndex: index, steering: st.steering ?? null });
 });
 
 router.post('/sessions/:id/refuse-accepted', (req, res) => {

@@ -48,7 +48,7 @@ function blankIteration(n) {
 }
 
 function blankStep(index) {
-  return { index, type: '', label: '', iterations: [], selectedIteration: null, outputImageUrl: null, videoUrl: null, progress: 0, status: '' };
+  return { index, type: '', label: '', iterations: [], selectedIteration: null, outputImageUrl: null, videoUrl: null, progress: 0, status: '', steering: '' };
 }
 
 function ensureStep(index) {
@@ -83,6 +83,7 @@ export function handleEvent(event, data) {
       const step  = ensureStep(data.index);
       step.type   = data.type;
       step.label  = data.label;
+      if ('steering' in data) step.steering = data.steering ?? '';
       genState.activeStepIndex = data.index;
       genState.totalSteps      = data.total ?? genState.steps.length;
       genState.activeStepLabel = data.label;
@@ -405,7 +406,7 @@ export async function loadSession(sessionId) {
 
   for (let si = 0; si < (session.steps ?? []).length; si++) {
     const step = session.steps[si];
-    handleEvent('step', { index: si, type: step.type, label: step.label, total: session.steps.length });
+    handleEvent('step', { index: si, type: step.type, label: step.label, total: session.steps.length, steering: step.steering ?? null });
     for (let i = 0; i < step.iterations.length; i++) {
       handleEvent('history', {
         step: si, ...step.iterations[i], iteration: i + 1,
@@ -449,6 +450,14 @@ export async function addVideoStep(sessionId, { modelId, fromStep, iteration, st
     type: 'video', modelId, inputFrom: fromStep, iteration, ...(steering ? { steering } : {}),
   });
   await rerunFrom(sessionId, stepIndex, stepIndex);
+}
+
+// Director's notes for a video step's next take (run view). Empty clears.
+export async function setStepSteering(sessionId, stepIndex, steering) {
+  const r = await api('PUT', `/api/generate/sessions/${sessionId}/steps/${stepIndex}/steering`, { steering });
+  const step = genState.steps[stepIndex];
+  if (step) step.steering = r.steering ?? '';
+  return r;
 }
 
 export async function rerunFrom(sessionId, fromStep, toStep = null) {

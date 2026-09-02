@@ -21,6 +21,15 @@
               <button v-if="step.index < steps.length - 1" class="step-action-btn" title="Regenerate this step from scratch, then run everything after it. To reuse an existing image instead, click it and press “Use for … step”." @click.stop="rerunFrom(sessionId, step.index)">▶ From here</button>
             </span>
           </div>
+          <!-- Steering for the next take: a reaction to what the earlier steps produced -->
+          <div v-if="step.type === 'video' && sessionId" class="steering-block">
+            <textarea
+              class="steering-input" rows="2" :disabled="running"
+              :value="step.steering || ''"
+              placeholder="Steer the next take: framing, camera moves, pacing, sound… saved when you click away; used by ↻ Redo and ▶ From here"
+              @change="saveSteering(step, $event.target.value)"
+            ></textarea>
+          </div>
           <!-- Legacy video step (no persisted takes): clickable thumbnail → pins into detail pane -->
           <template v-if="step.type === 'video' && !step.iterations.length">
             <div
@@ -80,7 +89,16 @@
 import { computed, ref, watch } from 'vue';
 import IterationCard from './IterationCard.vue';
 import DetailPane   from './DetailPane.vue';
-import { rerunFrom } from '../stores/generate.js';
+import { genState, rerunFrom, setStepSteering } from '../stores/generate.js';
+
+async function saveSteering(step, text) {
+  try {
+    await setStepSteering(props.sessionId, step.index, text.trim());
+    genState.status = text.trim() ? `Steering saved for step ${step.index + 1}` : `Steering cleared for step ${step.index + 1}`;
+  } catch (e) {
+    genState.status = `Error: ${e.message}`;
+  }
+}
 
 const props = defineProps({
   steps:     { type: Array,   default: () => [] },

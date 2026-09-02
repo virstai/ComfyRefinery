@@ -111,7 +111,7 @@ const activeView   = ref(initialRoute.view);
 watch([activeView, () => genState.sessionId], ([view, sessionId]) => {
   const target = view === 'generate' && sessionId ? `#/generate/${sessionId}` : `#/${view}`;
   if (location.hash !== target) history.replaceState(null, '', target);
-}, { immediate: true });
+});  // not immediate: the URL is already right on load, and a session id must survive until restore runs
 window.addEventListener('hashchange', () => { activeView.value = parseHash().view; });
 
 onMounted(async () => {

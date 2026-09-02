@@ -13,7 +13,7 @@ OpenAI, LM Studio, etc.) can be pointed at via `llmBaseUrl` in settings.
 ```bash
 npm start              # production (serve public/)
 npm run dev            # API --watch + Vite hot-reload UI
-npm test               # all 345 tests
+npm test               # all 346 tests
 npm run ui:build       # compile Vue → public/
 ```
 
@@ -182,16 +182,17 @@ Skill + notes live in `data/skills/<workflowId>.json`, keyed by workflow ID.
     { "type": "upscale", "label": "4x-UltraSharp.pth ×4",
       "iterations": [ { "imageUrl": "...", "verdict": "ACCEPT", "diagnosis": "..." } ],
       "outputImageUrl": "/api/image?..." },
-    // video step defs (workflow and extraSteps) may carry `steering`: free-text director's notes (framing,
-    // camera, pacing, sound) appended to every take's prompt request — see video.js buildVideoMessages
-    { "type": "video", "label": "LTX 2.3 ×97f @ 24fps", "modelId": "ltx-2-3",
+    // session video steps may carry `steering`: director's notes for the *next take* (framing, camera, pacing,
+    // sound), set from the run view (PUT /sessions/:id/steps/:index/steering) — a reaction to what earlier
+    // steps produced, so it lives on the session, never the workflow. video.js appends it to the prompt request.
+    { "type": "video", "label": "LTX 2.3 ×97f @ 24fps", "modelId": "ltx-2-3", "steering": "slow push-in; sound: rain only",
       // each run of a video step appends a "take" (variant) — no review loop
       "iterations": [ { "prompt": "...", "videoUrl": "/api/video?...", "verdict": "ACCEPT", "diagnosis": "video step (no review)" } ],
       "outputVideoUrl": "/api/video?..." }
   ],
   // Ad-hoc steps appended in the UI (e.g. "Make video" on any image variant). They run after the
   // workflow's steps; `inputFrom` names the step whose output they build on.
-  "extraSteps": [ { "type": "video", "modelId": "ltx-2-3", "params": {}, "inputFrom": 0, "steering": "slow push-in; sound: rain only" } ],
+  "extraSteps": [ { "type": "video", "modelId": "ltx-2-3", "params": {}, "inputFrom": 0 } ],
   "status": "complete" | "stopped" | "error", "createdAt": "..."
 }
 ```
@@ -203,7 +204,8 @@ steps keep their outputs — the run chains from `stepOutput(steps[fromStep-1])`
 `selectedIteration`. `fromStep === toStep` redoes one step, appending a new iteration/take.
 `POST /api/generate/sessions/:id/select` `{ stepIndex, iteration }` picks which variant feeds
 downstream steps (recomputes `outputImageUrl`/`outputVideoUrl`); a fresh run of a step clears its
-selection. `POST /api/generate/sessions/:id/steps` `{ type: 'video', modelId, params?, inputFrom, iteration?, steering? }`
+selection. `PUT /api/generate/sessions/:id/steps/:index/steering` `{ steering }` sets a video step's
+director's notes for its next take (RunSection textarea; allowed while running). `POST /api/generate/sessions/:id/steps` `{ type: 'video', modelId, params?, inputFrom, iteration?, steering? }`
 appends an ad-hoc video step (`session.extraSteps`) that animates `inputFrom`'s image and returns its
 `stepIndex` — the UI then calls `/rerun { fromStep: stepIndex }`. A session's pipeline on re-run is
 `sessionPipeline()`: the current workflow steps followed by `extraSteps`, so workflow edits still apply
@@ -218,7 +220,7 @@ All events carry `step` (0-indexed). Full event list:
 | Event | Payload | Notes |
 |---|---|---|
 | `session` | `{ id, prompt, resume? }` | First event; client sets sessionId |
-| `step` | `{ index, type, label, total }` | Start of each pipeline step |
+| `step` | `{ index, type, label, total, steering? }` | Start of each pipeline step; `steering` = the session step's current notes (video steps, also on replay) |
 | `phase` | `{ step, phase, iteration }` | `prompt_building`, `posing`, `generating`, `reviewing` |
 | `token` | `{ step, iteration, phase, token }` | LLM streaming token |
 | `prompt` | `{ step, iteration, prompt }` | Final built prompt |
@@ -505,7 +507,7 @@ data/
 ## Testing
 
 ```bash
-npm test               # all 345 tests
+npm test               # all 346 tests
 npm run test:unit      # unit tests only
 npm run test:int       # integration tests only
 ```

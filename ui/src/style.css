@@ -789,3 +789,4 @@ button:disabled  { opacity: .45; cursor: not-allowed; }
 .chip.on { background: color-mix(in srgb, var(--accent) 22%, transparent); color: var(--accent); border-color: color-mix(in srgb, var(--accent) 50%, transparent); }
 
 .steering-input { width: 100%; box-sizing: border-box; margin: 6px 0 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 4px; color: var(--text); padding: 6px 8px; font-size: 12px; font-family: inherit; resize: vertical; }
+.steering-block { margin: 6px 0 10px; }

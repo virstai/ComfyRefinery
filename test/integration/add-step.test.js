@@ -148,7 +148,7 @@ test('steering notes on an added video step reach the prompt builder', async () 
   const res = await post(`/api/generate/sessions/${sessionId}/steps`, { type: 'video', modelId: 'test-wanvideo', inputFrom: 0, steering: '  Low angle, hold on the face. Sound: wind only.  ' });
   assert.equal(res.status, 200);
   const { stepIndex } = await res.json();
-  assert.equal((await getSession(sessionId)).extraSteps[0].steering, 'Low angle, hold on the face. Sound: wind only.');
+  assert.equal((await getSession(sessionId)).steps[stepIndex].steering, 'Low angle, hold on the face. Sound: wind only.');
   const before = ollamaServer.requests.length;
   await collectSSE(`${base()}/api/generate/rerun/${sessionId}`, { fromStep: stepIndex, toStep: stepIndex });
   const videoReq = ollamaServer.requests.slice(before).find(r => r.messages.some(m => /video generation prompts/.test(typeof m.content === 'string' ? m.content : '')));
@@ -159,4 +159,26 @@ test('steering notes on an added video step reach the prompt builder', async () 
   const desc = texts.find(t => t.startsWith('Description:'));
   assert.ok(desc, 'description message present');
   assert.match(desc, /Director's notes[\s\S]*Low angle, hold on the face\. Sound: wind only\./);
+});
+
+test('steering set from the run view on a session step drives the next take and replays on rerun', async () => {
+  const sessionId = await runImageSession();
+  const { stepIndex } = await (await post(`/api/generate/sessions/${sessionId}/steps`, { type: 'video', modelId: 'test-wanvideo', inputFrom: 0 })).json();
+  const put = body => fetch(`${base()}/api/generate/sessions/${sessionId}/steps/${stepIndex}/steering`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  let res = await put({ steering: '  Handheld, quick pan left. Sound: crowd murmur.  ' });
+  assert.equal(res.status, 200);
+  assert.deepEqual(await res.json(), { stepIndex, steering: 'Handheld, quick pan left. Sound: crowd murmur.' });
+  assert.equal((await fetch(`${base()}/api/generate/sessions/${sessionId}/steps/0/steering`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: '{"steering":"x"}' })).status, 400, 'generate steps refuse steering');
+
+  const before = ollamaServer.requests.length;
+  const events = await collectSSE(`${base()}/api/generate/rerun/${sessionId}`, { fromStep: stepIndex, toStep: stepIndex });
+  const stepEvt = events.find(e => e.event === 'step' && e.data.index === stepIndex);
+  assert.equal(stepEvt.data.steering, 'Handheld, quick pan left. Sound: crowd murmur.', 'step event carries the notes');
+  const videoReq = ollamaServer.requests.slice(before).find(r => r.messages.some(m => /video generation prompts/.test(typeof m.content === 'string' ? m.content : '')));
+  const desc = videoReq.messages.filter(m => m.role === 'user').map(m => typeof m.content === 'string' ? m.content : m.content.map(p => p.text ?? '').join('')).find(t => t.startsWith('Description:'));
+  assert.match(desc, /Handheld, quick pan left\. Sound: crowd murmur\./);
+
+  res = await put({ steering: '' });
+  assert.equal((await res.json()).steering, null, 'empty clears');
+  assert.equal((await getSession(sessionId)).steps[stepIndex].steering, undefined);
 });
