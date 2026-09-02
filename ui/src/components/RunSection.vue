@@ -17,8 +17,8 @@
             <span class="step-type-badge">{{ step.type }}</span>
             {{ step.label || step.type }}
             <span v-if="canRerun" class="step-actions">
-              <button class="step-action-btn" title="Re-run just this step — adds another take, keeps earlier steps" @click.stop="rerunFrom(sessionId, step.index, step.index)">↻ Redo</button>
-              <button v-if="step.index < steps.length - 1" class="step-action-btn" title="Re-run this step and everything after it" @click.stop="rerunFrom(sessionId, step.index)">▶ From here</button>
+              <button class="step-action-btn" :title="step.type === 'video' ? 'New take using the previous step\'s selected image — nothing else is regenerated' : 'Generate a fresh variant of just this step — later steps are not run'" @click.stop="rerunFrom(sessionId, step.index, step.index)">↻ Redo</button>
+              <button v-if="step.index < steps.length - 1" class="step-action-btn" title="Regenerate this step from scratch, then run everything after it. To reuse an existing image instead, click it and press “Use for … step”." @click.stop="rerunFrom(sessionId, step.index)">▶ From here</button>
             </span>
           </div>
           <!-- Legacy video step (no persisted takes): clickable thumbnail → pins into detail pane -->

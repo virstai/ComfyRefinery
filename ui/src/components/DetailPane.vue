@@ -193,11 +193,15 @@
           </div>
         </div>
 
-        <!-- Variant selection: choose which iteration feeds downstream steps -->
-        <div v-if="canSelectOutput" class="human-review">
-          <span class="hr-ai-note">Downstream steps use this variant on the next “Run from here”.</span>
+        <!-- Variant selection / send downstream -->
+        <div v-if="canSendNext || canSelectOutput" class="human-review">
+          <span class="hr-ai-note">
+            <template v-if="canSendNext">Run the remaining step{{ props.steps.length - displayed.stepIndex > 2 ? 's' : '' }} now with this image as input — nothing before it is regenerated.</template>
+            <template v-else>Downstream steps use this variant on the next “Run from here”.</template>
+          </span>
           <div class="hr-actions">
-            <button class="primary" :disabled="submitting" @click="selectOutput">Use as step output</button>
+            <button v-if="canSendNext" class="primary" :disabled="submitting" @click="sendToNext">▶ Use for {{ nextStepType }} step</button>
+            <button v-if="canSelectOutput" class="secondary" :disabled="submitting" @click="selectOutput">Mark as step output only</button>
           </div>
         </div>
       </template>
@@ -207,7 +211,7 @@
 
 <script setup>
 import { ref, computed, watch, onMounted, onUnmounted } from 'vue';
-import { submitHumanReview, refuseAccepted, selectIteration } from '../stores/generate.js';
+import { submitHumanReview, refuseAccepted, selectIteration, rerunFrom } from '../stores/generate.js';
 
 const props = defineProps({
   steps:     { type: Array,   default: () => [] },
@@ -333,6 +337,32 @@ async function selectOutput() {
   submitting.value = true;
   try {
     await selectIteration(props.sessionId, displayed.value.stepIndex, displayed.value.iteration.n);
+  } finally {
+    submitting.value = false;
+  }
+}
+
+// ── Send a variant into the next step (select + run downstream) ──────────────
+
+const canSendNext = computed(() => {
+  const d = displayed.value;
+  if (!props.sessionId || props.running || !d?.iteration) return false;
+  if (!d.iteration.verdict || !d.iteration.imageUrl) return false; // video takes are terminal
+  return d.stepIndex < props.steps.length - 1;
+});
+
+const nextStepType = computed(() => {
+  const d = displayed.value;
+  return (d && props.steps[d.stepIndex + 1]?.type) || 'next';
+});
+
+async function sendToNext() {
+  const d = displayed.value;
+  if (!d || !canSendNext.value) return;
+  submitting.value = true;
+  try {
+    await selectIteration(props.sessionId, d.stepIndex, d.iteration.n);
+    await rerunFrom(props.sessionId, d.stepIndex + 1);
   } finally {
     submitting.value = false;
   }
