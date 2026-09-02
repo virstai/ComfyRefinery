@@ -136,7 +136,7 @@ const ARCH_META = {
     fieldHints:  {
       unetName:             'FL2VA model (T2V + I2V) — e.g. minimax_h3_fl2va_pruned_int8_convrot.safetensors',
       refUnetName:          'Optional Ref2VA model (reference-to-video) — e.g. minimax_h3_ref2va_pruned_int8_convrot.safetensors. Uploaded reference images route to it automatically.',
-      clipName:             'Qwen3-VL-32B text encoder — e.g. qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors (models/text_encoders/)',
+      clipName:             'Qwen3-VL-32B text encoder (models/text_encoders/) — qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors on NVIDIA; on AMD/ROCm use qwen3vl_32b_minimax_h3_int8_convrot.safetensors, since the nvfp4 file yields NaN conditioning there (the prompt is ignored).',
       vaeName:              'Video VAE — minimax_h3_video_vae_fp16.safetensors',
       audioVaeName:         'Audio VAE — minimax_h3_audio_vae_fp32.safetensors. Leave blank to skip audio generation.',
       distilledLoraName:    'Optional 8-step turbo LoRA for FL2VA (~2× faster, small quality cost). Step count defaults to 8 automatically while active — clear this field for maximum quality at 20 steps.',
