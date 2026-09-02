@@ -124,3 +124,15 @@ test('pickPrimaryVideo prefers the muxed file over the _noaudio fallback', () =>
   assert.equal(video.pickPrimaryVideo([silent]), silent, 'fallback alone is still a result');
   assert.equal(video.pickPrimaryVideo([]), null);
 });
+
+// ── steering ─────────────────────────────────────────────────────────────────
+
+test('buildVideoMessages appends steering notes to the request, none when blank', () => {
+  const withNotes = video.buildVideoMessages('a cat', 'minimaxh3', { isI2V: true, steering: ' Slow push-in. Sound: rain only. ' }, null);
+  const user = withNotes.find(m => m.role === 'user').content;
+  assert.match(user, /^Description: a cat/);
+  assert.match(user, /Director's notes/);
+  assert.match(user, /Slow push-in\. Sound: rain only\.$/);
+  const without = video.buildVideoMessages('a cat', 'minimaxh3', { isI2V: true, steering: '   ' }, null);
+  assert.equal(without.find(m => m.role === 'user').content, 'Description: a cat');
+});

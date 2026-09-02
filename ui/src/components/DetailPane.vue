@@ -208,6 +208,7 @@
         <!-- Ad-hoc video from this image -->
         <div v-if="canMakeVideo" class="human-review">
           <span class="hr-ai-note">Animate this image: adds a video step to this session and runs it now — nothing else is regenerated.</span>
+          <textarea v-model="videoSteering" class="steering-input" rows="2" :disabled="submitting" placeholder="Steering notes (optional): framing, camera, pacing, sound…"></textarea>
           <div class="hr-actions">
             <select v-model="videoModelId" :disabled="submitting">
               <option v-for="m in videoModels" :key="m.id" :value="m.id">{{ m.label }}</option>
@@ -363,6 +364,7 @@ const videoModels = computed(() =>
     .filter(([, m]) => configState.archMeta[m.architecture]?.videoArch)
     .map(([id, m]) => ({ id, label: m.label ?? id })));
 const videoModelId = ref(null);
+const videoSteering = ref('');
 watch(videoModels, list => { if (!list.some(m => m.id === videoModelId.value)) videoModelId.value = list[0]?.id ?? null; }, { immediate: true });
 
 const canMakeVideo = computed(() => {
@@ -377,7 +379,7 @@ async function makeVideo() {
   if (!d || !canMakeVideo.value || !videoModelId.value) return;
   submitting.value = true;
   try {
-    await addVideoStep(props.sessionId, { modelId: videoModelId.value, fromStep: d.stepIndex, iteration: d.iteration.n });
+    await addVideoStep(props.sessionId, { modelId: videoModelId.value, fromStep: d.stepIndex, iteration: d.iteration.n, steering: videoSteering.value.trim() });
   } catch (e) {
     genState.status = `Error: ${e.message}`;
   } finally {

@@ -795,9 +795,10 @@ router.post('/sessions/:id/select', (req, res) => {
 // POST /api/generate/sessions/:id/steps — append an ad-hoc step to a session,
 // e.g. "make a video from this image" on a session whose workflow has no video
 // step (an API-driven generate, say). Body:
-//   { type: 'video', modelId, params?, inputFrom, iteration? }
+//   { type: 'video', modelId, params?, inputFrom, iteration?, steering? }
 // `inputFrom` is the step whose output the video animates; `iteration` (1-based)
-// optionally picks that step's variant first. Returns { stepIndex } — run it
+// optionally picks that step's variant first; `steering` is free-text
+// director's notes for the prompt builder. Returns { stepIndex } — run it
 // with POST /rerun/:id { fromStep: stepIndex }.
 router.post('/sessions/:id/steps', (req, res) => {
   const cfg     = config.load();
@@ -805,7 +806,7 @@ router.post('/sessions/:id/steps', (req, res) => {
   if (!session) return res.status(404).json({ error: 'Session not found' });
   if (activeKills.has(req.params.id)) return res.status(409).json({ error: 'Session is running — wait for it to finish' });
 
-  const { type = 'video', modelId, params = {}, inputFrom, iteration } = req.body ?? {};
+  const { type = 'video', modelId, params = {}, inputFrom, iteration, steering } = req.body ?? {};
   if (type !== 'video') return res.status(400).json({ error: 'Only video steps can be added to an existing session' });
   const model = cfg.models?.[modelId];
   if (!model) return res.status(400).json({ error: `Model "${modelId}" not found in config` });
@@ -823,7 +824,8 @@ router.post('/sessions/:id/steps', (req, res) => {
   }
   if (!stepOutput(src)?.imageUrl) return res.status(400).json({ error: `Step ${inputFrom + 1} has no output image to build a video from` });
 
-  const stepDef = { type: 'video', modelId, params: params && typeof params === 'object' ? params : {}, inputFrom };
+  const stepDef = { type: 'video', modelId, params: params && typeof params === 'object' ? params : {}, inputFrom,
+    ...(typeof steering === 'string' && steering.trim() ? { steering: steering.trim().slice(0, 4000) } : {}) };
   session.extraSteps = [...(session.extraSteps ?? []), stepDef];
   session.steps.push(...buildSessionSteps([stepDef], cfg));
   sessions.set(session.id, session);

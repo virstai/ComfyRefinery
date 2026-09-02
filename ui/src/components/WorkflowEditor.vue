@@ -260,6 +260,13 @@
             <input type="number" v-model.number="step.cfgScale" step="0.5" :placeholder="archDefault(si, 'cfgScale')">
           </label>
         </div>
+        <label>Steering notes (optional)
+          <textarea v-model="step.steering" rows="3" placeholder="e.g. Slow push-in from a low angle, hold on her face at the end. Sound: only crackling torches and distant dripping water, no music."></textarea>
+        </label>
+        <p class="hint">
+          Director's notes for the prompt builder: framing, camera moves, pacing, and sound. They are added to every take's prompt request
+          and phrased in this model's prompt format (MiniMax H3 gets an <code>Audio:</code> line, for example) — you steer, the LLM still writes the prompt.
+        </p>
         <p class="hint">
           Video step is always last — no review loop; use ↻ Redo on the run view to roll extra takes.
           Leave width/height blank to match the input image's aspect ratio (fitted to the model's
@@ -359,6 +366,7 @@ function blankVideoStep() {
   return {
     type: 'video',
     modelId: '', width: '', height: '', duration: '', fps: '', steps: '', guidance: '', cfgScale: '',
+    steering: '',
   };
 }
 
@@ -414,6 +422,7 @@ function stepFromDef(s) {
       steps:    s.params?.steps        ?? '',
       guidance: s.params?.guidance     ?? '',
       cfgScale: s.params?.cfgScale     ?? '',
+      steering: s.steering             ?? '',
     };
   }
   // Unified image mode: chain strategy takes priority over reference strategy
@@ -587,6 +596,7 @@ async function save() {
           ...(s.guidance !== '' && { guidance: Number(s.guidance) }),
           ...(s.cfgScale !== '' && { cfgScale: Number(s.cfgScale) }),
         },
+        ...(String(s.steering ?? '').trim() && { steering: String(s.steering).trim() }),
       };
     }
 

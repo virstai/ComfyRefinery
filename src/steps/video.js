@@ -19,7 +19,10 @@ function label(stepDef, cfg) {
   return `${modelLabel} ×${frames}f @ ${fps}fps`;
 }
 
-function buildVideoMessages(userPrompt, architecture, { isI2V, refCount = 0 }, context) {
+// `steering` is the workflow step's director's notes: free text the user wrote
+// to shape framing, camera, pacing, and sound — appended to the request so the
+// prompt follows it while still using this architecture's prompt format.
+function buildVideoMessages(userPrompt, architecture, { isI2V, refCount = 0, steering = '' }, context) {
   const medium = refCount > 0 ? 'reference-to-video' : isI2V ? 'image-to-video' : 'text-to-video';
   const refGuidance = refCount > 0
     ? `${refCount} reference image${refCount !== 1 ? 's are' : ' is'} provided. ` +
@@ -40,7 +43,12 @@ function buildVideoMessages(userPrompt, architecture, { isI2V, refCount = 0 }, c
         `Output only the prompt text — no preamble, no explanation, no labels.` +
         (context ? `\n\n${context}` : ''),
     },
-    { role: 'user', content: `Description: ${userPrompt}` },
+    {
+      role: 'user',
+      content: `Description: ${userPrompt}` + (steering?.trim()
+        ? `\n\nDirector's notes — the prompt must follow these (framing, camera, motion, pacing, sound), phrased in this model's prompt format:\n${steering.trim()}`
+        : ''),
+    },
   ];
 }
 
@@ -141,7 +149,7 @@ async function prepare(stepDef, ctx, _previousIterations, onToken) {
   }
 
   const skillSummary = cfg.skillRefinement !== false ? skills.getSummary(skillId, architecture) : null;
-  const messages = buildVideoMessages(userPrompt, architecture, { isI2V, refCount: referenceRefs.length }, skillSummary);
+  const messages = buildVideoMessages(userPrompt, architecture, { isI2V, refCount: referenceRefs.length, steering: stepDef.steering }, skillSummary);
 
   // Inject the input image(s) so the LLM can describe them and suggest motion
   // that fits the content — inserted before the user description.
@@ -208,4 +216,4 @@ function pickPrimaryVideo(videos) {
   return videos.find(v => !/_noaudio/.test(v.filename ?? '')) ?? videos[0];
 }
 
-module.exports = { label, prepare, buildComfyWorkflow, pickPrimaryVideo };
+module.exports = { label, prepare, buildComfyWorkflow, pickPrimaryVideo, buildVideoMessages };

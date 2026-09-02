@@ -24,7 +24,8 @@ function messageText(m) {
 
 // getVerdict is called per review request so callers can change it at any time.
 function makeFakeOllama(getVerdict, opts = {}) {
-  return http.createServer((req, res) => {
+  const requests = []; // every /v1/chat/completions body, for assertions
+  const server = http.createServer((req, res) => {
     if (req.method !== 'POST' || req.url !== '/v1/chat/completions') {
       // Return empty model list for /v1/models
       if (req.method === 'GET' && req.url === '/v1/models') {
@@ -40,6 +41,7 @@ function makeFakeOllama(getVerdict, opts = {}) {
     req.on('end', () => {
       const parsed  = JSON.parse(body);
       const { messages, stream = true } = parsed;
+      requests.push(parsed);
 
       const isReview = messages.some(m =>
         messageText(m).toLowerCase().includes('reviewing'),
@@ -100,6 +102,8 @@ function makeFakeOllama(getVerdict, opts = {}) {
       }
     });
   });
+  server.requests = requests;
+  return server;
 }
 
 function makeFakeComfyUI(opts = {}) {

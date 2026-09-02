@@ -142,3 +142,21 @@ test('add-step validates its inputs', async () => {
   const missing = await post(`/api/generate/sessions/does-not-exist/steps`, { type: 'video', modelId: 'test-wanvideo', inputFrom: 0 });
   assert.equal(missing.status, 404);
 });
+
+test('steering notes on an added video step reach the prompt builder', async () => {
+  const sessionId = await runImageSession();
+  const res = await post(`/api/generate/sessions/${sessionId}/steps`, { type: 'video', modelId: 'test-wanvideo', inputFrom: 0, steering: '  Low angle, hold on the face. Sound: wind only.  ' });
+  assert.equal(res.status, 200);
+  const { stepIndex } = await res.json();
+  assert.equal((await getSession(sessionId)).extraSteps[0].steering, 'Low angle, hold on the face. Sound: wind only.');
+  const before = ollamaServer.requests.length;
+  await collectSSE(`${base()}/api/generate/rerun/${sessionId}`, { fromStep: stepIndex, toStep: stepIndex });
+  const videoReq = ollamaServer.requests.slice(before).find(r => r.messages.some(m => /video generation prompts/.test(typeof m.content === 'string' ? m.content : '')));
+  assert.ok(videoReq, 'a video prompt request was made');
+  // I2V inserts the reference image as the first user message; the description follows it.
+  const texts = videoReq.messages.filter(m => m.role === 'user')
+    .map(m => typeof m.content === 'string' ? m.content : m.content.map(p => p.text ?? '').join(''));
+  const desc = texts.find(t => t.startsWith('Description:'));
+  assert.ok(desc, 'description message present');
+  assert.match(desc, /Director's notes[\s\S]*Low angle, hold on the face\. Sound: wind only\./);
+});
