@@ -79,7 +79,7 @@ if (require.main === module) {
   for (const s of db.listSessions(Infinity)) {
     if (s.status !== 'running') continue;
     s.status = 'error';
-    db.saveSession(s);
+    db.saveSession(s, { touch: false });
     console.warn(`[startup] session ${s.id.slice(0, 8)} was running at shutdown — marked as error`);
   }
 

@@ -69,3 +69,11 @@ test('deleteSession removes the file; subsequent load returns null', () => {
 test('deleteSession is idempotent (no throw on missing id)', () => {
   assert.doesNotThrow(() => db.deleteSession('ghost-session'));
 });
+
+test('saveSession with touch:false keeps the existing updatedAt (housekeeping must not reorder history)', () => {
+  const s = { ...session('touch-000'), updatedAt: '2020-01-01T00:00:00.000Z' };
+  db.saveSession(s, { touch: false });
+  assert.equal(db.loadSession('touch-000').updatedAt, '2020-01-01T00:00:00.000Z');
+  db.saveSession(s);
+  assert.notEqual(db.loadSession('touch-000').updatedAt, '2020-01-01T00:00:00.000Z');
+});

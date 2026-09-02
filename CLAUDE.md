@@ -13,7 +13,7 @@ OpenAI, LM Studio, etc.) can be pointed at via `llmBaseUrl` in settings.
 ```bash
 npm start              # production (serve public/)
 npm run dev            # API --watch + Vite hot-reload UI
-npm test               # all 318 tests
+npm test               # all 319 tests
 npm run ui:build       # compile Vue → public/
 ```
 
@@ -473,7 +473,7 @@ data/
 ## Testing
 
 ```bash
-npm test               # all 318 tests
+npm test               # all 319 tests
 npm run test:unit      # unit tests only
 npm run test:int       # integration tests only
 ```
