@@ -132,8 +132,8 @@ const ARCH_META = {
       clipName:             'Qwen3-VL-32B text encoder — e.g. qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors (models/text_encoders/)',
       vaeName:              'Video VAE — minimax_h3_video_vae_fp16.safetensors',
       audioVaeName:         'Audio VAE — minimax_h3_audio_vae_fp32.safetensors. Leave blank to skip audio generation.',
-      distilledLoraName:    'Optional 8-step turbo LoRA for FL2VA — set step count to 8 when using it.',
-      refDistilledLoraName: 'Optional 4-step turbo LoRA for Ref2VA — set step count to 4 when using it.',
+      distilledLoraName:    'Optional 8-step turbo LoRA for FL2VA (~2× faster, small quality cost). Step count defaults to 8 automatically while active — clear this field for maximum quality at 20 steps.',
+      refDistilledLoraName: 'Optional 4-step turbo LoRA for Ref2VA. Step count defaults to 4 automatically while active.',
     },
     fieldLabels: {
       unetName:             'FL2VA UNet file',

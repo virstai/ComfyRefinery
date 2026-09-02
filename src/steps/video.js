@@ -169,9 +169,10 @@ function buildComfyWorkflow(stepDef, prepareResult, ctx) {
   const meta = archMeta[arch];
   if (!meta?.videoArch) throw new Error(`Architecture "${arch}" is not a video architecture`);
 
-  const archDefaults = getDefaults(arch);
+  // No archDefaults spread here: each builder applies its own defaults, and
+  // passing defaults as if user-set would hide which params were explicit
+  // (e.g. minimaxh3 lowers the default step count when a turbo LoRA is active).
   const params = {
-    ...archDefaults,
     ...modelConfig,
     ...(prepareResult.autoSize ?? {}),
     ...(stepDef.params ?? {}),

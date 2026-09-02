@@ -252,7 +252,7 @@
           = {{ secondsToFrames(Number(step.duration), effectiveFps(step)) }} frames at {{ effectiveFps(step) }} fps
         </p>
         <div class="row">
-          <label>Steps    <input type="number" v-model.number="step.steps"    min="1"   :placeholder="archDefault(si, 'steps')"></label>
+          <label>Steps    <input type="number" v-model.number="step.steps"    min="1"   :placeholder="videoStepsPlaceholder(si)"></label>
           <label v-if="showGuidance(si)">Guidance
             <input type="number" v-model.number="step.guidance" step="0.5" :placeholder="archDefault(si, 'guidance')">
           </label>
@@ -479,6 +479,13 @@ function archDefault(si, key) {
 function archDefaultDuration(si) {
   const d = props.archMeta[stepArch(si)]?.defaults;
   return d?.frames && d?.fps ? String(framesToSeconds(d.frames, d.fps)) : 'default';
+}
+
+// MiniMax H3 lowers the default step count to the turbo LoRA's trained count
+function videoStepsPlaceholder(si) {
+  const m = props.config.models?.[form.steps[si]?.modelId];
+  if (m?.architecture === 'minimaxh3' && m?.distilledLoraName) return '8 (turbo)';
+  return archDefault(si, 'steps');
 }
 
 function archCap(si, name) {

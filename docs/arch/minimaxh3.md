@@ -79,8 +79,11 @@ ComfyUI ≥ 0.30.0.
   frames ≈ 3 s at the fixed 24 fps.
 - **Resolution**: native 1344×768 (0.9 MP budget, dimensions on a /32 grid). The open
   weights are capped at 768p on the short edge; input images are auto-scaled.
-- **Turbo LoRAs**: cut steps to **8** (FL2VA) or **4** (Ref2VA) for ~2× speed with a
-  small quality cost — set the step count on the video step to match when enabled.
+- **Turbo LoRAs**: distilled for **8** steps (FL2VA) / **4** steps (Ref2VA) — ~2× faster
+  with a small quality cost. When a turbo LoRA is active and the video step doesn't pin
+  a step count, ComfyRefinery uses the LoRA's trained count automatically (running a
+  turbo LoRA at the full 20 steps over-walks the schedule and produces grainy output).
+  For maximum quality, clear the turbo LoRA field and generate at 20 steps.
 - **License**: released under the MiniMax H3 Community License; the open weights carry
   region restrictions (US, EU, UK, and South Korea are excluded territories) — check
   the license terms for your jurisdiction before downloading.

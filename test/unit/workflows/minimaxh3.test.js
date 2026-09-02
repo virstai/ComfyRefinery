@@ -172,6 +172,20 @@ test('isR2V with no references falls back to T2V on the FL2VA model', () => {
   assert.equal(findNode(wf, 'UNETLoader').inputs.unet_name, BASE.unetName);
 });
 
+test('turbo LoRA lowers the default step count to its trained count', () => {
+  const turbo = build({ ...BASE, distilledLoraName: 'fl2v_turbo.safetensors' });
+  assert.equal(findNode(turbo, 'BasicScheduler').inputs.steps, 8, 'FL2VA turbo defaults to 8 steps');
+
+  const r2vTurbo = build({ ...R2V_BASE, refDistilledLoraName: 'ref2v_turbo.safetensors' });
+  assert.equal(findNode(r2vTurbo, 'BasicScheduler').inputs.steps, 4, 'Ref2VA turbo defaults to 4 steps');
+
+  const explicit = build({ ...BASE, distilledLoraName: 'fl2v_turbo.safetensors', steps: 12 });
+  assert.equal(findNode(explicit, 'BasicScheduler').inputs.steps, 12, 'explicit steps win');
+
+  const noLora = build(BASE);
+  assert.equal(findNode(noLora, 'BasicScheduler').inputs.steps, defaults.steps, 'no LoRA keeps the full default');
+});
+
 test('seed flows into RandomNoise', () => {
   const wf = build({ ...BASE, seed: 42 });
   assert.equal(findNode(wf, 'RandomNoise').inputs.noise_seed, 42);

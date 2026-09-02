@@ -31,7 +31,7 @@ function build(params) {
     height    = defaults.height,
     frames    = defaults.frames,
     fps       = defaults.fps,
-    steps     = defaults.steps,
+    steps:    stepsIn = null,
     sampler   = defaults.sampler,
     seed      = Math.floor(Math.random() * 2 ** 32),
     inputRef  = null,
@@ -81,6 +81,11 @@ function build(params) {
     nodes[loraId] = { class_type: 'LoraLoaderModelOnly', inputs: { lora_name: loraName, model: modelRef, strength_model: 1.0 } };
     modelRef = [loraId, 0];
   }
+
+  // Turbo LoRAs are distilled for a fixed low step count — running them at the
+  // full 20 steps over-walks the schedule and produces grainy output. When the
+  // step doesn't pin a count, follow the active LoRA's trained count.
+  const steps = stepsIn ?? (loraName ? (useR2V ? 4 : 8) : defaults.steps);
 
   // Conditioning + latent — the MiniMax node encodes the prompt and emits
   // [0] positive conditioning, [1] the AV latent
