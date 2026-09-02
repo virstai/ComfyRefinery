@@ -1,5 +1,7 @@
 'use strict';
 
+const { normalizeDevices } = require('../workflows/lib/devicePlacement');
+
 const fs   = require('fs');
 const path = require('path');
 
@@ -32,6 +34,7 @@ const MODEL_LOADER_FIELDS = new Set([
   'adapterModel', 'clipVisionModel', 'adapterWeight', 'controlNetModel', 'tileControlNetModel', 'structuralControlNetModel', 'structuralControlNetPreprocessor',
   'distilledLoraName', 'enableAudio',
   'refUnetName', 'audioVaeName', 'refDistilledLoraName',
+  'devices',   // per-component placement (ComfyUI-MultiGPU) — see workflows/lib/devicePlacement.js
 ]);
 
 function load() {
@@ -96,6 +99,8 @@ function saveModel(id, modelData) {
   );
   const existingNotes = cfg.models[resolvedId]?.notes;
   const notes = modelData.notes !== undefined ? modelData.notes : existingNotes;
+  const devices = normalizeDevices(loaderData.devices);
+  if (devices) loaderData.devices = devices; else delete loaderData.devices;
   cfg.models[resolvedId] = { ...loaderData, id: resolvedId, ...(notes?.length ? { notes } : {}) };
   save(cfg);
   return cfg.models[resolvedId];

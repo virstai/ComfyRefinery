@@ -13,7 +13,7 @@ OpenAI, LM Studio, etc.) can be pointed at via `llmBaseUrl` in settings.
 ```bash
 npm start              # production (serve public/)
 npm run dev            # API --watch + Vite hot-reload UI
-npm test               # all 326 tests
+npm test               # all 336 tests
 npm run ui:build       # compile Vue → public/
 ```
 
@@ -59,8 +59,22 @@ All planned phases complete. Ready to merge to main.
   // anima with pose controlnet: controlNetModel (LLLite weights from models/controlnet/)
   // flux with adapter: adapterModel (redux model), clipVisionModel
   // flux2: no adapter fields (native ReferenceLatent, no external model needed)
+  // optional per-component placement (needs ComfyUI-MultiGPU in ComfyUI): 'cpu' | 'cuda:N'; absent = auto
+  "devices": { "clip": "cuda:1", "vae": "cuda:1", "audioVae": "cuda:1" }
 }
 ```
+
+**Device placement (multi-GPU).** `src/workflows/lib/devicePlacement.js` runs as a post-pass in
+`buildWorkflow`: for each role in `model.devices` (`unet`, `clip`, `vae`, `audioVae`, `clipVision`,
+`controlNet`) it swaps the native loader (`UNETLoader`, `CheckpointLoaderSimple`, `CLIPLoader`/`Dual`/`Triple`/`Quadruple`,
+`VAELoader`, `CLIPVisionLoader`, `ControlNetLoader`) for its `…MultiGPU` twin with a `device` input, so
+arch builders never know about it. The audio VAE is told apart from the video VAE by `audioVaeName`.
+`comfyui.getDevices()` reads `/system_stats` (only GPUs visible to ComfyUI's process appear — set
+`HIP_VISIBLE_DEVICES` / `CUDA_VISIBLE_DEVICES` or `--cuda-device` accordingly) and `getAssets()` returns
+`devices` + `multiGpu` (probe: `UNETLoaderMultiGPU`). ModelEditor shows a device dropdown beside each loader
+field only when the pack is present; `config.saveModel` drops `auto` entries. Queuing a graph with MultiGPU
+nodes when the pack is missing fails with a clear error. Intended use: keep the UNet on the compute GPU and
+push text encoder / VAEs to a second card or CPU so the UNet and its activations get the whole card.
 
 **Workflow** (`cfg.workflows[id]`) — the driver. Owns skill + notes, gen params,
 reference strategy, ordered steps, per-step review. **Active-selected entity.**
@@ -301,7 +315,7 @@ Always split-load: `UNETLoader` + `CLIPLoader(type:"flux2")` + `VAELoader`.
 
 ### ComfyUI asset discovery
 `comfyui.fetchInputList(nodeType, inputName)` — handles both old and new `object_info` formats.
-`comfyui.getAssets()` → `{ checkpoints, vaes, clips, unets, upscaleModels, ipAdapterModels, clipVisionModels, reduxModels, errors }`.
+`comfyui.getAssets()` → `{ checkpoints, vaes, clips, unets, upscaleModels, ipAdapterModels, clipVisionModels, reduxModels, loras, controlNets, devices, multiGpu, errors }`.
 
 ### Kill / stop mechanism
 `runPipeline` creates an `AbortController` and puts `signal` on `ctx`. The kill function in `activeKills`:
@@ -434,6 +448,7 @@ src/
     index.js          — buildWorkflow(modelConfig, params) + getDefaults(arch) + archMeta (incl. per-arch capabilities)
     lib/loraChain.js    — shared LoraLoader chain helper used by all image arch builders; applyModelOnlyLoraChain (LoraLoaderModelOnly) for DiT-only-trained LoRAs (krea2)
     lib/preprocessors.js — buildPreprocessorNode(type, imageRef, resolution) → ComfyUI node; maps depth/softedge/lineart_realistic/lineart_anime/canny to comfyui_controlnet_aux node classes
+    lib/devicePlacement.js — applyDevicePlacement(workflow, modelConfig): swaps loaders for ComfyUI-MultiGPU twins per model.devices; normalizeDevices, usesMultiGpuNodes
     sd15.js           — SD1.5; supports initImage, ipAdapterImages, tileControlNet, structuralControlNet
     sdxl.js           — SDXL + refiner; supports initImage, ipAdapterImages, tileControlNet, structuralControlNet
     flux.js           — Flux 1 (SamplerCustomAdvanced); supports initImage, reduxImages
@@ -481,7 +496,7 @@ data/
 ## Testing
 
 ```bash
-npm test               # all 326 tests
+npm test               # all 336 tests
 npm run test:unit      # unit tests only
 npm run test:int       # integration tests only
 ```

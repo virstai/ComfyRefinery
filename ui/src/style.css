@@ -108,6 +108,11 @@ label textarea { resize: vertical; }
 
 .hint { font-size: 11px; color: var(--muted); line-height: 1.45; }
 
+/* model editor: file picker + device picker side by side */
+.loader-row { display: flex; gap: 6px; align-items: stretch; }
+.loader-row > select:first-child { flex: 1 1 auto; min-width: 0; }
+.loader-row > .device-select { flex: 0 1 auto; max-width: 44%; }
+
 /* A hint paragraph directly after a field describes THAT field — tuck it up
    under its own input (labels carry 12px bottom margin) and leave clear air
    before the next field's title so it can't read as the next field's subtext. */

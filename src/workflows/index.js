@@ -1,5 +1,7 @@
 'use strict';
 
+const { applyDevicePlacement } = require('./lib/devicePlacement');
+
 const profiles = {
   sd15:         require('./sd15'),
   sdxl:         require('./sdxl'),
@@ -185,7 +187,7 @@ function buildWorkflow(modelConfig, generationParams) {
   // Strip null/undefined so each profile's defaults fill in properly
   const merged = { ...modelConfig, ...generationParams };
   const params = Object.fromEntries(Object.entries(merged).filter(([, v]) => v != null));
-  return { workflow: profile.build(params), architecture };
+  return { workflow: applyDevicePlacement(profile.build(params), modelConfig), architecture };
 }
 
 function getDefaults(architecture) {

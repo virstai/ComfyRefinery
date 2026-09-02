@@ -23,20 +23,27 @@
         >?</button>
       </div>
     </label>
+    <p v-if="!multiGpu" class="hint">Device placement: install <code>ComfyUI-MultiGPU</code> in ComfyUI to load the text encoder / VAEs on another GPU or in system RAM and keep this card for the main model.</p>
+    <p v-else-if="devices.length < 2" class="hint">Device placement is available (ComfyUI-MultiGPU found), but ComfyUI only sees {{ devices.map(d => d.id).join(', ') || 'no GPU' }} — expose more cards to its process (HIP_VISIBLE_DEVICES / CUDA_VISIBLE_DEVICES or --cuda-device) to place components on them. CPU placement works regardless.</p>
     <p v-if="archNotes" class="hint">{{ archNotes }}</p>
 
     <!-- Checkpoint (non-split) -->
     <div v-if="showCheckpoint">
       <label>Checkpoint
-        <select v-model="form.checkpoint">
-          <option value="">— select —</option>
-          <optgroup v-if="assets.comfyui?.checkpoints?.length" label="Checkpoints">
-            <option v-for="c in assets.comfyui.checkpoints" :key="c" :value="c">{{ c }}</option>
-          </optgroup>
-          <optgroup v-if="assets.comfyui?.unets?.length" label="UNet (diffusion_models)">
-            <option v-for="u in assets.comfyui.unets" :key="u" :value="u">{{ u }}</option>
-          </optgroup>
-        </select>
+        <div class="loader-row">
+          <select v-model="form.checkpoint">
+            <option value="">— select —</option>
+            <optgroup v-if="assets.comfyui?.checkpoints?.length" label="Checkpoints">
+              <option v-for="c in assets.comfyui.checkpoints" :key="c" :value="c">{{ c }}</option>
+            </optgroup>
+            <optgroup v-if="assets.comfyui?.unets?.length" label="UNet (diffusion_models)">
+              <option v-for="u in assets.comfyui.unets" :key="u" :value="u">{{ u }}</option>
+            </optgroup>
+          </select>
+          <select v-if="multiGpu" v-model="form.devices.unet" class="device-select" title="Device this component loads on (needs ComfyUI-MultiGPU)">
+            <option v-for="d in deviceOptions" :key="d.id" :value="d.id">{{ d.label }}</option>
+          </select>
+        </div>
       </label>
       <span v-if="canToggleSplit" class="hint">Optional — leave blank if using split loading below</span>
     </div>
@@ -50,10 +57,15 @@
 
     <!-- UNet (primary — or high-noise expert for Wan 2.2 MoE) -->
     <label v-if="showSplitField && hasField('unetName')">{{ fieldLabel('unetName') || (hasField('unetName2') ? 'High-noise UNet file' : 'UNet file') }}
-      <select v-model="form.unetName">
-        <option value="">— select —</option>
-        <option v-for="u in assets.comfyui?.unets" :key="u" :value="u">{{ u }}</option>
-      </select>
+      <div class="loader-row">
+        <select v-model="form.unetName">
+          <option value="">— select —</option>
+          <option v-for="u in assets.comfyui?.unets" :key="u" :value="u">{{ u }}</option>
+        </select>
+        <select v-if="multiGpu" v-model="form.devices.unet" class="device-select" title="Device this component loads on (needs ComfyUI-MultiGPU)">
+          <option v-for="d in deviceOptions" :key="d.id" :value="d.id">{{ d.label }}</option>
+        </select>
+      </div>
     </label>
     <p v-if="showSplitField && fieldHint('unetName')" class="hint">{{ fieldHint('unetName') }}</p>
 
@@ -85,10 +97,15 @@
 
     <!-- CLIP-L (Flux / Anima) -->
     <label v-if="showSplitField && hasField('clipL')">CLIP-L file
-      <select v-model="form.clipL">
-        <option value="">— select —</option>
-        <option v-for="c in assets.comfyui?.clips" :key="c" :value="c">{{ c }}</option>
-      </select>
+      <div class="loader-row">
+        <select v-model="form.clipL">
+          <option value="">— select —</option>
+          <option v-for="c in assets.comfyui?.clips" :key="c" :value="c">{{ c }}</option>
+        </select>
+        <select v-if="multiGpu" v-model="form.devices.clip" class="device-select" title="Device this component loads on (needs ComfyUI-MultiGPU)">
+          <option v-for="d in deviceOptions" :key="d.id" :value="d.id">{{ d.label }}</option>
+        </select>
+      </div>
     </label>
 
     <!-- T5-XXL (Flux only) -->
@@ -101,10 +118,15 @@
 
     <!-- Single text encoder: T5 for Chroma, Mistral 3 / Qwen 3 for Flux 2, Gemma for LTX -->
     <label v-if="(showSplitField || hasFieldAlways('clipName')) && hasField('clipName')">Text encoder file
-      <select v-model="form.clipName">
-        <option value="">— select —</option>
-        <option v-for="c in assets.comfyui?.clips" :key="c" :value="c">{{ c }}</option>
-      </select>
+      <div class="loader-row">
+        <select v-model="form.clipName">
+          <option value="">— select —</option>
+          <option v-for="c in assets.comfyui?.clips" :key="c" :value="c">{{ c }}</option>
+        </select>
+        <select v-if="multiGpu" v-model="form.devices.clip" class="device-select" title="Device this component loads on (needs ComfyUI-MultiGPU)">
+          <option v-for="d in deviceOptions" :key="d.id" :value="d.id">{{ d.label }}</option>
+        </select>
+      </div>
     </label>
     <p v-if="(showSplitField || hasFieldAlways('clipName')) && hasField('clipName') && fieldHint('clipName')" class="hint">{{ fieldHint('clipName') }}</p>
 
@@ -136,19 +158,29 @@
 
     <!-- VAE (split archs) -->
     <label v-if="showSplitField && hasField('vaeName')">{{ fieldLabel('vaeName') || 'VAE file' }}
-      <select v-model="form.vaeName">
-        <option value="">— select —</option>
-        <option v-for="v in assets.comfyui?.vaes" :key="v" :value="v">{{ v }}</option>
-      </select>
+      <div class="loader-row">
+        <select v-model="form.vaeName">
+          <option value="">— select —</option>
+          <option v-for="v in assets.comfyui?.vaes" :key="v" :value="v">{{ v }}</option>
+        </select>
+        <select v-if="multiGpu" v-model="form.devices.vae" class="device-select" title="Device this component loads on (needs ComfyUI-MultiGPU)">
+          <option v-for="d in deviceOptions" :key="d.id" :value="d.id">{{ d.label }}</option>
+        </select>
+      </div>
     </label>
     <p v-if="showSplitField && hasField('vaeName') && fieldHint('vaeName')" class="hint">{{ fieldHint('vaeName') }}</p>
 
     <!-- Audio VAE (MiniMax H3) -->
     <label v-if="showSplitField && hasField('audioVaeName')">{{ fieldLabel('audioVaeName') || 'Audio VAE file' }} <span class="hint">(optional)</span>
-      <select v-model="form.audioVaeName">
-        <option value="">— none (no audio) —</option>
-        <option v-for="v in assets.comfyui?.vaes" :key="v" :value="v">{{ v }}</option>
-      </select>
+      <div class="loader-row">
+        <select v-model="form.audioVaeName">
+          <option value="">— none (no audio) —</option>
+          <option v-for="v in assets.comfyui?.vaes" :key="v" :value="v">{{ v }}</option>
+        </select>
+        <select v-if="multiGpu" v-model="form.devices.audioVae" class="device-select" title="Device this component loads on (needs ComfyUI-MultiGPU)">
+          <option v-for="d in deviceOptions" :key="d.id" :value="d.id">{{ d.label }}</option>
+        </select>
+      </div>
     </label>
     <p v-if="showSplitField && hasField('audioVaeName') && fieldHint('audioVaeName')" class="hint">{{ fieldHint('audioVaeName') }}</p>
 
@@ -162,10 +194,15 @@
 
     <!-- External VAE override (checkpoint archs) -->
     <label v-if="showCheckpoint && hasField('vae')">External VAE <span class="hint">(optional — overrides baked-in)</span>
-      <select v-model="form.vae">
-        <option value="">— use checkpoint VAE —</option>
-        <option v-for="v in assets.comfyui?.vaes" :key="v" :value="v">{{ v }}</option>
-      </select>
+      <div class="loader-row">
+        <select v-model="form.vae">
+          <option value="">— use checkpoint VAE —</option>
+          <option v-for="v in assets.comfyui?.vaes" :key="v" :value="v">{{ v }}</option>
+        </select>
+        <select v-if="multiGpu" v-model="form.devices.vae" class="device-select" title="Device this component loads on (needs ComfyUI-MultiGPU)">
+          <option v-for="d in deviceOptions" :key="d.id" :value="d.id">{{ d.label }}</option>
+        </select>
+      </div>
     </label>
 
     <!-- SDXL refiner -->
@@ -200,10 +237,15 @@
         </span>
       </label>
       <label v-if="hasField('clipVisionModel')">CLIP Vision model
-        <select v-model="form.clipVisionModel">
-          <option value="">— none —</option>
-          <option v-for="m in assets.comfyui?.clipVisionModels ?? []" :key="m" :value="m">{{ m }}</option>
-        </select>
+        <div class="loader-row">
+          <select v-model="form.clipVisionModel">
+            <option value="">— none —</option>
+            <option v-for="m in assets.comfyui?.clipVisionModels ?? []" :key="m" :value="m">{{ m }}</option>
+          </select>
+          <select v-if="multiGpu" v-model="form.devices.clipVision" class="device-select" title="Device this component loads on (needs ComfyUI-MultiGPU)">
+            <option v-for="d in deviceOptions" :key="d.id" :value="d.id">{{ d.label }}</option>
+          </select>
+        </div>
       </label>
       <label v-if="hasField('adapterWeight')">Adapter weight <span class="hint">(0–1, distributed across all refs)</span>
         <input type="number" v-model.number="form.adapterWeight" min="0" max="1" step="0.05" placeholder="0.6">
@@ -216,10 +258,15 @@
       <strong>ControlNet</strong>
       <span class="hint"> — used when a workflow step enables the pose ControlNet</span>
       <label style="margin-top:8px">ControlNet model
-        <select v-model="form.controlNetModel">
-          <option value="">— none —</option>
-          <option v-for="m in assets.comfyui?.controlNets ?? []" :key="m" :value="m">{{ m }}</option>
-        </select>
+        <div class="loader-row">
+          <select v-model="form.controlNetModel">
+            <option value="">— none —</option>
+            <option v-for="m in assets.comfyui?.controlNets ?? []" :key="m" :value="m">{{ m }}</option>
+          </select>
+          <select v-if="multiGpu" v-model="form.devices.controlNet" class="device-select" title="Device this component loads on (needs ComfyUI-MultiGPU)">
+            <option v-for="d in deviceOptions" :key="d.id" :value="d.id">{{ d.label }}</option>
+          </select>
+        </div>
         <span v-if="!(assets.comfyui?.controlNets ?? []).length" class="hint">
           No ControlNet models found in ComfyUI's models/controlnet folder.
         </span>
@@ -540,10 +587,24 @@ const form = reactive({
   modelQuantization: '', vaePrecision: '',
   distilledLoraName: '', enableAudio: false,
   refUnetName: '', audioVaeName: '', refDistilledLoraName: '',
+  devices: blankDevices(),
 });
 
+// Per-component placement (ComfyUI-MultiGPU). 'auto' = native loader.
+function blankDevices() {
+  return { unet: 'auto', clip: 'auto', vae: 'auto', audioVae: 'auto', clipVision: 'auto', controlNet: 'auto' };
+}
+const multiGpu = computed(() => !!props.assets?.comfyui?.multiGpu);
+const devices  = computed(() => props.assets?.comfyui?.devices ?? []);
+const deviceOptions = computed(() => [
+  { id: 'auto', label: 'Auto' },
+  { id: 'cpu',  label: 'CPU · system RAM' },
+  ...devices.value.map(d => ({ id: d.id, label: `${d.id} · ${d.name}${d.vramTotal ? ` (${Math.round(d.vramTotal / 2 ** 30)} GB)` : ''}` })),
+]);
+
 watch(() => props.model, m => {
-  if (!m) { Object.keys(form).forEach(k => { form[k] = k === 'splitLoad' || k === 'useRefiner' ? false : ''; }); return; }
+  if (!m) { Object.keys(form).forEach(k => { form[k] = k === 'splitLoad' || k === 'useRefiner' ? false : k === 'devices' ? blankDevices() : ''; }); return; }
+  form.devices           = { ...blankDevices(), ...(m.devices ?? {}) };
   form.label             = m.label             ?? '';
   form.architecture      = m.architecture      ?? '';
   form.splitLoad         = !!(m.unetName || props.archMeta[m.architecture]?.loadingMode === 'split');
@@ -636,6 +697,7 @@ async function save() {
     refUnetName:          (isSplit.value && hasField('refUnetName'))  ? (form.refUnetName  || null) : null,
     audioVaeName:         (isSplit.value && hasField('audioVaeName')) ? (form.audioVaeName || null) : null,
     refDistilledLoraName: hasField('refDistilledLoraName') ? (form.refDistilledLoraName || null) : null,
+    devices:              { ...form.devices },   // server drops 'auto' entries
     vae:               form.vae              || null,
     refinerCheckpoint: (form.useRefiner && form.refinerCheckpoint) ? form.refinerCheckpoint : null,
     adapterModel:              form.adapterModel              || null,

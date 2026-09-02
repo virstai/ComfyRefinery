@@ -3,6 +3,7 @@
 const { v4: uuidv4 } = require('uuid');
 const WebSocket = require('ws');
 const config = require('./config');
+const { usesMultiGpuNodes, PROBE_NODE } = require('../workflows/lib/devicePlacement');
 
 const baseUrl = () => config.load().comfyuiUrl;
 const wsUrl   = () => baseUrl().replace(/^http/, 'ws');
@@ -18,7 +19,17 @@ async function generate(workflow, onProgress, onPreview, opts = {}) {
   return getOutputImages(promptId);
 }
 
+// Placement swaps loaders for ComfyUI-MultiGPU nodes; make the failure mode a
+// sentence rather than ComfyUI's generic "class_type not found".
+let multiGpuConfirmed = false;
+async function ensureMultiGpuNodes(workflow) {
+  if (multiGpuConfirmed || !usesMultiGpuNodes(workflow)) return;
+  if (await hasNode(PROBE_NODE)) { multiGpuConfirmed = true; return; }
+  throw new Error('This model places components on specific devices, but ComfyUI-MultiGPU is not installed in ComfyUI (custom_nodes/ComfyUI-MultiGPU) — install it or set the devices back to Auto.');
+}
+
 async function queuePrompt(workflow, clientId) {
+  await ensureMultiGpuNodes(workflow);
   const res = await fetch(`${baseUrl()}/prompt`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -266,12 +277,29 @@ async function hasNode(nodeType) {
   } catch { return false; }
 }
 
+// Devices ComfyUI's process can see. Only GPUs exposed to that process show up
+// (HIP_VISIBLE_DEVICES / CUDA_VISIBLE_DEVICES / --cuda-device), so a card that
+// is missing here is hidden from ComfyUI, not from the machine.
+async function getDevices() {
+  const res = await fetch(`${baseUrl()}/system_stats`);
+  if (!res.ok) throw new Error(`ComfyUI system_stats error ${res.status}`);
+  const { devices = [] } = await res.json();
+  return devices
+    .filter(d => d?.type && d.type !== 'cpu')
+    .map(d => {
+      const id   = `${d.type}:${d.index ?? 0}`;
+      const raw  = String(d.name ?? '');
+      const name = (raw.startsWith(id) ? raw.slice(id.length) : raw).replace(/\s*:\s*native\s*$/, '').trim() || id;
+      return { id, name, vramTotal: d.vram_total ?? null, vramFree: d.vram_free ?? null };
+    });
+}
+
 async function getAssets() {
   // Ask ComfyUI to flush its in-memory model file cache before we query.
   // POST /api/models/refresh exists in ComfyUI 0.3+; silently ignored on older builds.
   await fetch(`${baseUrl()}/api/models/refresh`, { method: 'POST' }).catch(() => {});
 
-  const [checkpoints, vaes, clips, unets, upscaleModels, ipAdapterModels, clipVisionModels, reduxModels, loras, controlNets] = await Promise.allSettled([
+  const [checkpoints, vaes, clips, unets, upscaleModels, ipAdapterModels, clipVisionModels, reduxModels, loras, controlNets, devices, multiGpu] = await Promise.allSettled([
     fetchInputList('CheckpointLoaderSimple', 'ckpt_name'),
     fetchInputList('VAELoader',              'vae_name'),
     fetchInputList('CLIPLoader',             'clip_name'),
@@ -282,6 +310,8 @@ async function getAssets() {
     fetchInputList('StyleModelLoader',       'style_model_name'),
     fetchInputList('LoraLoader',             'lora_name'),
     fetchInputList('ControlNetLoader',       'control_net_name'),
+      getDevices(),
+    hasNode(PROBE_NODE),
   ]);
 
   const all = [checkpoints, vaes, clips, unets, upscaleModels, ipAdapterModels, clipVisionModels, reduxModels, loras, controlNets];
@@ -296,6 +326,8 @@ async function getAssets() {
     reduxModels:      reduxModels.status      === 'fulfilled' ? reduxModels.value      : [],
     loras:            loras.status            === 'fulfilled' ? loras.value            : [],
     controlNets:      controlNets.status      === 'fulfilled' ? controlNets.value      : [],
+    devices:          devices.status          === 'fulfilled' ? devices.value          : [],
+    multiGpu:         multiGpu.status         === 'fulfilled' ? !!multiGpu.value       : false,
     errors: all.filter(r => r.status === 'rejected').map(r => r.reason.message),
   };
 }
@@ -315,4 +347,4 @@ async function interrupt() {
   try { await fetch(`${baseUrl()}/interrupt`, { method: 'POST' }); } catch { /* best effort */ }
 }
 
-module.exports = { generate, generateVideo, getOutputVideos, getAssets, listLoras, getLoraMetadata, hasNode, uploadImage, interrupt };
+module.exports = { generate, generateVideo, getOutputVideos, getAssets, getDevices, listLoras, getLoraMetadata, hasNode, uploadImage, interrupt };
