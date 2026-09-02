@@ -114,3 +114,13 @@ test('buildComfyWorkflow: single-dimension autoSize fills the missing axis only'
   assert.equal(h3Node(wf).inputs.width, 640);
   assert.equal(h3Node(wf).inputs.height, 928);
 });
+
+// ── pickPrimaryVideo ─────────────────────────────────────────────────────────
+
+test('pickPrimaryVideo prefers the muxed file over the _noaudio fallback', () => {
+  const silent = { filename: 'iterator_video_noaudio_00003_.mp4' };
+  const muxed  = { filename: 'iterator_video_00003_.mp4' };
+  assert.equal(video.pickPrimaryVideo([silent, muxed]), muxed, 'execution order puts the fallback first');
+  assert.equal(video.pickPrimaryVideo([silent]), silent, 'fallback alone is still a result');
+  assert.equal(video.pickPrimaryVideo([]), null);
+});

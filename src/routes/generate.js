@@ -324,7 +324,7 @@ async function runVideoStep(stepDef, stepIndex, session, ctx, cfg, res, isKilled
   if (prepResult.params.seed == null) prepResult.params.seed = Math.floor(Math.random() * 2 ** 32);
   const workflow = stepType.buildComfyWorkflow(stepDef, prepResult, ctx);
 
-  const { videos } = await comfyui.generateVideo(
+  const { videos, warning: videoWarning } = await comfyui.generateVideo(
     workflow,
     pct => {
       emit(res, 'progress', { step: stepIndex, pct });
@@ -337,7 +337,13 @@ async function runVideoStep(stepDef, stepIndex, session, ctx, cfg, res, isKilled
   if (isKilled()) throw new Error('Generation stopped by user');
   if (!videos.length) throw new Error('ComfyUI returned no video output');
 
-  const vid      = videos[0];
+  if (videoWarning) {
+    (prepResult.warnings ??= []).push(videoWarning);
+    emit(res, 'warning', { step: stepIndex, iteration: iterNum, message: videoWarning });
+    console.warn(`[${tag}] step ${stepIndex}: ${videoWarning}`);
+  }
+
+  const vid      = stepType.pickPrimaryVideo(videos);
   const videoUrl = `/api/video?filename=${encodeURIComponent(vid.filename)}&subfolder=${encodeURIComponent(vid.subfolder ?? '')}&type=${encodeURIComponent(vid.type ?? 'output')}`;
   console.log(`[${tag}] step ${stepIndex}: video ready — ${vid.filename}`);
 

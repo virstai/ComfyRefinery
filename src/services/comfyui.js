@@ -207,10 +207,23 @@ async function getOutputVideos(promptId) {
   return { videos };
 }
 
+// Returns { videos, warning? }. Video graphs may write a fallback file before
+// a later node fails (e.g. a silent copy saved before the audio mux, which has
+// thrown on NaN audio samples) — ComfyUI keeps the outputs of nodes that
+// finished, so on an execution error we hand back whatever video was written
+// with the error as a warning rather than losing a half-hour take.
 async function generateVideo(workflow, onProgress, opts = {}) {
   const clientId = uuidv4();
   const promptId = await queuePrompt(workflow, clientId);
-  await waitForCompletion(promptId, clientId, onProgress, null, opts.signal);
+  try {
+    await waitForCompletion(promptId, clientId, onProgress, null, opts.signal);
+  } catch (err) {
+    if (err.message === 'Stopped' || !err.message.startsWith('ComfyUI')) throw err;
+    const { videos } = await getOutputVideos(promptId).catch(() => ({ videos: [] }));
+    if (!videos.length) throw err;
+    console.warn(`[comfyui] job failed after writing a video — keeping it. ${err.message}`);
+    return { videos, warning: `Kept a video written before ComfyUI failed — ${err.message}` };
+  }
   return getOutputVideos(promptId);
 }
 

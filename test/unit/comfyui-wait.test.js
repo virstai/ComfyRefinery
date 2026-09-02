@@ -93,3 +93,30 @@ test('after a WS drop, a job still in the queue keeps waiting and completes norm
     assert.equal(state.connections, 2);
   });
 });
+
+test('generateVideo keeps a video written before a later node failed, with a warning', async () => {
+  await withFakeComfy({
+    onConnection: ws => setTimeout(() => ws.send(JSON.stringify({
+      type: 'execution_error',
+      data: { prompt_id: PROMPT_ID, node_type: 'SaveVideo', exception_message: "[aac] Input contains (near) NaN/+-Inf" },
+    })), 50),
+  }, async (comfyui, state) => {
+    state.historyBody = { [PROMPT_ID]: { status: { status_str: 'error' }, outputs: {
+      '12': { images: [{ filename: 'iterator_video_noaudio_00001_.mp4', subfolder: '', type: 'output' }] },
+    } } };
+    const { videos, warning } = await comfyui.generateVideo({}, null);
+    assert.equal(videos.length, 1);
+    assert.match(videos[0].filename, /_noaudio/);
+    assert.match(warning, /SaveVideo.*NaN/);
+  });
+});
+
+test('generateVideo still fails when nothing was written before the error', async () => {
+  await withFakeComfy({
+    onConnection: ws => setTimeout(() => ws.send(JSON.stringify({
+      type: 'execution_error', data: { prompt_id: PROMPT_ID, node_type: 'KSampler', exception_message: 'OOM' },
+    })), 50),
+  }, async (comfyui) => {
+    await assert.rejects(comfyui.generateVideo({}, null), /KSampler.*OOM/);
+  });
+});

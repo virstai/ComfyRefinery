@@ -13,7 +13,7 @@ OpenAI, LM Studio, etc.) can be pointed at via `llmBaseUrl` in settings.
 ```bash
 npm start              # production (serve public/)
 npm run dev            # API --watch + Vite hot-reload UI
-npm test               # all 322 tests
+npm test               # all 326 tests
 npm run ui:build       # compile Vue → public/
 ```
 
@@ -441,7 +441,7 @@ src/
     zimage.js         — Z-Image (KSampler + ModelSamplingAuraFlow, split-load only); supports initImage, LoRA
     krea2.js          — Krea 2 (plain KSampler, no ModelSampling node, split-load only); LoraLoaderModelOnly LoRAs, CFG-gated negative (ConditioningZeroOut at cfg<=1), supports initImage
     wanvideo.js       — WanVideo I2V/T2V; native ComfyUI nodes only; MoE cascade for 14B
-    minimaxh3.js      — MiniMax H3 T2V/I2V/R2V; guidance-free (BasicGuider, no negative/CFG); native audio via VAEDecodeAudio when audioVaeName set; frames snap to 17k+5; Ref2VA checkpoint + MiniMaxH3ReferenceToVideo for reference images
+    minimaxh3.js      — MiniMax H3 T2V/I2V/R2V; guidance-free (BasicGuider, no negative/CFG); native audio via VAEDecodeAudio when audioVaeName set (plus a silent `_noaudio` SaveVideo fallback — long takes have produced NaN audio that kills the AAC mux; `comfyui.generateVideo` returns any video written before an execution error with a `warning`, and `video.pickPrimaryVideo` prefers the muxed file); frames snap to 17k+5; Ref2VA checkpoint + MiniMaxH3ReferenceToVideo for reference images
     sd3.js / chroma.js / anima.js
   lib/
     parsers.js        — parsePromptResponse, parseReview
@@ -481,7 +481,7 @@ data/
 ## Testing
 
 ```bash
-npm test               # all 322 tests
+npm test               # all 326 tests
 npm run test:unit      # unit tests only
 npm run test:int       # integration tests only
 ```

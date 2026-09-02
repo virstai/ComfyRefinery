@@ -53,6 +53,7 @@ wget -P loras/           "https://huggingface.co/Comfy-Org/MiniMax-H3/resolve/ma
 | Enable | Set the **Audio VAE file** on the model — leave it blank to skip audio decoding |
 | Output | 32 kHz stereo embedded in the video file; no extra SSE events or routes |
 | Prompting | Describe the soundtrack in the prompt (the default skill adds an `Audio:` line) — music, ambience, effects, and spoken dialogue are all generated |
+| Silent fallback | When audio is enabled the graph also saves an `iterator_video_noaudio_*` copy straight from the frame decoder. On long takes (observed at 243 frames / 10 s) the audio VAE has produced NaN samples, which makes the AAC encoder inside `SaveVideo` fail (`[aac] Input contains (near) NaN/+-Inf`). The fallback is written first, so the take is kept without sound and a warning is recorded on it instead of losing a ~25-minute render. Shorter takes (73 frames) have decoded audio fine. |
 
 ## Reference-to-video (R2V)
 

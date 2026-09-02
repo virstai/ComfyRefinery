@@ -196,3 +196,23 @@ test('SaveVideo uses the iterator_video prefix', () => {
   assert.equal(save.inputs.filename_prefix, 'iterator_video');
   assert.equal(save.inputs.format, 'auto');
 });
+
+test('with audio, a silent fallback video is saved from the frame decoder alone', () => {
+  const wf = build({ ...BASE, audioVaeName: 'audio.safetensors' });
+  const saves   = findNodes(wf, 'SaveVideo');
+  const creates = findNodes(wf, 'CreateVideo');
+  assert.equal(saves.length, 2);
+  assert.equal(creates.length, 2);
+  const silentSave = saves.find(n => /_noaudio/.test(n.inputs.filename_prefix));
+  assert.ok(silentSave, 'fallback SaveVideo carries the _noaudio prefix');
+  const silentCreate = wf[silentSave.inputs.video[0]];
+  assert.equal(silentCreate.class_type, 'CreateVideo');
+  assert.equal(silentCreate.inputs.audio, undefined, 'fallback has no audio input');
+  const decodeId = Object.entries(wf).find(([, n]) => n.class_type === 'VAEDecode')[0];
+  assert.deepEqual(silentCreate.inputs.images, [decodeId, 0]);
+  // The primary (muxed) save is still the first SaveVideo in the graph
+  assert.equal(saves[0].inputs.filename_prefix, 'iterator_video');
+  assert.ok(wf[saves[0].inputs.video[0]].inputs.audio, 'primary is the muxed one');
+
+  assert.equal(findNodes(build(BASE), 'SaveVideo').length, 1, 'no fallback without audio');
+});

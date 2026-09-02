@@ -155,6 +155,19 @@ function build(params) {
   nodes[createId] = { class_type: 'CreateVideo', inputs: { images: [decodeId, 0], fps, ...(audioRef ? { audio: audioRef } : {}) } };
   nodes[saveId]   = { class_type: 'SaveVideo',   inputs: { video: [createId, 0], filename_prefix: 'iterator_video', format: 'auto', codec: 'auto' } };
 
+  // Silent fallback: the audio VAE has produced NaN samples on long takes,
+  // which makes the AAC encoder inside SaveVideo throw and lose the whole
+  // (very expensive) video. This copy depends only on the frame decoder, so
+  // ComfyUI's scheduler writes it before the audio path runs; if the muxed
+  // save then fails, the pipeline keeps this file and warns. `_noaudio` in
+  // the prefix is how the video step tells the two apart.
+  if (audioRef) {
+    const createSilentId = id();
+    const saveSilentId   = id();
+    nodes[createSilentId] = { class_type: 'CreateVideo', inputs: { images: [decodeId, 0], fps } };
+    nodes[saveSilentId]   = { class_type: 'SaveVideo',   inputs: { video: [createSilentId, 0], filename_prefix: 'iterator_video_noaudio', format: 'auto', codec: 'auto' } };
+  }
+
   return nodes;
 }
 

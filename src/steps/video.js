@@ -201,4 +201,11 @@ function buildComfyWorkflow(stepDef, prepareResult, ctx) {
   return workflow;
 }
 
-module.exports = { label, prepare, buildComfyWorkflow };
+// A graph can write more than one file (e.g. minimaxh3's silent fallback next
+// to the muxed video). Prefer the full one; fall back to whatever survived.
+function pickPrimaryVideo(videos) {
+  if (!videos?.length) return null;
+  return videos.find(v => !/_noaudio/.test(v.filename ?? '')) ?? videos[0];
+}
+
+module.exports = { label, prepare, buildComfyWorkflow, pickPrimaryVideo };
