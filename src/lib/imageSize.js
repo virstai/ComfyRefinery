@@ -46,12 +46,19 @@ function roundToMultiple(v, multiple) {
 }
 
 // Fit srcW×srcH's aspect ratio into the pixel budget of budgetW×budgetH,
-// rounding both output dimensions to `multiple`.
-function fitToBudget(srcW, srcH, budgetW, budgetH, multiple = 16) {
+// rounding both output dimensions to `multiple`. `maxDim` (default: the
+// budget's long edge) caps either edge so extreme ratios can't blow past the
+// resolution the model was trained at while still "conserving area".
+function fitToBudget(srcW, srcH, budgetW, budgetH, multiple = 16, maxDim = Math.max(budgetW, budgetH)) {
   if (!srcW || !srcH || !budgetW || !budgetH) return null;
   const ar = srcW / srcH;
-  const h  = Math.sqrt((budgetW * budgetH) / ar);
-  return { width: roundToMultiple(h * ar, multiple), height: roundToMultiple(h, multiple) };
+  let h = Math.sqrt((budgetW * budgetH) / ar);
+  let w = h * ar;
+  if (maxDim && Math.max(w, h) > maxDim) {
+    const scale = maxDim / Math.max(w, h);
+    w *= scale; h *= scale;
+  }
+  return { width: roundToMultiple(w, multiple), height: roundToMultiple(h, multiple) };
 }
 
 module.exports = { imageSize, fitToBudget, roundToMultiple };

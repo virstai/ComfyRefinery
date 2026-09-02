@@ -60,13 +60,13 @@ function buildPoseGraph(poseModelConfig, poseDescription, { width, height }) {
 // imageUrl the app-relative URL for the UI. Throws a human-readable Error on
 // any failure — a workflow that asked for a pose must not silently continue
 // without one, so callers let these errors fail the step.
-async function generatePose({ cfg, poseModelConfig, poseDescription, width, height, onProgress }) {
+async function generatePose({ cfg, poseModelConfig, poseDescription, width, height, onProgress, signal }) {
   if (!await comfyui.hasNode(DWPOSE_NODE)) {
     throw new Error(`Pose generation failed: ${DWPOSE_NODE} node not found — install comfyui_controlnet_aux`);
   }
 
   const graph = buildPoseGraph(poseModelConfig, poseDescription, { width, height });
-  const { images } = await comfyui.generate(graph, onProgress, null);
+  const { images } = await comfyui.generate(graph, onProgress, null, { signal });
   if (!images.length) throw new Error('Pose generation failed: draft run produced no image');
 
   const img     = images[0];

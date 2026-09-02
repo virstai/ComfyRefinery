@@ -203,6 +203,9 @@ export function handleEvent(event, data) {
       const step = ensureStep(si);
       if (data.imageUrl) step.outputImageUrl = data.imageUrl;
       if (data.videoUrl) step.videoUrl       = data.videoUrl;
+      // A fresh run supersedes any manual variant pick — mirror the server so
+      // the Output badge lands on the variant that really feeds the next step.
+      if ('selectedIteration' in data) step.selectedIteration = data.selectedIteration ?? null;
       break;
     }
 
@@ -276,7 +279,13 @@ export function handleEvent(event, data) {
       // authoritative history anyway.
       const st = genState.steps[data.step];
       if (st) {
-        st.iterations = st.iterations.filter(it => it.verdict);
+        // The server discards everything the stopped run added (verdicted or
+        // not) and tells us how many iterations survived — match it exactly so
+        // no ghost cards offer actions on takes that no longer exist.
+        st.iterations = typeof data.keptIterations === 'number'
+          ? st.iterations.filter(it => it.n <= data.keptIterations)
+          : st.iterations.filter(it => it.verdict);
+        if ('selectedIteration' in data) st.selectedIteration = data.selectedIteration ?? null;
         st.status     = '';
         st.progress   = 0;
       }

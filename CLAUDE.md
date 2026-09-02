@@ -13,7 +13,7 @@ OpenAI, LM Studio, etc.) can be pointed at via `llmBaseUrl` in settings.
 ```bash
 npm start              # production (serve public/)
 npm run dev            # API --watch + Vite hot-reload UI
-npm test               # all 299 tests
+npm test               # all 318 tests
 npm run ui:build       # compile Vue → public/
 ```
 
@@ -210,9 +210,9 @@ All events carry `step` (0-indexed). Full event list:
 | `pose` | `{ step, iteration, url }` | Extracted pose skeleton image URL (DWPreprocessor output) |
 | `warning` | `{ step, iteration, message }` | Non-fatal warning (e.g. pose pre-pass failed) |
 | `video` | `{ step, iteration, url }` | Final video URL for a video-step take |
-| `step_complete` | `{ step, imageUrl?, videoUrl?, accepted }` | Step finished; pipeline stops if `!accepted` |
+| `step_complete` | `{ step, imageUrl?, videoUrl?, accepted, selectedIteration }` | Step finished; pipeline stops if `!accepted`. `selectedIteration` is `null` after a fresh run (the client mirrors it) |
 | `done` | `{ accepted, imageUrl?, videoUrl?, sessionId, prompt, iterations }` | Pipeline complete |
-| `stopped` | `{ step }` | User clicked Stop; in-progress step cleared |
+| `stopped` | `{ step, keptIterations, selectedIteration }` | User clicked Stop; the client truncates the step to `keptIterations` (everything the stopped run added is discarded server-side, verdicted or not) |
 | `error` | `{ message }` | Unexpected pipeline error |
 | `history` | `{ step, ...iteration, selected? }` | Replayed on `/continue` and `/rerun`; carries `videoUrl`/`seed` when present, `selected: true` on the chosen variant |
 
@@ -234,7 +234,7 @@ Back-compat: existing configs with `ollamaUrl` are migrated automatically.
 `src/steps/index.js` — `get(type)` → step module.
 `src/steps/generate.js` — generate step: LLM prompt build, vision notes, adapter/img2img routing, review.
 `src/steps/upscale.js` — upscale step: model upscaler (ESRGAN) or hires fix (re-diffusion).
-`src/steps/video.js` — video step: T2V / I2V / R2V routing, uploads init image, delegates to wanvideo (or other video arch). **I2V aspect-ratio follow**: when the step doesn't pin both width and height, the video dimensions are derived from the input image's aspect ratio — fitted to the arch's default pixel budget and rounded to `ARCH_META[arch].dimMultiple` (16 wan/hunyuan, 32 ltx/minimaxh3, 8 cog) via `src/lib/imageSize.js` (dependency-free PNG/JPEG/WebP dimension reader + `fitToBudget`). A single explicitly set dimension is kept and the other follows the image ratio. R2V (reference-to-video) activates when the arch declares `referenceToVideo: true` in ARCH_META **and** the model config has `refUnetName` set **and** the session has uploaded references with no chained input image — all references are passed as `referenceRefs` and the prompt refiner cites them as `<Picture N>` with explicit roles. Only minimaxh3 supports it today.
+`src/steps/video.js` — video step: T2V / I2V / R2V routing, uploads init image, delegates to wanvideo (or other video arch). **I2V aspect-ratio follow**: on archs with `ARCH_META[arch].followInputAspect: true` (all video archs except cogvideox, whose weights are fixed 720×480), when the step doesn't pin both width and height the video dimensions are derived from the input image's aspect ratio — fitted to the arch's default pixel budget, rounded to `ARCH_META[arch].dimMultiple` (16 wan/hunyuan, 32 ltx/minimaxh3), and with neither edge exceeding the default long edge (`fitToBudget`'s `maxDim`) via `src/lib/imageSize.js` (dependency-free PNG/JPEG/WebP dimension reader + `fitToBudget`). A single explicitly set dimension is kept and the other follows the image ratio (capped the same way). R2V (reference-to-video) activates when the arch declares `referenceToVideo: true` in ARCH_META **and** the model config has `refUnetName` set **and** the session has uploaded references with no chained input image — all references are passed as `referenceRefs` (capped at `ARCH_META[arch].maxReferences`, extras dropped with a `warning` event recorded on the take) and the prompt refiner cites them as `<Picture N>` with explicit roles. Only minimaxh3 supports it today. Video steps get `skillId` like generate steps; since they never record outcomes, `skills.getSummary(id, architecture)` falls back to the arch's default skill when no skill file exists.
 
 Step interface:
 ```js
@@ -303,9 +303,9 @@ Always split-load: `UNETLoader` + `CLIPLoader(type:"flux2")` + `VAELoader`.
 3. Calls `comfyui.interrupt()` — cancels current ComfyUI generation
 4. Resolves any pending reviews/acceptances
 
-`isKilled()` is checked at: iteration start, after `prepare()` returns, after `comfyui.generate()` returns, and after the review `chatStream` returns. On kill, the pipeline emits `stopped { step }` (not `error`), clears the in-progress step's iterations from the session, and sets `session.status = 'stopped'`.
+`isKilled()` is checked at: iteration start, after `prepare()` returns, after `comfyui.generate()` returns, and after the review `chatStream` returns. `ctx.signal` is also passed to `comfyui.generate` / `generateVideo` (and the pose pre-pass), so a kill rejects the ComfyUI wait with `Stopped` immediately instead of waiting for an `execution_interrupted` frame that an idle or restarted ComfyUI never sends. On kill, the pipeline emits `stopped { step }` (not `error`), clears the in-progress step's iterations from the session, and sets `session.status = 'stopped'`.
 
-`comfyui.waitForCompletion` handles `execution_interrupted` — the `prompt_id` check is lenient (accepts messages without `prompt_id` for older ComfyUI compatibility).
+`comfyui.waitForCompletion` handles `execution_interrupted` — the `prompt_id` check is lenient (accepts messages without `prompt_id` for older ComfyUI compatibility). After a WebSocket drop it reconnects with backoff; once back online it checks `/queue` and `/history` for the prompt and fails with "ComfyUI lost the job" if neither knows it (a ComfyUI crash/restart mid-job used to hang the pipeline forever). On boot, `server.js` marks any session still `running` as `error` — its pipeline died with the previous process.
 
 ### Skill / notes system
 `data/skills/<workflowId>.json` — per-workflow knowledge base.
@@ -327,7 +327,8 @@ Notes have `auto: bool` and `enabled: bool`:
 - Creates `AbortController`; kill fn aborts it + interrupts ComfyUI.
 - Emits `step_complete` after each step.
 - Stops early (skips remaining steps) if a step finishes without acceptance.
-- On kill: emits `stopped`; discards only iterations added by the current run.
+- On kill: emits `stopped`; discards only iterations added by the current run. A manual variant selection among the surviving iterations is kept.
+- `/rerun` refuses a session whose workflow changed shape (step count **or** per-index step type) and refreshes step labels otherwise.
 - On unexpected error: emits `error`.
 
 `_runIterativeLoop(stepType, stepDef, stepIndex, session, ctx, cfg, res, isKilled)` — per-step loop
@@ -336,7 +337,7 @@ Notes have `auto: bool` and `enabled: bool`:
 - For generate steps with a previous step output: pre-uploads `ctx.inputImage` as `chainedInputRef`.
 - Forwards ComfyUI binary WebSocket preview frames as `preview` SSE events.
 - `isKilled()` checked at multiple points; all LLM calls receive `ctx.signal`.
-- Picks the sampling seed before building the graph and records it on the iteration.
+- Picks the sampling seed before building the graph and records it on the iteration (generate steps and hires upscales via `prepResult.params`; `runVideoStep` does the same for video takes; model upscales are deterministic and record none).
 
 ### Config shape
 ```jsonc
@@ -421,7 +422,7 @@ src/
     index.js          — step-type registry (generate, upscale, video)
     generate.js       — generate step: vision notes, adapter/img2img routing, chain input, review
     upscale.js        — upscale step: model (ESRGAN) + hires (re-diffusion) types
-    video.js          — video step: T2V / I2V, uploads init image, routes to video arch builder
+    video.js          — video step: T2V / I2V / R2V, uploads init image, routes to video arch builder
   workflows/
     index.js          — buildWorkflow(modelConfig, params) + getDefaults(arch) + archMeta (incl. per-arch capabilities)
     lib/loraChain.js    — shared LoraLoader chain helper used by all image arch builders; applyModelOnlyLoraChain (LoraLoaderModelOnly) for DiT-only-trained LoRAs (krea2)
@@ -472,7 +473,7 @@ data/
 ## Testing
 
 ```bash
-npm test               # all 299 tests
+npm test               # all 318 tests
 npm run test:unit      # unit tests only
 npm run test:int       # integration tests only
 ```

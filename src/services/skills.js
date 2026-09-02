@@ -273,17 +273,19 @@ function saveNotes(modelId, notes) {
   save(data);
 }
 
-function getSummary(modelId) {
+// `architecture` is an optional fallback for models with no skill file yet
+// (video steps never record outcomes, so they'd otherwise get no baseline).
+function getSummary(modelId, architecture) {
   const data = load(modelId);
-  if (!data) return null;
+  const arch = data?.architecture ?? architecture;
 
-  const activeVer = getActiveVersion(data);
-  const skillText = activeVer?.skill ?? getDefaultSkill(data.architecture);
+  const activeVer = data ? getActiveVersion(data) : null;
+  const skillText = activeVer?.skill ?? getDefaultSkill(arch);
 
   if (skillText) {
     const label = activeVer?.skill
       ? 'Prompt engineering notes for this model (learned from previous sessions)'
-      : `Prompt engineering baseline for ${data.architecture ?? 'this architecture'}`;
+      : `Prompt engineering baseline for ${arch ?? 'this architecture'}`;
     return `${label}:\n${skillText}`;
   }
 

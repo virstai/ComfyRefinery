@@ -71,12 +71,15 @@ function autoSizeFromImage(dims, stepDef, architecture) {
   const explicitH = stepDef.params?.height;
   if (explicitW && explicitH) return null;
 
-  const mult = archMeta[architecture]?.dimMultiple ?? 16;
-  const ar   = dims.width / dims.height;
-  if (explicitW) return { height: roundToMultiple(explicitW / ar, mult) };
-  if (explicitH) return { width:  roundToMultiple(explicitH * ar, mult) };
-  const d = getDefaults(architecture);
-  return fitToBudget(dims.width, dims.height, d.width, d.height, mult);
+  const mult   = archMeta[architecture]?.dimMultiple ?? 16;
+  const ar     = dims.width / dims.height;
+  const d      = getDefaults(architecture);
+  // No edge may exceed the arch's native long edge — an extreme ratio would
+  // otherwise produce a huge dimension (and an OOM) while conserving area.
+  const maxDim = Math.max(d.width, d.height);
+  if (explicitW) return { height: Math.min(roundToMultiple(explicitW / ar, mult), roundToMultiple(maxDim, mult)) };
+  if (explicitH) return { width:  Math.min(roundToMultiple(explicitH * ar, mult), roundToMultiple(maxDim, mult)) };
+  return fitToBudget(dims.width, dims.height, d.width, d.height, mult, maxDim);
 }
 
 // prepare() resolves the init image (if any) and builds the LLM-refined prompt.
@@ -94,6 +97,9 @@ async function prepare(stepDef, ctx, _previousIterations, onToken) {
   let isR2V         = false;
   let inputBuffer   = null;
 
+  const archInfo = archMeta[architecture] ?? {};
+  const warnings = [];
+
   if (ctx.inputImage) {
     const url       = new URL(ctx.inputImage, 'http://localhost');
     const filename  = url.searchParams.get('filename') ?? 'image.png';
@@ -107,8 +113,13 @@ async function prepare(stepDef, ctx, _previousIterations, onToken) {
     inputRef = await comfyui.uploadImage(inputBuffer, filename);
     isI2V    = true;
   } else if (ctx.references?.length) {
-    if (archMeta[architecture]?.referenceToVideo && modelConfig.refUnetName) {
-      referenceRefs = ctx.references.map(ref => ({ filename: ref.filename, subfolder: ref.subfolder ?? '', type: ref.type ?? 'input' }));
+    if (archInfo.referenceToVideo && modelConfig.refUnetName) {
+      let refs = ctx.references;
+      if (archInfo.maxReferences && refs.length > archInfo.maxReferences) {
+        warnings.push(`${architecture} accepts at most ${archInfo.maxReferences} reference images — using the first ${archInfo.maxReferences} of ${refs.length}`);
+        refs = refs.slice(0, archInfo.maxReferences);
+      }
+      referenceRefs = refs.map(ref => ({ filename: ref.filename, subfolder: ref.subfolder ?? '', type: ref.type ?? 'input' }));
       isR2V = true;
     } else {
       const ref = ctx.references[0];
@@ -119,24 +130,26 @@ async function prepare(stepDef, ctx, _previousIterations, onToken) {
 
   // ── I2V: follow the input image's aspect ratio unless dims are pinned ────
   let autoSize = null;
-  if (isI2V && inputRef && !(stepDef.params?.width && stepDef.params?.height)) {
+  if (isI2V && inputRef && archInfo.followInputAspect && !(stepDef.params?.width && stepDef.params?.height)) {
     if (!inputBuffer) inputBuffer = await fetchRefBuffer(inputRef, cfg.comfyuiUrl);
     autoSize = autoSizeFromImage(inputBuffer ? imageSize(inputBuffer) : null, stepDef, architecture);
   }
 
   // ── Prompt refinement ────────────────────────────────────────────────────
   if (cfg.promptRefinement === false) {
-    return { prompt: userPrompt, inputRef, isI2V, referenceRefs, isR2V, autoSize };
+    return { prompt: userPrompt, inputRef, isI2V, referenceRefs, isR2V, autoSize, warnings };
   }
 
-  const skillSummary = cfg.skillRefinement !== false ? skills.getSummary(skillId) : null;
+  const skillSummary = cfg.skillRefinement !== false ? skills.getSummary(skillId, architecture) : null;
   const messages = buildVideoMessages(userPrompt, architecture, { isI2V, refCount: referenceRefs.length }, skillSummary);
 
   // Inject the input image(s) so the LLM can describe them and suggest motion
   // that fits the content — inserted before the user description.
   if (cfg.llmExtras !== false) {
     const visionRefs = isR2V ? referenceRefs : (isI2V && inputRef ? [inputRef] : []);
-    const images = (await Promise.all(visionRefs.map(r => fetchRefBase64(r, cfg.comfyuiUrl)))).filter(Boolean);
+    const images = isI2V && inputBuffer
+      ? [inputBuffer.toString('base64')]
+      : (await Promise.all(visionRefs.map(r => fetchRefBase64(r, cfg.comfyuiUrl)))).filter(Boolean);
     if (images.length) {
       messages.splice(1, 0, {
         role: 'user',
@@ -158,7 +171,7 @@ async function prepare(stepDef, ctx, _previousIterations, onToken) {
     console.warn('[video] prompt build failed, falling back to raw prompt:', e.message);
   }
 
-  return { prompt: builtPrompt, inputRef, isI2V, referenceRefs, isR2V, autoSize };
+  return { prompt: builtPrompt, inputRef, isI2V, referenceRefs, isR2V, autoSize, warnings };
 }
 
 function buildComfyWorkflow(stepDef, prepareResult, ctx) {
@@ -176,6 +189,7 @@ function buildComfyWorkflow(stepDef, prepareResult, ctx) {
     ...modelConfig,
     ...(prepareResult.autoSize ?? {}),
     ...(stepDef.params ?? {}),
+    ...(prepareResult.params ?? {}),   // e.g. the seed picked by runVideoStep
     positivePrompt: prepareResult.prompt ?? ctx.userPrompt ?? '',
     inputRef:       prepareResult.inputRef,
     isI2V:          prepareResult.isI2V,

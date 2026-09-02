@@ -247,3 +247,39 @@ test('refuse-accepted honors an explicit stepIndex/iterationN target', async () 
   assert.equal(session.steps[0].iterations[1].verdict, 'ACCEPT', 'other variant untouched');
   assert.equal(session.steps[1].iterations[0].verdict, 'ACCEPT', 'later step untouched');
 });
+
+test('rerun refuses a workflow whose step types changed even when the count did not', async () => {
+  const sessionId = await runFullSession();
+  const cfgPath   = path.join(tmpDir, 'config.json');
+  const original  = fs.readFileSync(cfgPath, 'utf8');
+  const cfg       = JSON.parse(original);
+  // Same length, but step 2 is now an upscale — a rerun would write image
+  // iterations into a slot the session still calls "generate".
+  cfg.workflows['test-wf-2step'].steps[1] = { type: 'upscale', upscaleType: 'model', upscaleModel: 'x.pth', factor: 2, review: {} };
+  fs.writeFileSync(cfgPath, JSON.stringify(cfg));
+  try {
+    const res = await fetch(`${base()}/api/generate/rerun/${sessionId}`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ fromStep: 1 }),
+    });
+    assert.equal(res.status, 400);
+    const body = await res.json();
+    assert.match(body.error, /step 2 is now upscale, was generate/);
+  } finally {
+    fs.writeFileSync(cfgPath, original);
+  }
+});
+
+test('step_complete carries the cleared selection so the client can re-sync', async () => {
+  const sessionId = await runFullSession();
+  await collectSSE(`${base()}/api/generate/rerun/${sessionId}`, { fromStep: 0, toStep: 0 });
+  await fetch(`${base()}/api/generate/sessions/${sessionId}/select`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ stepIndex: 0, iteration: 1 }),
+  });
+  const events = await collectSSE(`${base()}/api/generate/rerun/${sessionId}`, { fromStep: 0, toStep: 0 });
+  assert.ok(events.find(e => e.event === 'history' && e.data.selected), 'replay shows the old pick');
+  const complete = events.find(e => e.event === 'step_complete' && e.data.step === 0);
+  assert.ok(complete, 'step_complete emitted');
+  assert.equal(complete.data.selectedIteration, null, 'fresh run cleared the pick');
+});

@@ -39,3 +39,5 @@ Also requires `diffusers>=0.30.1` (`pip install diffusers --upgrade`).
 ## Notes
 
 The 3D Causal VAE processes frames with 3D convolutions, capturing motion between frames rather than treating each frame independently (which causes flicker in 2D VAE models). Typical CFG: 6. Requires ~24 GB VRAM for the 5B model. Available in 2B (faster) and 5B (higher quality) sizes — no 9B variant exists.
+
+**Fixed resolution.** The CogVideoX weights are trained at 720×480 only, so — unlike the other video archs — an I2V step never follows the input image's aspect ratio (`followInputAspect: false` in `ARCH_META`). Blank `width`/`height` always mean 720×480; a differently shaped input image is resized by the I2V node.

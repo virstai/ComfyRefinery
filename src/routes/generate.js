@@ -140,6 +140,7 @@ async function _runIterativeLoop(stepType, stepDef, stepIndex, session, ctx, cfg
           process.stdout.write(`\r[${tag}] step ${stepIndex} iter ${iterNum}: generating ${pct}%   `);
         },
         previewUrl => emit(res, 'preview', { step: stepIndex, iteration: iterNum, url: previewUrl }),
+        { signal: ctx.signal },
       );
       process.stdout.write('\n');
 
@@ -290,7 +291,7 @@ async function runVideoStep(stepDef, stepIndex, session, ctx, cfg, res, isKilled
 
   const modelConfig = cfg.models?.[stepDef.modelId];
   if (!modelConfig) throw new Error(`Video model "${stepDef.modelId}" not found in config`);
-  ctx = { ...ctx, modelConfig };
+  ctx = { ...ctx, modelConfig, skillId: modelConfig.id ?? stepDef.modelId };
 
   emit(res, 'step', { index: stepIndex, type: 'video', label: stepData.label, total: session.steps.length });
   console.log(`[${tag}] step ${stepIndex} (video: ${stepData.label})`);
@@ -309,9 +310,17 @@ async function runVideoStep(stepDef, stepIndex, session, ctx, cfg, res, isKilled
 
   if (isKilled()) throw new Error('Generation stopped by user');
 
+  for (const w of prepResult.warnings ?? []) {
+    emit(res, 'warning', { step: stepIndex, iteration: iterNum, message: w });
+    console.warn(`[${tag}] step ${stepIndex}: ${w}`);
+  }
+
   emit(res, 'prompt', { step: stepIndex, iteration: iterNum, prompt: prepResult.prompt });
   emit(res, 'phase',  { step: stepIndex, phase: 'generating', iteration: iterNum });
   console.log(`[${tag}] step ${stepIndex}: queuing video ComfyUI job…`);
+  // Pick the seed here (as _runIterativeLoop does) so the take records it.
+  prepResult.params = { ...(prepResult.params ?? {}) };
+  if (prepResult.params.seed == null) prepResult.params.seed = Math.floor(Math.random() * 2 ** 32);
   const workflow = stepType.buildComfyWorkflow(stepDef, prepResult, ctx);
 
   const { videos } = await comfyui.generateVideo(
@@ -320,6 +329,7 @@ async function runVideoStep(stepDef, stepIndex, session, ctx, cfg, res, isKilled
       emit(res, 'progress', { step: stepIndex, pct });
       process.stdout.write(`\r[${tag}] step ${stepIndex}: generating ${pct}%   `);
     },
+    { signal: ctx.signal },
   );
   process.stdout.write('\n');
 
@@ -334,8 +344,10 @@ async function runVideoStep(stepDef, stepIndex, session, ctx, cfg, res, isKilled
   stepData.iterations.push({
     prompt:    prepResult.prompt,
     videoUrl,
+    seed:      prepResult.params.seed,
     verdict:   'ACCEPT',
     diagnosis: 'video step (no review)',
+    ...(prepResult.warnings?.length ? { warnings: [...prepResult.warnings] } : {}),
   });
   stepData.selectedIteration = null;
   stepData.outputVideoUrl = stepOutput(stepData)?.videoUrl ?? null;
@@ -402,11 +414,14 @@ async function runPipeline(session, pipelineDef, cfg, res, imageContext = [], op
       const { accepted, outputImageUrl, outputVideoUrl } = result;
       overallAccepted = accepted;
 
+      // selectedIteration rides along so the client drops any stale manual pick
+      // (a fresh run of a step supersedes it — see _runIterativeLoop / runVideoStep).
+      const selectedIteration = session.steps[si]?.selectedIteration ?? null;
       if (outputImageUrl) {
         ctx.inputImage = outputImageUrl;
-        emit(res, 'step_complete', { step: si, imageUrl: outputImageUrl, accepted });
+        emit(res, 'step_complete', { step: si, imageUrl: outputImageUrl, accepted, selectedIteration });
       } else if (outputVideoUrl) {
-        emit(res, 'step_complete', { step: si, videoUrl: outputVideoUrl, accepted });
+        emit(res, 'step_complete', { step: si, videoUrl: outputVideoUrl, accepted, selectedIteration });
       }
 
       // Don't run subsequent steps on a rejected output
@@ -415,7 +430,7 @@ async function runPipeline(session, pipelineDef, cfg, res, imageContext = [], op
 
     session.status = 'complete';
     console.log(`[${tag}] done — ${overallAccepted ? 'ACCEPTED' : 'max iterations reached'}`);
-    const lastStep = session.steps[session.steps.length - 1];
+    const lastStep = session.steps[endStep];
     emit(res, 'done', {
       accepted:   overallAccepted,
       imageUrl:   lastStep?.outputImageUrl ?? null,
@@ -431,14 +446,20 @@ async function runPipeline(session, pipelineDef, cfg, res, imageContext = [], op
       const st = session.steps[currentStep];
       if (st) {
         st.iterations.length = preRunCounts[currentStep] ?? 0;
-        st.selectedIteration = null;
+        // The surviving iterations are exactly the pre-run set, so a manual
+        // selection among them is still valid — only drop it if it now dangles.
+        if (st.selectedIteration != null && st.selectedIteration > st.iterations.length) st.selectedIteration = null;
         const kept = stepOutput(st);
         st.outputImageUrl = kept?.imageUrl ?? null;
         st.outputVideoUrl = kept?.videoUrl ?? null;
       }
       session.status = 'stopped';
       console.log(`[${tag}] stopped by user at step ${currentStep}`);
-      emit(res, 'stopped', { step: currentStep });
+      emit(res, 'stopped', {
+        step: currentStep,
+        keptIterations:    st?.iterations.length ?? 0,
+        selectedIteration: st?.selectedIteration ?? null,
+      });
     } else {
       session.status = 'error';
       console.error(`[${tag}] error: ${err.message}`);
@@ -560,6 +581,14 @@ async function resumeSession(req, res, { fromStep = 0, toStep = null } = {}) {
   // since, step indexes no longer line up and a re-run would corrupt the session.
   if (pipelineDef.length !== session.steps.length) {
     return res.status(400).json({ error: `Workflow "${session.workflowId}" changed shape since this session ran (${pipelineDef.length} steps vs ${session.steps.length}) — start a new session.` });
+  }
+  const drifted = pipelineDef.findIndex((d, i) => d.type !== session.steps[i].type);
+  if (drifted !== -1) {
+    return res.status(400).json({ error: `Workflow "${session.workflowId}" changed shape since this session ran (step ${drifted + 1} is now ${pipelineDef[drifted].type}, was ${session.steps[drifted].type}) — start a new session.` });
+  }
+  // Same shape — refresh labels so an edited model name shows up on re-run.
+  for (let i = 0; i < pipelineDef.length; i++) {
+    session.steps[i].label = steps.get(pipelineDef[i].type).label(pipelineDef[i], cfg);
   }
 
   const last    = pipelineDef.length - 1;

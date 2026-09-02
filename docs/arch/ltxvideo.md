@@ -73,3 +73,5 @@ No custom nodes required — all nodes used are built into ComfyUI core (`LTXAVT
 ## Notes
 
 Generates in ~90 seconds on a 4090, ~7 minutes on a 3060 12 GB for short clips. No negative prompt support.
+
+**I2V dimensions follow the input image.** When a video step chains from a previous step (or uses an uploaded reference as its first frame) and does not pin both `width` and `height`, ComfyRefinery derives the video size from the input image's aspect ratio: fitted to this arch's default pixel budget, rounded to its 32-pixel grid, with neither edge exceeding the default long edge. Pin one dimension to keep it and let the other follow the image; pin both to disable the follow entirely.

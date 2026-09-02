@@ -71,3 +71,16 @@ test('roundToMultiple clamps to at least one multiple', () => {
   assert.equal(roundToMultiple(47, 32), 32);
   assert.equal(roundToMultiple(49, 32), 64);
 });
+
+test('fitToBudget caps either edge at the budget long edge for extreme ratios', () => {
+  // 6:1 panorama into H3's 1344×768 budget: area-conserving fit would be ~2496×416
+  const p = fitToBudget(3840, 640, 1344, 768, 32);
+  assert.ok(p.width <= 1344, `width capped, got ${p.width}`);
+  assert.equal(p.width % 32, 0);
+  assert.equal(p.height % 32, 0);
+  assert.ok(p.width > p.height, 'stays landscape');
+
+  // Explicit maxDim wins over the default long-edge cap
+  const q = fitToBudget(3840, 640, 1344, 768, 32, 1024);
+  assert.ok(q.width <= 1024, `width capped at maxDim, got ${q.width}`);
+});

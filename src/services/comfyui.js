@@ -9,10 +9,12 @@ const wsUrl   = () => baseUrl().replace(/^http/, 'ws');
 
 // ── Generation ─────────────────────────────────────────────────────────────
 
-async function generate(workflow, onProgress, onPreview) {
+// opts.signal — AbortSignal; aborting rejects the wait with Error('Stopped')
+// so a killed pipeline never sits on a ComfyUI job that will not report back.
+async function generate(workflow, onProgress, onPreview, opts = {}) {
   const clientId = uuidv4();
   const promptId = await queuePrompt(workflow, clientId);
-  await waitForCompletion(promptId, clientId, onProgress, onPreview);
+  await waitForCompletion(promptId, clientId, onProgress, onPreview, opts.signal);
   return getOutputImages(promptId);
 }
 
@@ -26,18 +28,40 @@ async function queuePrompt(workflow, clientId) {
   return (await res.json()).prompt_id;
 }
 
-function waitForCompletion(promptId, clientId, onProgress, onPreview) {
+function waitForCompletion(promptId, clientId, onProgress, onPreview, signal) {
   return new Promise((resolve, reject) => {
     let done        = false;
     let ws          = null;
     let reconnects  = 0;
     const MAX_RECONNECTS = 30;
 
+    const onAbort = () => finish(new Error('Stopped'));
+
     const finish = (err) => {
       if (done) return;
       done = true;
+      signal?.removeEventListener('abort', onAbort);
       try { ws?.close(); } catch {}
       err ? reject(err) : resolve();
+    };
+
+    if (signal?.aborted) return onAbort();
+    signal?.addEventListener('abort', onAbort, { once: true });
+
+    // Is the prompt still in ComfyUI's running/pending queue? A restarted server
+    // comes back with an empty queue and no history entry for the job, so
+    // without this check a reconnect would wait forever for a completion that
+    // never comes. Returns true on network errors (can't tell — keep waiting).
+    const isQueued = async () => {
+      try {
+        const res = await fetch(`${baseUrl()}/queue`);
+        if (!res.ok) return true;
+        const data = await res.json();
+        const ids  = [...(data.queue_running ?? []), ...(data.queue_pending ?? [])].map(item => item?.[1]);
+        return ids.includes(promptId);
+      } catch {
+        return true;
+      }
     };
 
     // Poll /history to check whether the prompt completed while the WS was down.
@@ -106,7 +130,18 @@ function waitForCompletion(promptId, clientId, onProgress, onPreview) {
     const connect = () => {
       if (done) return;
       ws = new WebSocket(`${wsUrl()}/ws?clientId=${clientId}`);
-      ws.on('open',    ()          => { reconnects = 0; });
+      ws.on('open',    async ()    => {
+        const wasReconnect = reconnects > 0;
+        reconnects = 0;
+        if (!wasReconnect || done) return;
+        // Back online after a drop: make sure ComfyUI still has the job. Queue
+        // first, then history — a job that just left the queue is in history.
+        try {
+          if (await isQueued()) return;
+          if (await checkHistory()) return finish();
+          finish(new Error('ComfyUI lost the job (server restarted?) — re-run the step'));
+        } catch (e) { finish(e); }
+      });
       ws.on('message', handleMessage);
       // Log WS errors but don't finish — the 'close' event fires after 'error' and
       // handles the reconnect/fail decision there.
@@ -172,10 +207,10 @@ async function getOutputVideos(promptId) {
   return { videos };
 }
 
-async function generateVideo(workflow, onProgress) {
+async function generateVideo(workflow, onProgress, opts = {}) {
   const clientId = uuidv4();
   const promptId = await queuePrompt(workflow, clientId);
-  await waitForCompletion(promptId, clientId, onProgress, null);
+  await waitForCompletion(promptId, clientId, onProgress, null, opts.signal);
   return getOutputVideos(promptId);
 }
 

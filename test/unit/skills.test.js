@@ -163,3 +163,12 @@ test('migrates legacy flat format transparently', () => {
   assert.equal(ver.source, 'legacy');
   assert.equal(ver.outcomes.accepts, 3);
 });
+
+test('getSummary falls back to the architecture baseline when the model has no skill file', () => {
+  // Video steps never record outcomes, so they'd have no file — the arch
+  // default must still reach the prompt builder.
+  const summary = skills.getSummary('never-recorded-model', 'sd15');
+  assert.ok(summary, 'returns the baseline');
+  assert.match(summary, /baseline for sd15/);
+  assert.equal(skills.getSummary('never-recorded-model', 'no-such-arch'), null);
+});

@@ -5,6 +5,7 @@ const path = require('path');
 const { createServer } = require('http');
 
 const config = require('./src/services/config');
+const db     = require('./src/services/db');
 const generateRoutes    = require('./src/routes/generate');
 const sessionsRoutes    = require('./src/routes/sessions');
 const referencesRoutes  = require('./src/routes/references');
@@ -72,6 +73,16 @@ app.get('/api/audio', makeComfyProxy('audio/flac'));
 
 if (require.main === module) {
   const PORT = process.env.PORT || 3000;
+  // Sessions still marked "running" from before this process started belong
+  // to a pipeline that died with the previous server — nothing can finish or
+  // stop them now, so mark them so the UI doesn't wait on them forever.
+  for (const s of db.listSessions(Infinity)) {
+    if (s.status !== 'running') continue;
+    s.status = 'error';
+    db.saveSession(s);
+    console.warn(`[startup] session ${s.id.slice(0, 8)} was running at shutdown — marked as error`);
+  }
+
   server.listen(PORT, () => {
     const cfg = config.load();
     console.log(`ComfyRefinery running at http://localhost:${PORT}`);

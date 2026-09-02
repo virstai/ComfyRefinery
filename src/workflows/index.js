@@ -70,6 +70,7 @@ const ARCH_META = {
     capabilities: { lora: false, adapter: false, controlNet: false },
     videoArch:    true,
     dimMultiple:  16,
+    followInputAspect: true,
     fields:      {
       unetName:          true,
       unetName2:         true,
@@ -93,6 +94,7 @@ const ARCH_META = {
     capabilities: { lora: false, adapter: false, controlNet: false },
     videoArch:    true,
     dimMultiple:  16,
+    followInputAspect: true,
     fields:       { unetName: true, clipName: true, vaeName: true, guidance: true },
     notes:       'Main model goes in models/diffusion_models/ (not checkpoints). Requires two text encoders: clip_l.safetensors and llava_llama3_fp8_scaled.safetensors — set CLIP to clip_l. Has native ComfyUI support (no custom nodes needed on recent ComfyUI).',
   },
@@ -102,6 +104,7 @@ const ARCH_META = {
     capabilities: { lora: false, adapter: false, controlNet: false },
     videoArch:    true,
     dimMultiple:  32,
+    followInputAspect: true,
     fields:       { checkpoint: true, clipName: 'always', distilledLoraName: 'lora', enableAudio: 'toggle', guidance: true },
     fieldHints:   {
       clipName:          'Text encoder — e.g. gemma_3_12B_it_fp4_mixed.safetensors (models/text_encoders/)',
@@ -116,7 +119,9 @@ const ARCH_META = {
     capabilities:    { lora: false, adapter: false, controlNet: false },
     videoArch:       true,
     dimMultiple:  32,
+    followInputAspect: true,
     referenceToVideo: true,
+    maxReferences:    9,
     fields:      {
       unetName:             true,
       refUnetName:          true,
@@ -151,6 +156,8 @@ const ARCH_META = {
     capabilities: { lora: false, adapter: false, controlNet: false },
     videoArch:    true,
     dimMultiple:  8,
+    // CogVideoX weights are fixed-resolution (720×480) — never follow the input image's ratio.
+    followInputAspect: false,
     fields:       { checkpoint: true, vae: true, clipName: true, cfgScale: true },
     notes:       'Requires kijai/ComfyUI-CogVideoXWrapper. The wrapper auto-downloads models to models/CogVideo/. T5 encoder goes in models/clip/. Available in 2B, 5B, and 5B-I2V variants — no 9B variant exists.',
   },

@@ -211,7 +211,7 @@
 
 <script setup>
 import { ref, computed, watch, onMounted, onUnmounted } from 'vue';
-import { submitHumanReview, refuseAccepted, selectIteration, rerunFrom } from '../stores/generate.js';
+import { genState, submitHumanReview, refuseAccepted, selectIteration, rerunFrom } from '../stores/generate.js';
 
 const props = defineProps({
   steps:     { type: Array,   default: () => [] },
@@ -337,6 +337,8 @@ async function selectOutput() {
   submitting.value = true;
   try {
     await selectIteration(props.sessionId, displayed.value.stepIndex, displayed.value.iteration.n);
+  } catch (e) {
+    genState.status = `Error: ${e.message}`;
   } finally {
     submitting.value = false;
   }
@@ -363,6 +365,8 @@ async function sendToNext() {
   try {
     await selectIteration(props.sessionId, d.stepIndex, d.iteration.n);
     await rerunFrom(props.sessionId, d.stepIndex + 1);
+  } catch (e) {
+    genState.status = `Error: ${e.message}`;
   } finally {
     submitting.value = false;
   }

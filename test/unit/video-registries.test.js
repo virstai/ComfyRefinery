@@ -38,3 +38,13 @@ test('video step type is registered', () => {
   assert.equal(typeof step.prepare,            'function', 'has prepare');
   assert.equal(typeof step.buildComfyWorkflow, 'function', 'has buildComfyWorkflow');
 });
+
+test('video archs declare whether I2V may follow the input aspect ratio', () => {
+  const { archMeta } = require('../../src/workflows');
+  for (const [k, m] of Object.entries(archMeta)) {
+    if (!m.videoArch) continue;
+    assert.equal(typeof m.followInputAspect, 'boolean', `${k} declares followInputAspect`);
+  }
+  assert.equal(archMeta.cogvideox.followInputAspect, false, 'CogVideoX weights are fixed-resolution');
+  assert.equal(archMeta.minimaxh3.maxReferences, 9);
+});

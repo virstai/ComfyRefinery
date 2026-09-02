@@ -61,8 +61,9 @@ a previous step), ComfyRefinery switches to the Ref2VA checkpoint automatically 
 wires every reference into `MiniMaxH3ReferenceToVideo`. References are cited in the
 prompt by upload order as `<Picture 1>`, `<Picture 2>`, … with an explicit role
 (identity / style / object) — the prompt refiner does this automatically. Model limits:
-up to 9 reference images. If the Ref2VA UNet is not configured, the first reference
-falls back to plain I2V first-frame conditioning instead.
+up to 9 reference images — extra uploads are dropped with a warning on the take
+(`maxReferences: 9` in `ARCH_META`). If the Ref2VA UNet is not configured, the first
+reference falls back to plain I2V first-frame conditioning instead.
 
 ## Required custom nodes
 

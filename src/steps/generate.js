@@ -228,6 +228,7 @@ async function prePass(stepDef, prepResult, ctx, hooks = {}) {
     width:  prepResult.params.width,
     height: prepResult.params.height,
     onProgress: hooks.onProgress,
+    signal: ctx.signal,
   });
   prepResult.poseRef      = ref;
   prepResult.poseImageUrl = imageUrl;

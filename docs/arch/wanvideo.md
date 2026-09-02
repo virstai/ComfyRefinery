@@ -59,4 +59,6 @@ Each sampler gets its own `ModelSamplingSD3` (shift = 8.0) applied to its respec
 
 Primary use is **image-to-video (I2V)** — animates the output image from a previous workflow step. 14B models require ~20 GB VRAM at fp8. Video output is 480p or 720p depending on the workflow. The 5B TI2V model accepts both text and image input with a single UNet and runs on ~12 GB VRAM.
 
+**I2V dimensions follow the input image.** When a video step chains from a previous step (or uses an uploaded reference as its first frame) and does not pin both `width` and `height`, ComfyRefinery derives the video size from the input image's aspect ratio: fitted to this arch's default pixel budget, rounded to its 16-pixel grid, with neither edge exceeding the default long edge. Pin one dimension to keep it and let the other follow the image; pin both to disable the follow entirely.
+
 Pre-quantized models (`_fp8_scaled.safetensors`) should use `modelQuantization: "default"` in the model settings — setting it to `fp8_e4m3fn` would double-quantize an already-quantized model.
