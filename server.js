@@ -12,6 +12,7 @@ const referencesRoutes  = require('./src/routes/references');
 const archHelpRoutes    = require('./src/routes/archHelp');
 const sdapiRoutes       = require('./src/routes/sdapi');
 const queueRoutes       = require('./src/routes/queue');
+const systemRoutes      = require('./src/routes/system');
 
 const app = express();
 const server = createServer(app);
@@ -25,6 +26,7 @@ app.use('/api/generate',    generateRoutes);
 app.use('/api/sessions',    sessionsRoutes);
 app.use('/api/references',  referencesRoutes);
 app.use('/api/arch-help',   archHelpRoutes);
+app.use('/api/system',      systemRoutes);
 app.use('/api/queue',       queueRoutes);
 app.use('/sdapi/v1',        sdapiRoutes);
 

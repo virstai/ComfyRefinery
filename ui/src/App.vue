@@ -70,6 +70,8 @@
         @load-session="onLoadSession"
       />
 
+      <SystemPanel v-else-if="activeView === 'system'" />
+
       <SettingsPanel
         v-else-if="activeView === 'settings'"
         :config="configState.config"
@@ -84,6 +86,7 @@
 import { ref, watch, onMounted } from 'vue';
 import Sidebar         from './components/Sidebar.vue';
 import GenerateSection from './components/GenerateSection.vue';
+import SystemPanel     from './components/SystemPanel.vue';
 import RunSection      from './components/RunSection.vue';
 import WorkflowsPanel  from './components/WorkflowsPanel.vue';
 import ModelsPanel     from './components/ModelsPanel.vue';
@@ -97,7 +100,7 @@ import { genState, startGeneration, continueSession, loadSession, clearSession, 
 
 // ── Routing: the URL hash mirrors the current view (and loaded session) so a
 // refresh lands back where you were — #/history, #/generate/<sessionId>, …
-const VIEWS = ['generate', 'queue', 'workflows', 'models', 'loras', 'history', 'settings'];
+const VIEWS = ['generate', 'queue', 'workflows', 'models', 'loras', 'history', 'system', 'settings'];
 function parseHash() {
   const m = location.hash.match(/^#\/([a-z]+)(?:\/([^/?#]+))?/);
   return { view: VIEWS.includes(m?.[1]) ? m[1] : 'generate', sessionId: m?.[2] ?? null };

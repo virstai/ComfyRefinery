@@ -294,6 +294,21 @@ async function getDevices() {
     });
 }
 
+async function getSystemStats() {
+  const res = await fetch(`${baseUrl()}/system_stats`);
+  if (!res.ok) throw new Error(`ComfyUI system_stats error ${res.status}`);
+  return res.json();
+}
+
+// { nodeClass: pythonModule } for every node ComfyUI has loaded — core nodes
+// come from "nodes" / "comfy_extras.*", custom packs from "custom_nodes.<pack>".
+async function getNodeIndex() {
+  const res = await fetch(`${baseUrl()}/object_info`);
+  if (!res.ok) throw new Error(`ComfyUI object_info error ${res.status}`);
+  const all = await res.json();
+  return Object.fromEntries(Object.entries(all).map(([name, info]) => [name, info?.python_module ?? 'unknown']));
+}
+
 async function getAssets() {
   // Ask ComfyUI to flush its in-memory model file cache before we query.
   // POST /api/models/refresh exists in ComfyUI 0.3+; silently ignored on older builds.
@@ -347,4 +362,4 @@ async function interrupt() {
   try { await fetch(`${baseUrl()}/interrupt`, { method: 'POST' }); } catch { /* best effort */ }
 }
 
-module.exports = { generate, generateVideo, getOutputVideos, getAssets, getDevices, listLoras, getLoraMetadata, hasNode, uploadImage, interrupt };
+module.exports = { generate, generateVideo, getOutputVideos, getAssets, getDevices, getSystemStats, getNodeIndex, fetchInputList, listLoras, getLoraMetadata, hasNode, uploadImage, interrupt };

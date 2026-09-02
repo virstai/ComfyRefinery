@@ -22,6 +22,7 @@ const GLOBAL_DEFAULTS = {
   reviewEnabled:          true,
   promptRefinement:       true,
   llmExtras:              true,
+  fileArchTags:           {},  // "<kind>:<filename>" → [arch, ...]; filters model-file pickers (System page)
   models:                 {},
   workflows:              {},
   loras:                  {},
@@ -106,6 +107,15 @@ function saveModel(id, modelData) {
   return cfg.models[resolvedId];
 }
 
+// Tag a model file with the architectures it belongs to; [] removes the tag.
+function setFileArchTags(key, archs) {
+  const cfg  = load();
+  const tags = { ...(cfg.fileArchTags ?? {}) };
+  if (archs?.length) tags[key] = [...new Set(archs)]; else delete tags[key];
+  save({ fileArchTags: tags });
+  return tags;
+}
+
 // Update only the notes field on a model (user and auto notes).
 function saveModelNotes(modelId, notes) {
   const cfg = load();
@@ -125,4 +135,4 @@ function slugify(str) {
   return str.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || Date.now().toString();
 }
 
-module.exports = { load, save, activeWorkflow, saveWorkflow, deleteWorkflow, saveModel, saveModelNotes, deleteModel };
+module.exports = { load, save, activeWorkflow, saveWorkflow, deleteWorkflow, saveModel, saveModelNotes, deleteModel, setFileArchTags };

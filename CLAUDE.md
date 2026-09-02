@@ -13,7 +13,7 @@ OpenAI, LM Studio, etc.) can be pointed at via `llmBaseUrl` in settings.
 ```bash
 npm start              # production (serve public/)
 npm run dev            # API --watch + Vite hot-reload UI
-npm test               # all 336 tests
+npm test               # all 343 tests
 npm run ui:build       # compile Vue → public/
 ```
 
@@ -316,6 +316,10 @@ Always split-load: `UNETLoader` + `CLIPLoader(type:"flux2")` + `VAELoader`.
 ### ComfyUI asset discovery
 `comfyui.fetchInputList(nodeType, inputName)` — handles both old and new `object_info` formats.
 `comfyui.getAssets()` → `{ checkpoints, vaes, clips, unets, upscaleModels, ipAdapterModels, clipVisionModels, reduxModels, loras, controlNets, devices, multiGpu, errors }`.
+`comfyui.getNodeIndex()` → `{ nodeClass: python_module }` from the full `/object_info` (core = `nodes` / `comfy_extras.*`, custom packs = `custom_nodes.<pack>`); `getSystemStats()` → raw `/system_stats`.
+
+### System page
+`GET /api/system/info` (`src/routes/system.js`) feeds the **System** view: ComfyUI version / torch / RAM / launch args / package versions, GPUs (+ MultiGPU availability), LLM reachability, and `src/services/nodeRequirements.js`'s report — `PACKS` (custom node packs an optional feature or wrapper-based arch needs, checked by node presence or sampler name) and per-arch availability, which is derived by building each arch's base graph with a dummy config and checking every emitted node class against ComfyUI. `installedPacks` lists every `custom_nodes.*` module ComfyUI loaded (pack versions are not exposed by ComfyUI's API). The page also tags model files with architectures: `cfg.fileArchTags = { "<kind>:<filename>": [arch, …] }` via `PUT /api/system/file-tags { key, archs }` (`config.setFileArchTags`); ModelEditor then lists only the tagged files of a kind for that architecture (plus the current value, with a "show all" escape) once any file of that kind is tagged.
 
 ### Kill / stop mechanism
 `runPipeline` creates an `AbortController` and puts `signal` on `ctx`. The kill function in `activeKills`:
@@ -427,12 +431,14 @@ src/
     references.js     — POST /api/references/upload (base64 JSON → ComfyUI)
     sessions.js       — config/models/workflows/skills/assets API
     sdapi.js          — A1111 compat shim (calls /api/generate/run internally)
+    system.js         — GET /api/system/info (versions, devices, packs, arch availability, files) + file → arch tags
   services/
     config.js         — load/save, model + workflow CRUD, activeWorkflow()
     db.js             — session persistence (JSON files in data/sessions/)
     skills.js         — skill/notes read/write (data/skills/<workflowId>.json)
     skillRefresher.js — LLM-driven skill synthesis; locked notes preserved
     llm.js            — provider router
+    nodeRequirements.js — PACKS registry + inspect(): per-arch node availability (built from each arch's base graph) and custom-pack status for the System page
     agent.js          — generic tool-calling agent loop (guidance injection, execute handlers, bounded rounds)
     comfyui.js        — ComfyUI HTTP + WebSocket client; preview frame handling
     loraRegistry.js   — cfg.loras CRUD; scan via /api/sessions/loras/scan (reads ComfyUI LoRA list + auto-detects arch via loraMeta.js)
@@ -484,6 +490,7 @@ ui/src/
     WorkflowEditor.vue  — step builder: generate (with adapter picker, LoRA list, ControlNet) + upscale (model/hires)
     SettingsPanel.vue   — global settings (llmBaseUrl, llmApiKey, comfyuiUrl, llmModel)
     HistoryPanel.vue    — past sessions list
+    SystemPanel.vue     — System page: ComfyUI/LLM/GPU status, arch availability, node packs, model-file arch tags
     LorasPanel.vue      — LoRA registry: scan, list, edit label/description/defaultWeight/triggerWords
 data/
   config.json         — models, workflows, activeWorkflow, global settings
@@ -496,7 +503,7 @@ data/
 ## Testing
 
 ```bash
-npm test               # all 336 tests
+npm test               # all 343 tests
 npm run test:unit      # unit tests only
 npm run test:int       # integration tests only
 ```
