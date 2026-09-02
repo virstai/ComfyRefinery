@@ -2,13 +2,13 @@
   <div class="pipeline-detail">
     <div class="detail-pane-header">
       <template v-if="displayed">
-        <div>
+        <div class="detail-pane-titles">
           <div class="detail-pane-title">{{ displayed.isVideo ? 'Video Output' : `Iteration #${displayed.iteration.n}` }}</div>
-          <div class="detail-pane-subtitle">{{ displayed.stepLabel }}</div>
+          <div class="detail-pane-subtitle" :title="displayed.stepLabel">{{ displayed.stepLabel }}</div>
         </div>
       </template>
       <template v-else>
-        <div class="detail-pane-title">Detail</div>
+        <div class="detail-pane-title" style="flex:1">Detail</div>
       </template>
 
       <div v-if="canNavigate" class="detail-nav">
@@ -392,8 +392,15 @@ async function refuse() {
 </script>
 
 <style scoped>
+/* Title block owns the flexible space; the nav/badge controls keep a fixed
+   right-aligned position instead of having wrapped subtitle text flow under them */
+.detail-pane-titles { flex: 1; min-width: 0; }
+.detail-pane-titles .detail-pane-subtitle {
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+
 .detail-nav {
-  display: inline-flex; gap: 4px; margin-left: auto; margin-right: 8px;
+  display: inline-flex; gap: 4px; flex: 0 0 auto; margin-right: 4px;
 }
 .detail-nav-btn {
   width: 24px; height: 24px; line-height: 1;
