@@ -204,6 +204,17 @@
             <button v-if="canSelectOutput" class="secondary" :disabled="submitting" @click="selectOutput">Mark as step output only</button>
           </div>
         </div>
+
+        <!-- Ad-hoc video from this image -->
+        <div v-if="canMakeVideo" class="human-review">
+          <span class="hr-ai-note">Animate this image: adds a video step to this session and runs it now — nothing else is regenerated.</span>
+          <div class="hr-actions">
+            <select v-model="videoModelId" :disabled="submitting">
+              <option v-for="m in videoModels" :key="m.id" :value="m.id">{{ m.label }}</option>
+            </select>
+            <button class="secondary" :disabled="submitting || !videoModelId" @click="makeVideo">🎬 Make video</button>
+          </div>
+        </div>
       </template>
     </div>
   </div>
@@ -211,7 +222,8 @@
 
 <script setup>
 import { ref, computed, watch, onMounted, onUnmounted } from 'vue';
-import { genState, submitHumanReview, refuseAccepted, selectIteration, rerunFrom } from '../stores/generate.js';
+import { genState, submitHumanReview, refuseAccepted, selectIteration, rerunFrom, addVideoStep } from '../stores/generate.js';
+import { configState } from '../stores/config.js';
 
 const props = defineProps({
   steps:     { type: Array,   default: () => [] },
@@ -337,6 +349,35 @@ async function selectOutput() {
   submitting.value = true;
   try {
     await selectIteration(props.sessionId, displayed.value.stepIndex, displayed.value.iteration.n);
+  } catch (e) {
+    genState.status = `Error: ${e.message}`;
+  } finally {
+    submitting.value = false;
+  }
+}
+
+// ── Ad-hoc video step from any image variant ─────────────────────────────────
+
+const videoModels = computed(() =>
+  Object.entries(configState.config.models ?? {})
+    .filter(([, m]) => configState.archMeta[m.architecture]?.videoArch)
+    .map(([id, m]) => ({ id, label: m.label ?? id })));
+const videoModelId = ref(null);
+watch(videoModels, list => { if (!list.some(m => m.id === videoModelId.value)) videoModelId.value = list[0]?.id ?? null; }, { immediate: true });
+
+const canMakeVideo = computed(() => {
+  const d = displayed.value;
+  if (!props.sessionId || props.running || !d?.iteration) return false;
+  if (!d.iteration.verdict || !d.iteration.imageUrl) return false;
+  return videoModels.value.length > 0;
+});
+
+async function makeVideo() {
+  const d = displayed.value;
+  if (!d || !canMakeVideo.value || !videoModelId.value) return;
+  submitting.value = true;
+  try {
+    await addVideoStep(props.sessionId, { modelId: videoModelId.value, fromStep: d.stepIndex, iteration: d.iteration.n });
   } catch (e) {
     genState.status = `Error: ${e.message}`;
   } finally {

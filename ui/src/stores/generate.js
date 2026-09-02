@@ -442,6 +442,15 @@ export function returnToLive() {
 
 // Re-run part of a session: fromStep..toStep (toStep null = to the end).
 // Earlier steps keep their outputs; fromStep === toStep redoes a single step.
+// Append an ad-hoc video step that animates `fromStep`'s image (variant
+// `iteration`, 1-based) and run it — the rest of the session is untouched.
+export async function addVideoStep(sessionId, { modelId, fromStep, iteration }) {
+  const { stepIndex } = await api('POST', `/api/generate/sessions/${sessionId}/steps`, {
+    type: 'video', modelId, inputFrom: fromStep, iteration,
+  });
+  await rerunFrom(sessionId, stepIndex, stepIndex);
+}
+
 export async function rerunFrom(sessionId, fromStep, toStep = null) {
   _hasDirectStream   = true;
   _livePaused        = false;

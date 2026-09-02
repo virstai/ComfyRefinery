@@ -177,7 +177,10 @@ function makeFakeComfyUI(opts = {}) {
   return httpServer;
 }
 
-function makeVideoFakeComfyUI() {
+// opts.withImages: history also lists an image output, so generate steps
+// (which collect `images`) and video steps (which collect video files) can
+// share one fake within a single session.
+function makeVideoFakeComfyUI(opts = {}) {
   const promptId = 'test-video-prompt-001';
   const uploads  = [];
   const prompts  = [];
@@ -206,7 +209,10 @@ function makeVideoFakeComfyUI() {
       const pid = req.url.split('/').pop();
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({
-        [pid]: { outputs: { '9': { gifs: [{ filename: 'fake_video.mp4', subfolder: '', type: 'output', format: 'video/h264-mp4' }] } } },
+        [pid]: { outputs: {
+          '9': { gifs: [{ filename: 'fake_video.mp4', subfolder: '', type: 'output', format: 'video/h264-mp4' }] },
+          ...(opts.withImages ? { '7': { images: [{ filename: 'fake_00001_.png', subfolder: '', type: 'output' }] } } : {}),
+        } },
       }));
       return;
     }

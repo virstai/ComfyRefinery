@@ -13,7 +13,7 @@ OpenAI, LM Studio, etc.) can be pointed at via `llmBaseUrl` in settings.
 ```bash
 npm start              # production (serve public/)
 npm run dev            # API --watch + Vite hot-reload UI
-npm test               # all 319 tests
+npm test               # all 322 tests
 npm run ui:build       # compile Vue → public/
 ```
 
@@ -173,6 +173,9 @@ Skill + notes live in `data/skills/<workflowId>.json`, keyed by workflow ID.
       "iterations": [ { "prompt": "...", "videoUrl": "/api/video?...", "verdict": "ACCEPT", "diagnosis": "video step (no review)" } ],
       "outputVideoUrl": "/api/video?..." }
   ],
+  // Ad-hoc steps appended in the UI (e.g. "Make video" on any image variant). They run after the
+  // workflow's steps; `inputFrom` names the step whose output they build on.
+  "extraSteps": [ { "type": "video", "modelId": "ltx-2-3", "params": {}, "inputFrom": 0 } ],
   "status": "complete" | "stopped" | "error", "createdAt": "..."
 }
 ```
@@ -184,10 +187,14 @@ steps keep their outputs — the run chains from `stepOutput(steps[fromStep-1])`
 `selectedIteration`. `fromStep === toStep` redoes one step, appending a new iteration/take.
 `POST /api/generate/sessions/:id/select` `{ stepIndex, iteration }` picks which variant feeds
 downstream steps (recomputes `outputImageUrl`/`outputVideoUrl`); a fresh run of a step clears its
-selection. `/continue` is now `rerun` with `fromStep: 0`. A kill only discards iterations added by
+selection. `POST /api/generate/sessions/:id/steps` `{ type: 'video', modelId, params?, inputFrom, iteration? }`
+appends an ad-hoc video step (`session.extraSteps`) that animates `inputFrom`'s image and returns its
+`stepIndex` — the UI then calls `/rerun { fromStep: stepIndex }`. A session's pipeline on re-run is
+`sessionPipeline()`: the current workflow steps followed by `extraSteps`, so workflow edits still apply
+while the extra steps persist. Only video steps can be added this way for now. `/continue` is now `rerun` with `fromStep: 0`. A kill only discards iterations added by
 the current run. UI: per-step **↻ Redo** / **▶ From here** buttons (RunSection), `Output` badge on
-the effective variant (IterationCard), prev/next variant navigation + **Use as step output** in
-DetailPane.
+the effective variant (IterationCard), prev/next variant navigation + **Use as step output** +
+**🎬 Make video** (video-model picker, any accepted image variant) in DetailPane.
 
 ### SSE events
 All events carry `step` (0-indexed). Full event list:
@@ -445,7 +452,8 @@ src/
 ui/src/
   stores/
     config.js         — configState, loadConfig, saveConfig, model/workflow CRUD
-    generate.js       — genState, handleEvent (incl. stopped), SSE stream helpers, killGeneration, rerunFrom, selectIteration
+    generate.js       — genState, handleEvent (incl. stopped), SSE stream helpers, killGeneration, rerunFrom, selectIteration, addVideoStep
+  App.vue               — view switch + hash routing (#/<view>, #/generate/<sessionId>) so a refresh restores the page and loaded session
   components/
     Sidebar.vue         — nav, live status block, Stop button
     WorkflowSelect.vue  — custom dropdown for active workflow
@@ -473,7 +481,7 @@ data/
 ## Testing
 
 ```bash
-npm test               # all 319 tests
+npm test               # all 322 tests
 npm run test:unit      # unit tests only
 npm run test:int       # integration tests only
 ```

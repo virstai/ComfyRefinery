@@ -11,6 +11,7 @@ const skills  = require('../services/skills');
 const db      = require('../services/db');
 const { refreshSkill } = require('../services/skillRefresher');
 const steps   = require('../steps');
+const { archMeta } = require('../workflows');
 const { parseReview } = require('../lib/parsers');
 
 const sessions           = new Map(); // active sessions (in-memory cache)
@@ -402,6 +403,13 @@ async function runPipeline(session, pipelineDef, cfg, res, imageContext = [], op
       currentStep = si;
       const stepDef = pipelineDef[si];
 
+      // Ad-hoc steps can name the step whose output they build on.
+      if (stepDef.inputFrom != null) {
+        const src = stepOutput(session.steps[stepDef.inputFrom])?.imageUrl;
+        if (!src) throw new Error(`Step ${stepDef.inputFrom + 1} has no output image for step ${si + 1} to build on`);
+        ctx.inputImage = src;
+      }
+
       let result;
       if (stepDef.type === 'video') {
         result = await runVideoStep(stepDef, si, session, { ...ctx }, cfg, res, () => killed);
@@ -507,6 +515,15 @@ function buildPipelineFromWorkflow(workflow, genParams, review) {
   });
 }
 
+// A session's pipeline = the current workflow definition (so parameter edits
+// apply on re-run) followed by any ad-hoc steps added to this session in the
+// UI (session.extraSteps — e.g. "make a video from this image"). Extra steps
+// may carry `inputFrom` (a step index) to build on that step's output instead
+// of the immediately preceding step's.
+function sessionPipeline(session, workflow, genParams = {}, review = {}) {
+  return [...buildPipelineFromWorkflow(workflow, genParams, review), ...(session.extraSteps ?? [])];
+}
+
 function buildSessionSteps(pipelineDef, cfg) {
   return pipelineDef.map(stepDef => ({
     type:           stepDef.type,
@@ -575,7 +592,7 @@ async function resumeSession(req, res, { fromStep = 0, toStep = null } = {}) {
 
   const { overrides = {} } = req.body;
   const { genParams, review } = splitOverrides(overrides);
-  const pipelineDef = buildPipelineFromWorkflow(workflow, genParams, review);
+  const pipelineDef = sessionPipeline(session, workflow, genParams, review);
 
   // The session's steps were built from this workflow — if it changed shape
   // since, step indexes no longer line up and a re-run would corrupt the session.
@@ -601,10 +618,11 @@ async function resumeSession(req, res, { fromStep = 0, toStep = null } = {}) {
   }
 
   let initialInputImage = null;
-  if (fromStep > 0) {
-    initialInputImage = stepOutput(session.steps[fromStep - 1])?.imageUrl ?? null;
+  const sourceStep = pipelineDef[fromStep].inputFrom ?? (fromStep > 0 ? fromStep - 1 : null);
+  if (sourceStep != null) {
+    initialInputImage = stepOutput(session.steps[sourceStep])?.imageUrl ?? null;
     if (!initialInputImage) {
-      return res.status(400).json({ error: `Step ${fromStep - 1} has no output image to chain from — re-run it first.` });
+      return res.status(400).json({ error: `Step ${sourceStep} has no output image to chain from — re-run it first.` });
     }
   }
 
@@ -768,6 +786,46 @@ router.post('/sessions/:id/select', (req, res) => {
 });
 
 // POST /api/generate/sessions/:id/refuse-accepted
+// POST /api/generate/sessions/:id/steps — append an ad-hoc step to a session,
+// e.g. "make a video from this image" on a session whose workflow has no video
+// step (an API-driven generate, say). Body:
+//   { type: 'video', modelId, params?, inputFrom, iteration? }
+// `inputFrom` is the step whose output the video animates; `iteration` (1-based)
+// optionally picks that step's variant first. Returns { stepIndex } — run it
+// with POST /rerun/:id { fromStep: stepIndex }.
+router.post('/sessions/:id/steps', (req, res) => {
+  const cfg     = config.load();
+  const session = sessions.get(req.params.id) ?? db.loadSession(req.params.id);
+  if (!session) return res.status(404).json({ error: 'Session not found' });
+  if (activeKills.has(req.params.id)) return res.status(409).json({ error: 'Session is running — wait for it to finish' });
+
+  const { type = 'video', modelId, params = {}, inputFrom, iteration } = req.body ?? {};
+  if (type !== 'video') return res.status(400).json({ error: 'Only video steps can be added to an existing session' });
+  const model = cfg.models?.[modelId];
+  if (!model) return res.status(400).json({ error: `Model "${modelId}" not found in config` });
+  if (!archMeta[model.architecture]?.videoArch) return res.status(400).json({ error: `"${model.label ?? modelId}" is not a video model` });
+
+  const src = Number.isInteger(inputFrom) ? session.steps?.[inputFrom] : null;
+  if (!src) return res.status(400).json({ error: `No step ${inputFrom} in this session` });
+  if (iteration != null) {
+    if (!Number.isInteger(iteration) || iteration < 1 || iteration > src.iterations.length) {
+      return res.status(400).json({ error: `iteration out of range (1–${src.iterations.length})` });
+    }
+    src.selectedIteration = iteration;
+    src.outputImageUrl = stepOutput(src)?.imageUrl ?? null;
+    src.outputVideoUrl = stepOutput(src)?.videoUrl ?? null;
+  }
+  if (!stepOutput(src)?.imageUrl) return res.status(400).json({ error: `Step ${inputFrom + 1} has no output image to build a video from` });
+
+  const stepDef = { type: 'video', modelId, params: params && typeof params === 'object' ? params : {}, inputFrom };
+  session.extraSteps = [...(session.extraSteps ?? []), stepDef];
+  session.steps.push(...buildSessionSteps([stepDef], cfg));
+  sessions.set(session.id, session);
+  db.saveSession(session);
+
+  res.json({ stepIndex: session.steps.length - 1 });
+});
+
 router.post('/sessions/:id/refuse-accepted', (req, res) => {
   const session = sessions.get(req.params.id) ?? db.loadSession(req.params.id);
   if (!session) return res.status(404).json({ error: 'Session not found' });
