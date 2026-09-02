@@ -66,6 +66,22 @@ up to 9 reference images — extra uploads are dropped with a warning on the tak
 (`maxReferences: 9` in `ARCH_META`). If the Ref2VA UNet is not configured, the first
 reference falls back to plain I2V first-frame conditioning instead.
 
+## Performance notes (measured on an AMD R9700 32 GB, ROCm 7.13, ComfyUI 0.34)
+
+H3 is attention-bound: token count = latent frames × (W/16 × H/16)/4, and 1024×1024 × 243 frames is ~73k tokens.
+The attention backend matters far more than where the weights live:
+
+| Job (I2V, turbo LoRA, 8 steps) | PyTorch SDPA | flash_attn | `--use-ck-attention` |
+|---|---|---|---|
+| 1024×1024 × 73 f (fits in VRAM) | 25.5 s/step | 21.7 s/step | **15.5 s/step** |
+| 1024×1024 × 243 f (8.7 GB of UNet streamed) | 200 s/step, ~27 min | — | **103 s/step, 15.5 min** |
+
+Comfy Kitchen's HIP attention (`--use-ck-attention` on the ComfyUI command line) produced output indistinguishable from SDPA
+(brightness, detail, motion, audio). Streaming part of the UNet costs almost nothing by comparison: at 124 frames, 3 GB streamed
+from RAM and 6 GB parked on the second GPU via DisTorch both gave 60 s/step. `--enable-dynamic-vram` changed nothing either.
+The UNet cannot be fully resident at 1024² × 243 f on a 32 GB card (19.5 GB weights + ~12 GB peak activations); moving the
+VAEs to a second card (model settings → device) frees ~5.5 GB and lets shorter takes load fully.
+
 ## Required custom nodes
 
 None — `MiniMaxH3ImageToVideo`, `MiniMaxH3ReferenceToVideo`, `VAEDecodeAudio`,
