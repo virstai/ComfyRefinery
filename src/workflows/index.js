@@ -132,7 +132,9 @@ const ARCH_META = {
       refDistilledLoraName: 'Optional 4-step turbo LoRA for Ref2VA — set step count to 4 when using it.',
     },
     fieldLabels: {
+      unetName:             'FL2VA UNet file',
       refUnetName:          'Ref2VA UNet file',
+      vaeName:              'Video VAE file',
       audioVaeName:         'Audio VAE file',
       distilledLoraName:    'Turbo LoRA (FL2VA)',
       refDistilledLoraName: 'Turbo LoRA (Ref2VA)',

@@ -49,7 +49,7 @@
     </div>
 
     <!-- UNet (primary — or high-noise expert for Wan 2.2 MoE) -->
-    <label v-if="showSplitField && hasField('unetName')">{{ hasField('unetName2') ? 'High-noise UNet file' : 'UNet file' }}
+    <label v-if="showSplitField && hasField('unetName')">{{ fieldLabel('unetName') || (hasField('unetName2') ? 'High-noise UNet file' : 'UNet file') }}
       <select v-model="form.unetName">
         <option value="">— select —</option>
         <option v-for="u in assets.comfyui?.unets" :key="u" :value="u">{{ u }}</option>
@@ -76,7 +76,7 @@
     <p v-if="showSplitField && hasField('refUnetName') && fieldHint('refUnetName')" class="hint">{{ fieldHint('refUnetName') }}</p>
 
     <!-- Enum fields (e.g. model quantization) rendered after UNet fields -->
-    <label v-if="showSplitField && fieldOptions('modelQuantization')">{{ fieldLabel('modelQuantization') }}
+    <label v-if="showSplitField && fieldOptions('modelQuantization')">{{ fieldLabel('modelQuantization') || 'Model quantization' }}
       <select v-model="form.modelQuantization">
         <option value="">— select —</option>
         <option v-for="opt in fieldOptions('modelQuantization')" :key="opt" :value="opt">{{ opt }}</option>
@@ -135,12 +135,13 @@
     </div>
 
     <!-- VAE (split archs) -->
-    <label v-if="showSplitField && hasField('vaeName')">VAE file
+    <label v-if="showSplitField && hasField('vaeName')">{{ fieldLabel('vaeName') || 'VAE file' }}
       <select v-model="form.vaeName">
         <option value="">— select —</option>
         <option v-for="v in assets.comfyui?.vaes" :key="v" :value="v">{{ v }}</option>
       </select>
     </label>
+    <p v-if="showSplitField && hasField('vaeName') && fieldHint('vaeName')" class="hint">{{ fieldHint('vaeName') }}</p>
 
     <!-- Audio VAE (MiniMax H3) -->
     <label v-if="showSplitField && hasField('audioVaeName')">{{ fieldLabel('audioVaeName') || 'Audio VAE file' }} <span class="hint">(optional)</span>
@@ -152,7 +153,7 @@
     <p v-if="showSplitField && hasField('audioVaeName') && fieldHint('audioVaeName')" class="hint">{{ fieldHint('audioVaeName') }}</p>
 
     <!-- VAE precision enum (e.g. WanVideo) -->
-    <label v-if="showSplitField && fieldOptions('vaePrecision')">{{ fieldLabel('vaePrecision') }}
+    <label v-if="showSplitField && fieldOptions('vaePrecision')">{{ fieldLabel('vaePrecision') || 'VAE precision' }}
       <select v-model="form.vaePrecision">
         <option value="">— select —</option>
         <option v-for="opt in fieldOptions('vaePrecision')" :key="opt" :value="opt">{{ opt }}</option>
@@ -611,7 +612,7 @@ function fieldOptions(name) {
 }
 
 function fieldLabel(name) {
-  return props.archMeta[arch.value]?.fieldLabels?.[name] || name;
+  return props.archMeta[arch.value]?.fieldLabels?.[name] ?? null;
 }
 
 async function save() {
