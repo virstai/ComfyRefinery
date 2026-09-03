@@ -8,6 +8,7 @@ const express  = require('express');
 const config   = require('../services/config');
 const comfyui  = require('../services/comfyui');
 const llm      = require('../services/llm');
+const ffmpeg   = require('../services/ffmpeg');
 const { inspect } = require('../services/nodeRequirements');
 const { architectures } = require('../workflows');
 
@@ -16,12 +17,13 @@ const router = express.Router();
 // GET /api/system/info
 router.get('/info', async (req, res) => {
   const cfg = config.load();
-  const [stats, nodeIndex, samplers, assets, llmModels] = await Promise.allSettled([
+  const [stats, nodeIndex, samplers, assets, llmModels, ffmpegInfo] = await Promise.allSettled([
     comfyui.getSystemStats(),
     comfyui.getNodeIndex(),
     comfyui.fetchInputList('KSampler', 'sampler_name'),
     comfyui.getAssets(),
     llm.listModels(cfg),
+    ffmpeg.detect({ refresh: true }),
   ]);
   const sys = stats.status === 'fulfilled' ? stats.value : null;
   const requirements = inspect({
@@ -56,6 +58,13 @@ router.get('/info', async (req, res) => {
       models:    llmModels.status === 'fulfilled' ? llmModels.value : [],
     },
     nodeIndexAvailable: nodeIndex.status === 'fulfilled',
+    // Host tools outside ComfyUI. ffmpeg backs the Film view (last-frame
+    // capture, reference captures, export stitching).
+    tools: {
+      ffmpeg: ffmpegInfo.status === 'fulfilled'
+        ? ffmpegInfo.value
+        : { available: false, path: null, version: null, ffprobe: false, error: ffmpegInfo.reason?.message ?? 'detect failed' },
+    },
     ...requirements,
     files:        a ? files : {},
     fileArchTags: cfg.fileArchTags ?? {},

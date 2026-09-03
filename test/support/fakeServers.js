@@ -33,6 +33,12 @@ function makeFakeOllama(getVerdict, opts = {}) {
         res.end(JSON.stringify({ data: [] }));
         return;
       }
+      // llama-swap style unload endpoint (cfg.llmUnloadUrl)
+      if (req.method === 'GET' && req.url === '/unload') {
+        server.unloads++;
+        res.writeHead(200); res.end('ok');
+        return;
+      }
       res.writeHead(404); return res.end();
     }
 
@@ -103,6 +109,7 @@ function makeFakeOllama(getVerdict, opts = {}) {
     });
   });
   server.requests = requests;
+  server.unloads  = 0;
   return server;
 }
 
@@ -184,6 +191,9 @@ function makeFakeComfyUI(opts = {}) {
 // opts.withImages: history also lists an image output, so generate steps
 // (which collect `images`) and video steps (which collect video files) can
 // share one fake within a single session.
+// opts.progressDelayMs: hold the job open that long before reporting progress
+// (lets tests exercise "already running" and kill paths).
+// Uploads record the multipart filename so tests can assert what was sent.
 function makeVideoFakeComfyUI(opts = {}) {
   const promptId = 'test-video-prompt-001';
   const uploads  = [];
@@ -201,12 +211,20 @@ function makeVideoFakeComfyUI(opts = {}) {
       return;
     }
     if (req.method === 'POST' && req.url === '/upload/image') {
-      req.on('data', () => {});
+      const chunks = [];
+      req.on('data', c => chunks.push(c));
       req.on('end', () => {
-        uploads.push({ filename: 'uploaded.png' });
+        const body = Buffer.concat(chunks).toString('latin1');
+        const name = (body.match(/filename="([^"]+)"/) ?? [])[1] ?? 'uploaded.png';
+        uploads.push({ filename: name });
         res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ name: 'uploaded.png', subfolder: '', type: 'input' }));
+        res.end(JSON.stringify({ name, subfolder: '', type: 'input' }));
       });
+      return;
+    }
+    if (req.method === 'POST' && req.url === '/interrupt') {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end('{}');
       return;
     }
     if (req.url.startsWith('/history/')) {
@@ -238,11 +256,13 @@ function makeVideoFakeComfyUI(opts = {}) {
 
   const wss = new WebSocketServer({ server: httpServer });
   wss.on('connection', ws => {
-    setImmediate(() => {
+    const go = () => {
+      if (ws.readyState !== ws.OPEN) return;
       ws.send(JSON.stringify({ type: 'progress', data: { prompt_id: promptId, value: 5,  max: 10 } }));
       ws.send(JSON.stringify({ type: 'progress', data: { prompt_id: promptId, value: 10, max: 10 } }));
       ws.send(JSON.stringify({ type: 'executing', data: { prompt_id: promptId, node: null } }));
-    });
+    };
+    if (opts.progressDelayMs) setTimeout(go, opts.progressDelayMs); else setImmediate(go);
   });
 
   return httpServer;

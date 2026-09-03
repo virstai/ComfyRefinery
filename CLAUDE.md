@@ -13,7 +13,7 @@ OpenAI, LM Studio, etc.) can be pointed at via `llmBaseUrl` in settings.
 ```bash
 npm start              # production (serve public/)
 npm run dev            # API --watch + Vite hot-reload UI
-npm test               # all 346 tests
+npm test               # all 383 tests
 npm run ui:build       # compile Vue → public/
 ```
 
@@ -123,6 +123,7 @@ Generate step LoRA / ControlNet fields:
   | Capability | sd15 | sdxl | flux | flux2 | anima | zimage | krea2 | wanvideo |
   |---|---|---|---|---|---|---|---|---|
   | `lora` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — |
+  (minimaxh3 also declares `lora: true` — DiT-only `LoraLoaderModelOnly` chain after the turbo LoRA; video steps pass `stepDef.loras`, Film segments `segment.loras`.)
   | `adapter` | ✓ | ✓ | ✓ | ✓ | — (disabled) | — | — | — |
   | `controlNet` (pose, LLLite) | — | — | — | — | ✓ | — | — | — |
   | `tileControlNet` | ✓ | ✓ | — | — | — | — | — | — |
@@ -195,6 +196,57 @@ while the extra steps persist. Only video steps can be added this way for now. `
 the current run. UI: per-step **↻ Redo** / **▶ From here** buttons (RunSection), `Output` badge on
 the effective variant (IterationCard), prev/next variant navigation + **Use as step output** +
 **🎬 Make video** (video-model picker, any accepted image variant) in DetailPane.
+
+### Film (long video from chained takes)
+A separate mode from Generate: **no workflows, no steps, no sessions, no review loop.** A **Project**
+(`data/projects/<id>.json` + `data/projects/<id>/{clips,refs,export}/`, `PROJECTS_DIR` override) pins a raw
+model entry (`cfg.models[modelId]`, must have `ARCH_META[arch].film` — minimaxh3 only today) and carries its own
+generation settings (`format { width, height, fps }`, reframable at any time — clips keep their size and export
+re-encodes mixed sizes; `modelId` locks once a take is approved; `gen { frames, steps, sampler, refImageSize }`). The film grows one **segment** at a time; each segment runs one ComfyUI job per **take**
+and the user approves one take before moving on. Takes are downloaded into the project folder and their last
+frame extracted, so a film never depends on ComfyUI's `output/`.
+
+- **Start mode per segment** (`segment.start.mode`) — forced by the H3 nodes, which cannot be combined in one graph:
+  `continue` (FL2VA, `first_frame` = previous approved take's last frame, or a bank image for segment 1;
+  bank images only inform the LLM), `cut` (Ref2VA: bank images as `<Picture i>`, voice clips as `<Audio j>`,
+  optionally the previous take's tail as `<Video 1>` with its soundtrack via `start.includePrevTail`),
+  `bridge` (builder wires `last_frame`; the route still 400s — next iteration).
+- **Reference bank** (`project.refs[]`): `{ kind: character|location|prop|style|voice|scene, name, description, pinned, media[] }`.
+  Media come from uploads, a Generate session image (`source.type: 'session'`), **stills generated in place**
+  (`POST /api/projects/:id/images/generate` SSE `{ modelId, prompt, negativePrompt?, width?, height?, steps?, cfgScale?,
+  seed?, refId? | newRef?, segmentId? }` — any non-video model via `buildWorkflow` + arch defaults, size fitted to the
+  film's aspect; `filmRunner.generateImage`; `POST /:id/images/prompt` SSE `{ modelId, intent, steering?, segmentId? }`
+  writes the arch-specific prompt from a plain description with the Generate step's prompt writer
+  (`steps/generate.buildInitialMessages` + the model's skill/notes) plus `buildImageContext` (logline, beats, purpose,
+  the segment's selected refs as vision); with `segmentId` the still becomes that segment's `start.startImage` and
+  the segment switches to `continue`; `source.type: 'generate'`), or **captures from a take**
+  (`POST /api/projects/:id/takes/:tid/capture { frame: t }` / `{ audio: [a, b] }` via ffmpeg). Pinned entries are
+  pre-selected on new segments. Descriptions are quoted verbatim to the prompt writer. An explicit `start.startImage`
+  wins over the previous take's last frame in `continue` mode (the user chose it).
+- **Prompt writer**: `filmRunner.writeFilmPrompt` = `steps/video.buildVideoMessages` + the arch's default skill
+  (`skills.getSummary(modelId, arch)`) + `buildFilmContext` (logline, script beats, `<Picture/Video/Audio>` roles,
+  mode hint) + `buildAttemptsContext` (the segment's earlier takes with verdicts and notes — a rejection note is
+  the priority for the next prompt; the last rejected take's last frame is attached as vision) + vision images
+  from local files; `refineVideoPrompt` streams tokens. The written or edited prompt is persisted as
+  `segment.promptDraft` (the `/prompt` route stores it, the UI saves edits debounced) and `/run` uses it verbatim
+  until cleared. Segments carry `loras: [{ name, weight }]` (per-segment scene/style/motion LoRAs, recorded on the take). Approving a take appends a
+  one-line **beat** to `project.script` (`llm.chat`), marks later segments that already have takes `stale`,
+  and appends a fresh draft segment when none follows.
+- **Runtime**: `src/services/filmRunner.js` (`resolveInputs` → `writeFilmPrompt` → `videoTake.generateTake` →
+  `comfyui.downloadOutput` → `ffmpeg.probe`/`extractLastFrame` → `projects.addTake`), `src/services/projects.js`
+  (persistence + entity ops), `src/services/ffmpeg.js` (host `ffmpeg`/`ffprobe`; `FFMPEG_PATH`/`FFPROBE_PATH`;
+  `detect()` feeds the System page as `tools.ffmpeg` and gates the Film routes), `src/services/videoTake.js`
+  (the ComfyUI-job half of a video take, shared with `runVideoStep`). Routes: `src/routes/projects.js`
+  (`/api/projects`, one run per project, 409 on mutations while running, `POST /:id/kill`, local media served at
+  `GET /:id/media/<rel>`). Run SSE: `take_start`, `phase` (`prompt_building` | `generating` | `saving`), `token`,
+  `prompt`, `progress`, `warning`, `video`, `take_complete { take }`, `done { take }`, `stopped`, `error`.
+  Export = `ffmpeg.concat` of approved, non-stale takes → `export/export.mp4`. On boot, segments left `running`
+  are reset to `draft`.
+- **UI**: `ui/src/stores/film.js` (incl. `filmState.preview` — what the stage shows: a take's video or an image,
+  set by segment selection, take thumbnails, reference media, generated stills, export; `filmState.playlist` —
+  "▶ Play timeline" plays the approved takes back to back in the preview, client-side, no export needed) and `ui/src/components/film/*`
+  laid out like a video editor: preview stage on top, contextual inspector on the right, fixed timeline strip at the
+  bottom, Setup and References as slide-over drawers; route `#/film[/<projectId>]`.
 
 ### SSE events
 All events carry `step` (0-indexed). Full event list:
@@ -358,6 +410,10 @@ Notes have `auto: bool` and `enabled: bool`:
   "comfyuiUrl":            "http://127.0.0.1:8188",
   "llmProvider":           "openai",
   "llmModel":              "gemma4:31b",
+  "llmUnloadEnabled":      false, // opt-in: llm.release(cfg) makes the call below before video jobs (videoTake.generateTake) so a shared GPU is free for the decode
+  "llmUnloadUrl":          "",    // server-specific (the OpenAI API has no unload): llama-swap GET /unload, Ollama POST /api/generate {"model":"{model}","keep_alive":0}
+  "llmUnloadMethod":       "GET", // GET | POST
+  "llmUnloadBody":         "",    // optional JSON for POST; {model} → llmModel
   "activeWorkflow":        "portrait-4x",
   "maxIterations":         3,
   "humanReview":           false,
@@ -417,7 +473,8 @@ src/
     references.js     — POST /api/references/upload (base64 JSON → ComfyUI)
     sessions.js       — config/models/workflows/skills/assets API
     sdapi.js          — A1111 compat shim (calls /api/generate/run internally)
-    system.js         — GET /api/system/info (versions, devices, packs, arch availability, files) + file → arch tags
+    system.js         — GET /api/system/info (versions, devices, packs, arch availability, files, tools.ffmpeg) + file → arch tags
+    projects.js       — Film projects API (/api/projects): CRUD, reference bank, segments, prompt/run SSE, verdict, capture, export, kill, local media
   services/
     config.js         — load/save, model + workflow CRUD, activeWorkflow()
     db.js             — session persistence (JSON files in data/sessions/)
@@ -426,7 +483,11 @@ src/
     llm.js            — provider router
     nodeRequirements.js — PACKS registry + inspect(): per-arch node availability (built from each arch's base graph) and custom-pack status for the System page
     agent.js          — generic tool-calling agent loop (guidance injection, execute handlers, bounded rounds)
-    comfyui.js        — ComfyUI HTTP + WebSocket client; preview frame handling
+    comfyui.js        — ComfyUI HTTP + WebSocket client; preview frame handling; uploadInputFile (any input file) + downloadOutput (stream /view to disk)
+    videoTake.js      — one ComfyUI video job (progress/warning/video events, _noaudio handling) shared by runVideoStep and film takes
+    ffmpeg.js         — ffmpeg/ffprobe wrapper (detect, probe, last frame, frame at t, audio range, trim, concat); injectable execFile
+    projects.js       — Film project persistence + entity ops (segments, takes, verdicts/stale, script beats, reference bank)
+    filmRunner.js     — Film take execution: resolveInputs (continue/cut), buildFilmContext, writeFilmPrompt, runTake, approveTake, exportProject, captureFromTake
     loraRegistry.js   — cfg.loras CRUD; scan via /api/sessions/loras/scan (reads ComfyUI LoRA list + auto-detects arch via loraMeta.js)
     pose.js           — pose pre-pass: draft gen + DWPreprocessor extraction in one ComfyUI graph; returns skeleton image ref
     providers/
@@ -459,7 +520,8 @@ src/
 ui/src/
   stores/
     config.js         — configState, loadConfig, saveConfig, model/workflow CRUD
-    generate.js       — genState, handleEvent (incl. stopped), SSE stream helpers, killGeneration, rerunFrom, selectIteration, addVideoStep
+    generate.js       — genState, handleEvent (incl. stopped), SSE stream helpers (readSSEStream takes an onEvent), killGeneration, rerunFrom, selectIteration, addVideoStep
+    film.js           — filmState, project/segment/ref CRUD, writePrompt/runSegment SSE, killRun, setVerdict, exportProject, captureFromTake
   App.vue               — view switch + hash routing (#/<view>, #/generate/<sessionId>) so a refresh restores the page and loaded session
   components/
     Sidebar.vue         — nav, live status block, Stop button
@@ -478,10 +540,13 @@ ui/src/
     HistoryPanel.vue    — past sessions list
     SystemPanel.vue     — System page: ComfyUI/LLM/GPU status, arch availability, node packs, model-file arch tags
     LorasPanel.vue      — LoRA registry: scan, list, edit label/description/defaultWeight/triggerWords
+    film/               — Film view, video-editor layout: FilmPanel (project list/rail + create + ffmpeg gate), FilmProject (header, PreviewPane stage + inspector, SegmentTimeline strip, Setup/References as FilmDrawer slide-overs), PreviewPane (selected take video or image, take thumbnails, approve/reject), TakeInspector (prompt/LoRAs/warnings, capture frame/audio), SegmentEditor (start mode, refs, intent/notes, frames/seed, LoRAs, prompt, run), SegmentTimeline, FilmSetup, RefBank + RefEntryForm + SessionImagePicker, ImageGenPanel (describe → LLM prompt → still with any image model), FilmDrawer
+    Lightbox.vue        — app-wide click-to-enlarge overlay (stores/lightbox.js: openLightbox(url, caption)); mounted in FilmPanel
 data/
   config.json         — models, workflows, activeWorkflow, global settings
   sessions/*.json     — one file per session
   skills/*.json       — one file per workflow id
+  projects/<id>.json  — one Film project; projects/<id>/{clips,refs,export}/ holds its local media
 ```
 
 ---
@@ -489,7 +554,7 @@ data/
 ## Testing
 
 ```bash
-npm test               # all 346 tests
+npm test               # all 383 tests
 npm run test:unit      # unit tests only
 npm run test:int       # integration tests only
 ```
@@ -540,6 +605,9 @@ Integration tests write to a tmpDir; set `DATA_DIR` / `SESSIONS_DIR` / `SKILLS_D
   - The `windsingai` tile model (`Illustrious-XL-Tile`) is **v-pred only** — do not use with eps Illustrious v0.1.
   - Preprocessor choice: `depth` preserves spatial layout and lighting; `softedge` preserves shape outlines loosely (more style freedom); `lineart_anime` traces anime contours precisely (strongest guidance, transfers art style too). For cross-model style transfer, `softedge` or `depth` are preferred — `lineart_anime` can over-constrain when the goal is aesthetic freedom.
   - Recommended starting strength: **0.85–0.9** for depth/softedge. Above 1.0 overwhelms prompt composition.
+- **Film needs ffmpeg** on the ComfyRefinery host. Resolution order in `src/services/ffmpeg.js`: `FFMPEG_PATH` / `FFPROBE_PATH` → bundled `ffmpeg-static` / `ffprobe-static` (optional npm dependencies, so `npm install` is the normal setup) → `ffmpeg` / `ffprobe` on PATH. The System page reports which (`tools.ffmpeg.source`); the Film routes refuse to run, capture or export without it. Voice consistency exists only on `cut` segments (Ref2VA `ref_audios`); `continue` segments (FL2VA) have no audio conditioning, so voices reset per clip.
+- **MiniMax H3 reference-to-video requires the Audio VAE**: `audio_vae` is a required input of `MiniMaxH3ReferenceToVideo` (ComfyUI 0.34), so R2V (Generate with references, Film `cut`) fails early with a clear error when `audioVaeName` is blank; T2V/I2V still run silent without it.
+- **MiniMax H3 on ROCm at 1344×768**: takes decode with a corrupt block-grid tail from ~frame 97 (the VAE's 6th temporal chunk); 1024×576 is clean and adheres better. Not memory pressure, not frame count. See docs/arch/minimaxh3.md ("1344×768 decodes with a corrupt tail").
 - **MiniMax H3**: needs ComfyUI ≥ 0.30.0 (native `MiniMaxH3ImageToVideo` / `MiniMaxH3ReferenceToVideo` nodes); on ROCm use ≥ 0.34.0 — 0.31 produced NaN audio / GPU faults on 243-frame takes. Long takes are attention-bound: on ROCm, launching ComfyUI with `--use-ck-attention` roughly halves step time versus PyTorch SDPA (see docs/arch/minimaxh3.md, performance notes). On ROCm the nvfp4 text encoder yields all-NaN conditioning (prompt ignored) — use the int8_convrot encoder (docs/arch/minimaxh3.md). Guidance-free — the video step's guidance/negative params are ignored by this arch. R2V requires the optional `refUnetName` (Ref2VA checkpoint) on the model config; without it, uploaded references fall back to I2V first-frame conditioning. The R2V builder passes reference images as dotted dynamic inputs (`ref_images.ref_image_0` …) as serialized in the official Comfy-Org templates — if a ComfyUI update rejects them, re-export a template via "Save (API format)" to confirm the current serialization. Open weights are 768p-capped and region-restricted (see docs/arch/minimaxh3.md).
 - **Anima IP-Adapter disabled**: builder support exists (`AnimaIPAdapterApply`), but
   `capabilities.adapter` is `false` for anima because the adapter weights are not yet

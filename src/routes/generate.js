@@ -9,6 +9,7 @@ const llm     = require('../services/llm');
 const comfyui = require('../services/comfyui');
 const skills  = require('../services/skills');
 const db      = require('../services/db');
+const videoTake = require('../services/videoTake');
 const { refreshSkill } = require('../services/skillRefresher');
 const steps   = require('../steps');
 const { archMeta } = require('../workflows');
@@ -325,34 +326,18 @@ async function runVideoStep(stepDef, stepIndex, session, ctx, cfg, res, isKilled
   emit(res, 'phase',  { step: stepIndex, phase: 'generating', iteration: iterNum });
   console.log(`[${tag}] step ${stepIndex}: queuing video ComfyUI job…`);
   // Pick the seed here (as _runIterativeLoop does) so the take records it.
-  prepResult.params = { ...(prepResult.params ?? {}) };
-  if (prepResult.params.seed == null) prepResult.params.seed = Math.floor(Math.random() * 2 ** 32);
+  prepResult.params = { ...(prepResult.params ?? {}), seed: videoTake.pickSeed(prepResult.params) };
   const workflow = stepType.buildComfyWorkflow(stepDef, prepResult, ctx);
 
-  const { videos, warning: videoWarning } = await comfyui.generateVideo(
-    workflow,
-    pct => {
-      emit(res, 'progress', { step: stepIndex, pct });
-      process.stdout.write(`\r[${tag}] step ${stepIndex}: generating ${pct}%   `);
-    },
-    { signal: ctx.signal },
-  );
-  process.stdout.write('\n');
+  // `progress` carries no iteration (as before); warning/video do.
+  const { videoUrl, warnings: takeWarnings } = await videoTake.generateTake({
+    workflow, cfg, signal: ctx.signal, isKilled, tag: `${tag}] step ${stepIndex}`,
+    emit: (event, data) => emit(res, event, event === 'progress'
+      ? { step: stepIndex, ...data }
+      : { step: stepIndex, iteration: iterNum, ...data }),
+  });
+  if (takeWarnings.length) (prepResult.warnings ??= []).push(...takeWarnings);
 
-  if (isKilled()) throw new Error('Generation stopped by user');
-  if (!videos.length) throw new Error('ComfyUI returned no video output');
-
-  if (videoWarning) {
-    (prepResult.warnings ??= []).push(videoWarning);
-    emit(res, 'warning', { step: stepIndex, iteration: iterNum, message: videoWarning });
-    console.warn(`[${tag}] step ${stepIndex}: ${videoWarning}`);
-  }
-
-  const vid      = stepType.pickPrimaryVideo(videos);
-  const videoUrl = `/api/video?filename=${encodeURIComponent(vid.filename)}&subfolder=${encodeURIComponent(vid.subfolder ?? '')}&type=${encodeURIComponent(vid.type ?? 'output')}`;
-  console.log(`[${tag}] step ${stepIndex}: video ready — ${vid.filename}`);
-
-  emit(res, 'video', { step: stepIndex, iteration: iterNum, url: videoUrl });
   stepData.iterations.push({
     prompt:    prepResult.prompt,
     videoUrl,

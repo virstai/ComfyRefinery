@@ -312,7 +312,7 @@ export function handleEvent(event, data) {
   }
 }
 
-export function readSSEStream(response, onDone) {
+export function readSSEStream(response, onDone, onEvent = handleEvent) {
   const reader  = response.body.getReader();
   const decoder = new TextDecoder();
   let buffer    = '';
@@ -325,7 +325,7 @@ export function readSSEStream(response, onDone) {
       const dMatch = block.match(/^data: (.+)$/m);
       if (!eMatch || !dMatch) continue;
       const event = eMatch[1].trim();
-      try { handleEvent(event, JSON.parse(dMatch[1])); } catch { /* ignore */ }
+      try { onEvent(event, JSON.parse(dMatch[1])); } catch { /* ignore */ }
       // Yield after preview events so Vue can flush + browser can paint before next event
       if (event === 'preview') await new Promise(r => requestAnimationFrame(r));
     }

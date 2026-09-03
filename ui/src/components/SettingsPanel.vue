@@ -26,6 +26,22 @@
         <option v-for="m in assets.llm" :key="m" :value="m">{{ m }}</option>
       </select>
     </label>
+    <label class="checkbox-label" style="margin-top:4px">
+      <input type="checkbox" v-model="form.llmUnloadEnabled"> Unload the LLM before video jobs
+      <span class="hint"> — only when the LLM server and ComfyUI share a GPU. The OpenAI API has no unload call, so tell ComfyRefinery how your server does it; the model reloads on its next request.</span>
+    </label>
+    <div v-if="form.llmUnloadEnabled" class="row" style="margin-top:6px">
+      <label style="flex:3">Unload URL
+        <input type="url" v-model="form.llmUnloadUrl" placeholder="http://host:11434/unload">
+      </label>
+      <label style="flex:1">Method
+        <select v-model="form.llmUnloadMethod"><option>GET</option><option>POST</option></select>
+      </label>
+    </div>
+    <label v-if="form.llmUnloadEnabled && form.llmUnloadMethod === 'POST'">JSON body <span class="hint">({model} is replaced with the model name)</span>
+      <input v-model="form.llmUnloadBody" placeholder='{"model":"{model}","keep_alive":0}'>
+    </label>
+    <p v-if="form.llmUnloadEnabled" class="hint" style="margin:-4px 0 10px">Presets: llama-swap → GET <code>http://host:11434/unload</code>; Ollama → POST <code>http://host:11434/api/generate</code> with body <code>{"model":"{model}","keep_alive":0}</code>. Leave off when the LLM runs on another machine or another GPU.</p>
 
     <hr>
 
@@ -93,6 +109,10 @@ const form = reactive({
   llmApiKey:             '',
   comfyuiUrl:            '',
   llmModel:              '',
+  llmUnloadEnabled:      false,
+  llmUnloadUrl:          '',
+  llmUnloadMethod:       'GET',
+  llmUnloadBody:         '',
   maxIterations:         '',
   acceptanceGracePeriod: '',
   humanReview:           false,
@@ -108,6 +128,10 @@ watch(() => props.config, cfg => {
   form.llmApiKey             = cfg.llmApiKey             ?? '';
   form.comfyuiUrl            = cfg.comfyuiUrl            ?? '';
   form.llmModel              = cfg.llmModel              ?? '';
+  form.llmUnloadEnabled      = !!cfg.llmUnloadEnabled;
+  form.llmUnloadUrl          = cfg.llmUnloadUrl          ?? '';
+  form.llmUnloadMethod       = cfg.llmUnloadMethod       ?? 'GET';
+  form.llmUnloadBody         = cfg.llmUnloadBody         ?? '';
   form.maxIterations         = cfg.maxIterations         ?? '';
   form.acceptanceGracePeriod = cfg.acceptanceGracePeriod ?? '';
   form.humanReview           = !!cfg.humanReview;
@@ -123,6 +147,10 @@ async function save() {
     llmBaseUrl:            form.llmBaseUrl            || null,
     llmApiKey:             form.llmApiKey             || '',
     comfyuiUrl:            form.comfyuiUrl            || null,
+    llmUnloadEnabled:      !!form.llmUnloadEnabled,
+    llmUnloadUrl:          form.llmUnloadUrl.trim()   || '',
+    llmUnloadMethod:       form.llmUnloadMethod === 'POST' ? 'POST' : 'GET',
+    llmUnloadBody:         form.llmUnloadBody.trim()  || '',
     llmModel:              form.llmModel              || null,
     maxIterations:         form.maxIterations         || null,
     acceptanceGracePeriod: form.acceptanceGracePeriod !== '' ? Number(form.acceptanceGracePeriod) : null,

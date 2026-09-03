@@ -18,7 +18,7 @@ test('image archs support lora; video archs support nothing', () => {
   for (const arch of ['sd15', 'sdxl', 'flux', 'flux2', 'sd3', 'chroma', 'anima', 'zimage', 'krea2']) {
     assert.equal(archMeta[arch].capabilities.lora, true, `${arch} lora`);
   }
-  for (const arch of ['wanvideo', 'hunyuanvideo', 'ltxvideo', 'cogvideox', 'minimaxh3']) {
+  for (const arch of ['wanvideo', 'hunyuanvideo', 'ltxvideo', 'cogvideox']) {
     assert.deepEqual(archMeta[arch].capabilities, { lora: false, adapter: false, controlNet: false }, arch);
   }
 });
@@ -50,4 +50,17 @@ test('controlNet (pose pre-pass): sd15, sdxl, anima; tileControlNet + structural
 
 test('anima declares the negativePrompt field (drives the workflow editor)', () => {
   assert.equal(archMeta.anima.fields.negativePrompt, true);
+});
+
+test('minimaxh3 declares its Film / reference-media abilities; no other arch is Film-eligible', () => {
+  const h3 = archMeta.minimaxh3;
+  assert.deepEqual(h3.capabilities, { lora: true, adapter: false, controlNet: false }, 'H3 takes DiT LoRAs');
+  assert.equal(h3.lastFrame, true);
+  assert.equal(h3.referenceVideos, 3);
+  assert.equal(h3.referenceAudios, 3);
+  assert.deepEqual(h3.referenceToVideoRequires, ['refUnetName', 'audioVaeName']);
+  assert.equal(h3.film, true);
+  for (const arch of Object.keys(archMeta)) {
+    if (arch !== 'minimaxh3') assert.equal(archMeta[arch].film, undefined, `${arch} must not declare film`);
+  }
 });

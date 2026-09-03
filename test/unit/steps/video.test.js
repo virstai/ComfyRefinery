@@ -136,3 +136,80 @@ test('buildVideoMessages appends steering notes to the request, none when blank'
   const without = video.buildVideoMessages('a cat', 'minimaxh3', { isI2V: true, steering: '   ' }, null);
   assert.equal(without.find(m => m.role === 'user').content, 'Description: a cat');
 });
+
+// ── reference video / audio guidance ─────────────────────────────────────────
+
+test('buildVideoMessages mentions <Video k> / <Audio j> / last-frame guidance only when given', () => {
+  const sys = opts => video.buildVideoMessages('a scene', 'minimaxh3', opts, null)[0].content;
+  const plain = sys({ isI2V: true });
+  assert.ok(!plain.includes('<Video'));
+  assert.ok(!plain.includes('<Audio'));
+  assert.ok(!plain.includes('final frame'));
+  assert.ok(plain.includes('image-to-video'));
+
+  const withVideo = sys({ isI2V: false, videoRefCount: 2 });
+  assert.ok(withVideo.includes('<Video 1> through <Video 2>'));
+  assert.ok(withVideo.includes('reference-to-video'), 'video refs alone make it a reference-to-video generation');
+
+  const withAudio = sys({ isI2V: false, refCount: 1, audioRefCount: 1 });
+  assert.ok(withAudio.includes('<Picture 1>'));
+  assert.ok(withAudio.includes('<Audio 1>'));
+  assert.ok(withAudio.includes('voice'));
+
+  const withLast = sys({ isI2V: true, hasLastFrame: true });
+  assert.ok(withLast.includes('final frame'));
+});
+
+test('buildComfyWorkflow forwards lastFrameRef / referenceVideos / referenceAudios to the builder', () => {
+  const modelConfig = { ...MMX_MODEL, refUnetName: 'ref2va.safetensors', audioVaeName: 'audio.safetensors' };
+  const ctx = { cfg: {}, userPrompt: 'x', modelConfig };
+  const r2v = video.buildComfyWorkflow({ params: {} }, {
+    isR2V: true, referenceRefs: [],
+    referenceVideos: [{ filename: 'tail.mp4', subfolder: '', type: 'input' }],
+    referenceAudios: [{ filename: 'voice.wav', subfolder: '', type: 'input' }],
+  }, ctx);
+  const h3 = Object.values(r2v).find(n => n.class_type === 'MiniMaxH3ReferenceToVideo');
+  assert.ok(h3, 'reference node built from video/audio refs alone');
+  assert.ok(h3.inputs['ref_videos.ref_video_0']);
+  assert.ok(h3.inputs['ref_audios.ref_audio_0']);
+
+  const i2v = video.buildComfyWorkflow({ params: {} }, {
+    isI2V: true, inputRef: { filename: 'a.png', subfolder: '', type: 'input' },
+    lastFrameRef: { filename: 'b.png', subfolder: '', type: 'input' },
+  }, ctx);
+  const fl = Object.values(i2v).find(n => n.class_type === 'MiniMaxH3ImageToVideo');
+  assert.ok(fl.inputs.first_frame);
+  assert.ok(fl.inputs.last_frame);
+});
+
+test('refineVideoPrompt falls back to the raw description on LLM failure and rethrows aborts', async () => {
+  const llm = require('../../../src/services/llm');
+  const orig = llm.chatStream;
+  try {
+    llm.chatStream = async () => { throw new Error('connection refused'); };
+    assert.equal(await video.refineVideoPrompt({}, [], null, undefined, 'raw text'), 'raw text');
+
+    llm.chatStream = async (_cfg, _m, onToken) => { onToken('hi '); return 'a polished prompt'; };
+    const tokens = [];
+    assert.equal(await video.refineVideoPrompt({}, [], t => tokens.push(t), undefined, 'raw'), 'a polished prompt');
+    assert.deepEqual(tokens, ['hi ']);
+
+    llm.chatStream = async () => { const e = new Error('aborted'); e.name = 'AbortError'; throw e; };
+    await assert.rejects(video.refineVideoPrompt({}, [], null, undefined, 'raw'), { name: 'AbortError' });
+  } finally {
+    llm.chatStream = orig;
+  }
+});
+
+test('buildVideoMessages makes camera instructions mandatory and never encourages invented camera moves', () => {
+  const sys = video.buildVideoMessages('a scene', 'minimaxh3', { isI2V: true }, null)[0].content;
+  assert.ok(!/should describe motion, camera movement/.test(sys), 'old bias removed');
+  assert.match(sys, /holds a static shot/);
+  assert.match(sys, /Never invent camera moves/);
+  assert.match(sys, /mandatory/);
+  assert.match(sys, /start image as <Picture 1> — do not re-describe it/);
+  const t2v = video.buildVideoMessages('a scene', 'minimaxh3', { isI2V: false }, null)[0].content;
+  assert.ok(!t2v.includes('start image as <Picture 1>'));
+  const withEnd = video.buildVideoMessages('a scene', 'minimaxh3', { isI2V: true, hasLastFrame: true }, null)[0].content;
+  assert.match(withEnd, /end image as <Picture 2>/);
+});

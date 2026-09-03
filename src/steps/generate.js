@@ -360,4 +360,4 @@ function reviewMessages(stepDef, prepareResult, ctx, imageBase64, previousIterat
   );
 }
 
-module.exports = { label, prepare, prePass, buildComfyWorkflow, reviewMessages };
+module.exports = { label, prepare, prePass, buildComfyWorkflow, reviewMessages, buildInitialMessages, buildNotesSummary, combineContext };

@@ -118,12 +118,23 @@ const ARCH_META = {
   minimaxh3: {
     label:           'MiniMax H3 (Hailuo 3)',
     loadingMode:     'split',
-    capabilities:    { lora: false, adapter: false, controlNet: false },
+    // LoRAs (DiT-only, LoraLoaderModelOnly) — workflow video steps via `loras`, Film segments per segment
+    capabilities:    { lora: true, adapter: false, controlNet: false },
     videoArch:       true,
     dimMultiple:  32,
     followInputAspect: true,
     referenceToVideo: true,
     maxReferences:    9,
+    // Ref2VA also takes short reference clips (<Video k>, with soundtrack) and
+    // standalone reference audio (<Audio j>) — see src/workflows/minimaxh3.js.
+    referenceVideos:  3,
+    referenceAudios:  3,
+    // MiniMaxH3ReferenceToVideo requires audio_vae, so R2V needs both files set.
+    referenceToVideoRequires: ['refUnetName', 'audioVaeName'],
+    // FL2VA accepts a last_frame (bridge to a target keyframe).
+    lastFrame:        true,
+    // Eligible as a Film project model (src/services/filmRunner.js).
+    film:             true,
     fields:      {
       unetName:             true,
       refUnetName:          true,
@@ -138,7 +149,7 @@ const ARCH_META = {
       refUnetName:          'Optional Ref2VA model (reference-to-video) — e.g. minimax_h3_ref2va_pruned_int8_convrot.safetensors. Uploaded reference images route to it automatically.',
       clipName:             'Qwen3-VL-32B text encoder (models/text_encoders/) — qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors on NVIDIA; on AMD/ROCm use qwen3vl_32b_minimax_h3_int8_convrot.safetensors, since the nvfp4 file yields NaN conditioning there (the prompt is ignored).',
       vaeName:              'Video VAE — minimax_h3_video_vae_fp16.safetensors',
-      audioVaeName:         'Audio VAE — minimax_h3_audio_vae_fp32.safetensors. Leave blank to skip audio generation.',
+      audioVaeName:         'Audio VAE — minimax_h3_audio_vae_fp32.safetensors. Required for reference-to-video and Film projects; leave blank to skip audio on T2V/I2V.',
       distilledLoraName:    'Optional 8-step turbo LoRA for FL2VA (~2× faster, small quality cost). Step count defaults to 8 automatically while active — clear this field for maximum quality at 20 steps.',
       refDistilledLoraName: 'Optional 4-step turbo LoRA for Ref2VA. Step count defaults to 4 automatically while active.',
     },

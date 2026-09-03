@@ -24,6 +24,8 @@ as a pure ComfyUI frontend with structured workflows — no LLM server required.
 - **An OpenAI-compatible LLM** with vision support *(optional)* — Ollama (`gemma4:31b`,
   `llava:13b`), LM Studio, OpenAI, vLLM, or any server that speaks
   `/v1/chat/completions`. Required only when one or more LLM features are enabled.
+- **ffmpeg + ffprobe** *(for the Film view)* — nothing to install: `npm install` bundles
+  them via `ffmpeg-static` / `ffprobe-static`. See [Film](#optional--film-long-video).
 
 ## ComfyUI custom nodes and models
 
@@ -207,6 +209,20 @@ For user-uploaded references, the same modes are available, plus an LLM vision g
 checkbox (sends reference images to the LLM for prompt building — requires the Vision
 guidance & LoRA selection feature to be enabled).
 
+### Optional — Film (long video)
+
+The **Film** view builds a long video shot by shot from a MiniMax H3 model (see
+`docs/arch/minimaxh3.md`). It uses `ffmpeg` and `ffprobe` on the ComfyRefinery host for
+last-frame capture, reference captures and stitching. **No extra setup is needed**: the
+regular `npm install` also installs `ffmpeg-static` and `ffprobe-static`, which bundle a
+static binary for your platform (Linux x64/arm64, macOS, Windows), and ComfyRefinery uses
+those automatically. The **System** page shows the binary in use and its version.
+
+Overrides, only if you want them: set `FFMPEG_PATH` / `FFPROBE_PATH` to use specific
+binaries (they take precedence over the bundled ones), or install a system ffmpeg
+(`apt install ffmpeg`, `brew install ffmpeg`, …) which is used when the bundled package
+is unavailable for your platform.
+
 ### Step 4 — Generate
 
 Type a prompt and click **Generate**. With default settings the LLM builds the prompt,
@@ -239,6 +255,29 @@ to override the HTTP listen port.
 | LLM base URL | `http://127.0.0.1:11434/v1` | OpenAI-compatible endpoint; unused when all LLM features are off |
 | API key | *(blank)* | Leave blank for Ollama / local servers |
 | LLM model | *(blank)* | Model name as your server exposes it; must support vision if image review or vision guidance is enabled |
+| Unload the LLM before video jobs | off | Opt-in, for setups where the LLM server and ComfyUI share a GPU. ComfyRefinery makes the configured HTTP call (URL, GET/POST, optional JSON body with `{model}`) right before every video job — workflow video steps and Film takes — which run for minutes and never need the LLM; the server reloads on its next request. Leave off when the LLM runs on another machine or GPU. See [Sharing a GPU between the LLM and ComfyUI](#sharing-a-gpu-between-the-llm-and-comfyui) |
+
+### Sharing a GPU between the LLM and ComfyUI
+
+ComfyUI only sees its own allocations: on a card that also hosts the LLM server, its idea
+of "free VRAM" ignores the LLM, and an oversubscribed card can produce corrupt output
+silently (a decoder that runs out of memory partway through a clip, for instance) rather
+than an error. Two settings make the pair behave:
+
+- **In the LLM server**, let idle models unload. llama-swap: set `globalTTL` (or a per-model
+  `ttl`) to a few minutes, so a model that has not been used since the prompt was written
+  is gone by the time the decoder needs the memory. Ollama: `OLLAMA_KEEP_ALIVE`.
+- **In ComfyRefinery**, tick **Unload the LLM before video jobs** (Settings → LLM) and
+  describe your server's unload call. The OpenAI-compatible API has no such call, so this
+  is per server: llama-swap → `GET http://host:11434/unload`; Ollama → `POST
+  http://host:11434/api/generate` with body `{"model":"{model}","keep_alive":0}`. Before
+  each video job the server is asked to release its memory immediately instead of waiting
+  for the TTL; the model reloads on the next prompt-writing or review call (seconds from
+  page cache). Nothing in ComfyRefinery assumes a particular server, GPU layout, or that
+  the two services even share a machine — leave the box off and nothing is called.
+
+With both in place, components placed on the LLM's card (a text encoder or VAE via device
+placement) get the whole card during the job, and the LLM gets it back afterwards.
 
 ### Review
 
@@ -469,6 +508,36 @@ access. Same query string as ComfyUI's `/view` endpoint (`filename`, `subfolder`
 
 **`GET /api/audio`** — proxies ComfyUI audio output (used when audio is embedded separately). Same query string as `/api/video`.
 
+### Film projects
+
+The Film view builds a long video shot by shot from a MiniMax H3 model: a project pins a
+model entry and its own format/generation settings (no workflow), keeps a per-project
+reference bank (characters, locations, props, styles, voices), and grows a timeline one
+segment at a time. A scene can start from a still made in place with any image model
+(anima, SDXL, …) — "✨ Generate start image" on the segment — or from an uploaded / session
+image; each segment runs one ~5 s take per attempt; approving a take captures its last
+frame for the next segment and adds a beat to the running script.
+Requires ffmpeg on the host. See `docs/arch/minimaxh3.md` for the continue / cut modes.
+
+| Method | Path | Notes |
+|---|---|---|
+| `GET` | `/api/projects` | `{ projects: [summary] }` |
+| `GET` | `/api/projects/capabilities` | `{ ffmpeg: { available, version, path, ffprobe, error } }` |
+| `POST` | `/api/projects` | `{ title, modelId, logline? }` |
+| `GET` / `PUT` / `DELETE` | `/api/projects/:id` | `PUT`: `title`, `logline`, `gen`, `format` (reframe any time; export re-encodes mixed sizes), `modelId` (until a take is approved) |
+| `POST` / `PUT` / `DELETE` | `/api/projects/:id/refs[/:rid]` | Reference bank entries `{ kind, name, description, pinned, media? }` |
+| `POST` / `DELETE` | `/api/projects/:id/refs/:rid/media[/:mid]` | `{ type: 'image'\|'audio', source: { type: 'upload'\|'session' }, name?, data? (base64), imageUrl? }` |
+| `POST` | `/api/projects/:id/images/prompt` | SSE — write an image prompt in the model's own language from a plain description: `{ modelId, intent, steering?, segmentId? }` (`token`, `prompt`, `done`) |
+| `POST` | `/api/projects/:id/images/generate` | SSE — render a still with any image model into the bank: `{ modelId, prompt, seed?, width?, height?, refId? \| newRef?, segmentId? }`; with `segmentId` it becomes that segment's start frame (`image_start`, `phase`, `progress`, `preview`, `image`, `done`) |
+| `POST` | `/api/projects/:id/takes/:tid/capture` | `{ refId? \| newRef?, frame?: t }` or `{ …, audio?: [from, to] }` → frame PNG / WAV into the bank |
+| `POST` / `PUT` / `DELETE` | `/api/projects/:id/segments[/:sid]` | `{ intent, steering, start: { mode: 'continue'\|'cut', startImage?, includePrevTail? }, refIds, frames, seed, loras: [{ name, weight }] }` |
+| `POST` | `/api/projects/:id/segments/:sid/prompt` | SSE — LLM prompt preview (`phase`, `token`, `prompt`, `done`) |
+| `POST` | `/api/projects/:id/segments/:sid/run` | SSE — one take: `take_start`, `phase`, `token`, `prompt`, `progress`, `warning`, `video`, `take_complete`, `done` / `stopped` / `error`. Body `{ prompt?, seed?, intent?, steering? }` |
+| `POST` | `/api/projects/:id/segments/:sid/takes/:tid/verdict` | `{ verdict: 'approved'\|'rejected', note? }` → `{ project, staled, beat, nextSegment }`. A rejection note steers the next take's prompt |
+| `POST` | `/api/projects/:id/export` | Stitches approved takes → `{ url, file, durationSec, clips }` |
+| `POST` | `/api/projects/:id/kill` | Stops the running take |
+| `GET` | `/api/projects/:id/media/<path>` | Local clips, last frames, reference files, export |
+
 ### Config, models, workflows
 
 ```
@@ -577,6 +646,7 @@ data/
   config.json       global settings, model registry, workflow registry
   sessions/         one JSON file per session
   skills/           one JSON file per workflow id (skill + notes + outcomes)
+  projects/         one JSON file per Film project + <id>/{clips,refs,export}/ media
 ```
 
 Each `skills/<workflowId>.json` contains:

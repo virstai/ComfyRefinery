@@ -47,7 +47,7 @@
       <div class="sidebar-status-header">
         <span class="sidebar-status-label">
           <span class="sidebar-status-dot"></span>
-          Step {{ (activeStepIndex ?? 0) + 1 }} of {{ totalSteps }}
+          {{ statusTitle || `Step ${(activeStepIndex ?? 0) + 1} of ${totalSteps}` }}
         </span>
         <button class="small danger" @click="$emit('stop')">■ Stop</button>
       </div>
@@ -71,6 +71,7 @@ const props = defineProps({
   totalSteps:      { type: Number, default: 0 },
   activeStepLabel: { type: String, default: '' },
   activeStepPct:   { type: Number, default: 0 },
+  statusTitle:     { type: String, default: '' },
 });
 
 const emit = defineEmits(['navigate', 'set-active-workflow', 'stop']);
@@ -80,6 +81,7 @@ const chipRoot = ref(null);
 
 const navItems = [
   { view: 'generate',  icon: '▶', label: 'Generate'  },
+  { view: 'film',      icon: '🎞', label: 'Film'      },
   { view: 'queue',     icon: '⇌', label: 'Queue'     },
   { view: 'workflows', icon: '⬡', label: 'Workflows' },
   { view: 'models',    icon: '⬡', label: 'Models'    },

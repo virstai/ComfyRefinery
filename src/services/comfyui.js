@@ -1,5 +1,9 @@
 'use strict';
 
+const fs   = require('fs');
+const path = require('path');
+const { Readable } = require('stream');
+const { pipeline } = require('stream/promises');
 const { v4: uuidv4 } = require('uuid');
 const WebSocket = require('ws');
 const config = require('./config');
@@ -347,19 +351,40 @@ async function getAssets() {
   };
 }
 
-// ── Image upload ───────────────────────────────────────────────────────────────
+// ── Input upload / output download ────────────────────────────────────────────
 
-async function uploadImage(buffer, filename) {
+// ComfyUI's /upload/image stores whatever file it is handed in input/ (its own
+// frontend uploads audio and video through the same route), so this serves
+// LoadImage, LoadVideo and LoadAudio alike. Returns the input ref that graph
+// builders consume: { filename, subfolder, type }.
+async function uploadInputFile(buffer, filename, { subfolder = '', overwrite = false } = {}) {
   const form = new FormData();
   form.append('image', new Blob([buffer]), filename);
+  if (subfolder) form.append('subfolder', subfolder);
+  if (overwrite) form.append('overwrite', 'true');
   const res = await fetch(`${baseUrl()}/upload/image`, { method: 'POST', body: form });
   if (!res.ok) throw new Error(`ComfyUI upload error ${res.status}: ${await res.text()}`);
   const data = await res.json();
   return { filename: data.name, subfolder: data.subfolder ?? '', type: data.type ?? 'input' };
 }
 
+function uploadImage(buffer, filename) {
+  return uploadInputFile(buffer, filename);
+}
+
+// Stream an output (or input) file from ComfyUI's /view to disk. Video takes
+// run to tens of megabytes, so never buffer them. Returns { bytes }.
+async function downloadOutput(ref, destPath, { signal } = {}) {
+  const url = `${baseUrl()}/view?filename=${encodeURIComponent(ref.filename)}&subfolder=${encodeURIComponent(ref.subfolder ?? '')}&type=${encodeURIComponent(ref.type ?? 'output')}`;
+  const res = await fetch(url, { signal });
+  if (!res.ok) throw new Error(`ComfyUI download error ${res.status} for ${ref.filename}`);
+  fs.mkdirSync(path.dirname(destPath), { recursive: true });
+  await pipeline(Readable.fromWeb(res.body), fs.createWriteStream(destPath));
+  return { bytes: fs.statSync(destPath).size };
+}
+
 async function interrupt() {
   try { await fetch(`${baseUrl()}/interrupt`, { method: 'POST' }); } catch { /* best effort */ }
 }
 
-module.exports = { generate, generateVideo, getOutputVideos, getAssets, getDevices, getSystemStats, getNodeIndex, fetchInputList, listLoras, getLoraMetadata, hasNode, uploadImage, interrupt };
+module.exports = { generate, generateVideo, getOutputVideos, getAssets, getDevices, getSystemStats, getNodeIndex, fetchInputList, listLoras, getLoraMetadata, hasNode, uploadImage, uploadInputFile, downloadOutput, interrupt };

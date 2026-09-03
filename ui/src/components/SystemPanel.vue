@@ -36,6 +36,14 @@
           <div class="sys-kv"><span>Available</span><span>{{ info.llm.models.length }} model{{ info.llm.models.length === 1 ? '' : 's' }}</span></div>
           <div v-if="info.llm.error" class="hint">{{ info.llm.error }}</div>
         </div>
+        <div class="sys-card">
+          <div class="sys-card-title">Media tools <span class="sess-status" :class="info.tools?.ffmpeg?.available ? 'sess-complete' : 'sess-error'">{{ info.tools?.ffmpeg?.available ? `ffmpeg ${info.tools.ffmpeg.version ?? ''}` : 'ffmpeg not found' }}</span></div>
+          <div class="sys-kv"><span>ffmpeg</span><code>{{ info.tools?.ffmpeg?.path || '—' }}</code></div>
+          <div class="sys-kv"><span>source</span><span>{{ ({ bundled: 'bundled (ffmpeg-static via npm install)', env: 'FFMPEG_PATH', path: 'system PATH' })[info.tools?.ffmpeg?.source] ?? '—' }}</span></div>
+          <div class="sys-kv"><span>ffprobe</span><span>{{ info.tools?.ffmpeg?.ffprobe ? 'found' : 'missing' }}</span></div>
+          <div v-if="info.tools?.ffmpeg?.error" class="hint">{{ info.tools.ffmpeg.error }}</div>
+          <p class="hint" style="margin-top:8px">Needed by the Film view: last-frame capture, reference captures from takes, and export stitching. <code>npm install</code> bundles it (ffmpeg-static / ffprobe-static); otherwise install ffmpeg on the host or set FFMPEG_PATH / FFPROBE_PATH.</p>
+        </div>
       </div>
 
       <!-- Architectures -->

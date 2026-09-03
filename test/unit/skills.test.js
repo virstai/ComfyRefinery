@@ -172,3 +172,15 @@ test('getSummary falls back to the architecture baseline when the model has no s
   assert.match(summary, /baseline for sd15/);
   assert.equal(skills.getSummary('never-recorded-model', 'no-such-arch'), null);
 });
+
+test('minimaxh3 default skill teaches the official brief format and the static-camera phrase', () => {
+  const skills = require('../../src/services/skills');
+  const text = skills.getDefaultSkill('minimaxh3');
+  assert.match(text, /integrated_multimodal_description:/);
+  assert.match(text, /overall_soundscape:/);
+  assert.match(text, /non_diegetic_music:/);
+  assert.match(text, /How the reference pictures align with the target video/);
+  assert.match(text, /The camera holds a static shot/);
+  assert.match(text, /<d>\[English\]/);
+  assert.ok(!text.includes('[0s-2s]'), 'old beat syntax gone');
+});

@@ -22,6 +22,14 @@ const GLOBAL_DEFAULTS = {
   reviewEnabled:          true,
   promptRefinement:       true,
   llmExtras:              true,
+  // Optional, off by default: an HTTP call that makes the LLM server release its GPU memory, made right
+  // before long ComfyUI video jobs (which never need the LLM mid-job). Only useful when the LLM and
+  // ComfyUI share a GPU; the OpenAI-compatible API has no such call, so it is server-specific — e.g.
+  // llama-swap: GET /unload; Ollama: POST /api/generate {"model":"{model}","keep_alive":0}. See README.
+  llmUnloadEnabled:       false,
+  llmUnloadUrl:           '',
+  llmUnloadMethod:        'GET',   // GET | POST
+  llmUnloadBody:          '',      // optional JSON body for POST; "{model}" is replaced with llmModel
   fileArchTags:           {},  // "<kind>:<filename>" → [arch, ...]; filters model-file pickers (System page)
   models:                 {},
   workflows:              {},
