@@ -7,7 +7,7 @@ const comfyui   = require('../services/comfyui');
 const llm       = require('../services/llm');
 const skills    = require('../services/skills');
 const { refreshSkill } = require('../services/skillRefresher');
-const { architectures, archMeta, getDefaults } = require('../workflows');
+const { architectures, archMeta, getDefaults, filmFormats } = require('../workflows');
 const loraRegistry = require('../services/loraRegistry');
 
 // GET /api/sessions/config
@@ -198,6 +198,8 @@ router.get('/architectures', (req, res) => {
   const result = {};
   for (const arch of architectures) {
     result[arch] = { ...archMeta[arch], defaults: getDefaults(arch) };
+    // Film-capable archs ship their format presets (explicit or derived) for FilmSetup.
+    if (archMeta[arch].film) result[arch].filmFormats = filmFormats(arch);
   }
   res.json(result);
 });

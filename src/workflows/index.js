@@ -135,6 +135,23 @@ const ARCH_META = {
     lastFrame:        true,
     // Eligible as a Film project model (src/services/filmRunner.js).
     film:             true,
+    // Film format presets (FilmSetup picks one; see filmFormats()). The open
+    // weights cap the short edge at 768 and want a /32 grid; the "lighter"
+    // 1024×576 pair is the resolution that decodes cleanly on ROCm and follows
+    // prompts better (docs/arch/minimaxh3.md).
+    filmFormats: [
+      { aspect: '16:9', width: 1344, height: 768,  note: 'native' },
+      { aspect: '16:9', width: 1024, height: 576,  note: 'lighter' },
+      { aspect: '21:9', width: 1344, height: 576 },
+      { aspect: '3:2',  width: 1152, height: 768 },
+      { aspect: '4:3',  width: 1024, height: 768 },
+      { aspect: '9:16', width: 768,  height: 1344, note: 'native' },
+      { aspect: '9:16', width: 576,  height: 1024, note: 'lighter' },
+      { aspect: '9:21', width: 576,  height: 1344 },
+      { aspect: '2:3',  width: 768,  height: 1152 },
+      { aspect: '3:4',  width: 768,  height: 1024 },
+      { aspect: '1:1',  width: 768,  height: 768 },
+    ],
     fields:      {
       unetName:             true,
       refUnetName:          true,
@@ -207,9 +224,52 @@ function getDefaults(architecture) {
   return { ...profile.defaults };
 }
 
+// Standard aspect ratios offered when an arch has no explicit filmFormats list:
+// each is fitted to the arch's default pixel budget, with the long edge capped
+// at the default long edge and the short edge at the default short edge, then
+// snapped to the arch's dimension grid.
+const FILM_ASPECTS = [
+  ['16:9', 16 / 9], ['21:9', 21 / 9], ['3:2', 3 / 2], ['4:3', 4 / 3],
+  ['9:16', 9 / 16], ['9:21', 9 / 21], ['2:3', 2 / 3], ['3:4', 3 / 4],
+  ['1:1', 1],
+];
+
+function orientationOf(width, height) {
+  return width === height ? 'square' : width > height ? 'landscape' : 'portrait';
+}
+
+// Film format presets for an architecture: [{ aspect, width, height, orientation, label, note? }].
+// Explicit per-arch lists (ARCH_META[arch].filmFormats) win; otherwise the list is
+// derived from the arch's defaults so any future Film-capable arch gets sensible options.
+function filmFormats(architecture) {
+  const meta = ARCH_META[architecture] ?? {};
+  let list = meta.filmFormats;
+  if (!list) {
+    const d = getDefaults(architecture);
+    const mult   = meta.dimMultiple ?? 16;
+    const budget = d.width * d.height;
+    const longMax  = Math.max(d.width, d.height);
+    const shortMax = Math.min(d.width, d.height);
+    const snap = v => Math.max(mult, Math.round(v / mult) * mult);
+    list = FILM_ASPECTS.map(([aspect, ratio]) => {
+      let h = Math.sqrt(budget / ratio);
+      let w = h * ratio;
+      const scale = Math.min(1, longMax / Math.max(w, h), shortMax / Math.min(w, h));
+      w *= scale; h *= scale;
+      return { aspect, width: snap(w), height: snap(h) };
+    });
+  }
+  return list.map(f => ({
+    ...f,
+    orientation: orientationOf(f.width, f.height),
+    label: `${f.aspect} · ${f.width}×${f.height}${f.note ? ` (${f.note})` : ''}`,
+  }));
+}
+
 module.exports = {
   buildWorkflow,
   getDefaults,
+  filmFormats,
   architectures: Object.keys(profiles),
   archMeta: ARCH_META,
 };

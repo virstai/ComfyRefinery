@@ -100,6 +100,12 @@ run a take, approve it or try another, move on. Approved takes are stitched with
 | `cut` | Ref2VA | Bank images as `<Picture i>` (≤9), voice clips as `<Audio j>` (≤3), optionally the previous take's last ≤10 s as `<Video 1>` with its soundtrack (**Include previous tail**). | Identity, wardrobe, setting and **voice** carry over; the framing is new. This is where dialogue belongs. |
 | `bridge` | FL2VA | `first_frame` + `last_frame` (a chosen keyframe). | Builder support only — not exposed yet. |
 
+The project's **format** is picked from presets rather than typed: landscape, portrait and
+square aspect ratios the open weights support (`ARCH_META.minimaxh3.filmFormats` — short edge
+≤ 768, /32 grid), with 1344×768 / 768×1344 as the native sizes and 1024×576 / 576×1024 as the
+lighter pair that decodes cleanly on ROCm (below). Reframe at any time; clips keep their size
+and export re-encodes when sizes differ. FPS stays a free field (24 is what H3 was trained at).
+
 Alternating `continue` and `cut` swaps between the two 19.5 GB checkpoints, so runs of
 one mode are faster. Each take is downloaded to `data/projects/<id>/clips/` and its last
 frame extracted, so a film survives ComfyUI's `output/` being cleared. Requirements:

@@ -7,13 +7,19 @@
           <option v-for="m in filmModels" :key="m.id" :value="m.id">{{ m.label || m.id }} ({{ m.architecture }})</option>
         </select>
       </label>
-      <label>Width<input type="number" :step="dimMultiple" :value="project.format.width" @change="saveFormat('width', $event.target.value)"></label>
-      <label>Height<input type="number" :step="dimMultiple" :value="project.format.height" @change="saveFormat('height', $event.target.value)"></label>
-      <label>FPS<input type="number" :value="project.format.fps" @change="saveFormat('fps', $event.target.value)"></label>
+      <label style="flex:1.4">Format
+        <select :value="formatKey" @change="saveFormat($event.target.value)">
+          <option v-if="!currentPreset" :value="formatKey">Custom · {{ project.format.width }}×{{ project.format.height }}</option>
+          <optgroup v-for="group in formatGroups" :key="group.name" :label="group.name">
+            <option v-for="f in group.formats" :key="keyOf(f)" :value="keyOf(f)">{{ f.label }}</option>
+          </optgroup>
+        </select>
+      </label>
+      <label>FPS<input type="number" :value="project.format.fps" @change="saveFps($event.target.value)"></label>
     </div>
     <p class="hint" style="margin-top:-6px;margin-bottom:10px">
       <template v-if="modelLocked">The model is locked once a take is approved — the film is built on it. </template>
-      Reframe any time: clips already made keep their size; export re-encodes if sizes differ.
+      Sizes are the ones this model type supports. Reframe any time: clips already made keep their size; export re-encodes if sizes differ.
     </p>
     <div class="row">
       <label>Default frames<input type="number" :value="project.gen?.frames" :placeholder="String(defaults.frames ?? '')" @change="saveGen('frames', $event.target.value)"></label>
@@ -45,7 +51,6 @@ const filmModels = computed(() =>
 const model     = computed(() => configState.config.models?.[props.project.modelId]);
 const archMeta  = computed(() => configState.archMeta[model.value?.architecture] ?? {});
 const defaults  = computed(() => archMeta.value.defaults ?? {});
-const dimMultiple = computed(() => archMeta.value.dimMultiple ?? 16);
 const modelLocked = computed(() => props.project.segments.some(s => s.status === 'approved' && s.approvedTakeId));
 
 const SKIP = new Set(['id', 'label', 'architecture', 'devices']);
@@ -56,10 +61,26 @@ async function save(patch) {
   try { await updateProject(patch); }
   catch (err) { filmState.status = `Error: ${err.message}`; }
 }
-function saveFormat(key, value) {
+// Format presets come from the arch (ARCH_META[arch].filmFormats or derived from its
+// defaults) — the user picks an orientation + aspect ratio rather than typing pixels.
+const ORIENTATIONS = [['landscape', 'Landscape'], ['portrait', 'Portrait'], ['square', 'Square']];
+const keyOf = f => `${f.width}x${f.height}`;
+const formatKey     = computed(() => keyOf(props.project.format));
+const formatPresets = computed(() => archMeta.value.filmFormats ?? []);
+const currentPreset = computed(() => formatPresets.value.find(f => keyOf(f) === formatKey.value) ?? null);
+const formatGroups  = computed(() => ORIENTATIONS
+  .map(([id, name]) => ({ name, formats: formatPresets.value.filter(f => f.orientation === id) }))
+  .filter(g => g.formats.length));
+
+function saveFormat(key) {
+  const f = formatPresets.value.find(p => keyOf(p) === key);
+  if (!f) return;
+  save({ format: { ...props.project.format, width: f.width, height: f.height } });
+}
+function saveFps(value) {
   const n = Number(value);
   if (!n) return;
-  save({ format: { ...props.project.format, [key]: n } });
+  save({ format: { ...props.project.format, fps: n } });
 }
 function saveGen(key, value) {
   const gen = { ...(props.project.gen ?? {}) };

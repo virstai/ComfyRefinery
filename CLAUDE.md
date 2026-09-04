@@ -13,7 +13,7 @@ OpenAI, LM Studio, etc.) can be pointed at via `llmBaseUrl` in settings.
 ```bash
 npm start              # production (serve public/)
 npm run dev            # API --watch + Vite hot-reload UI
-npm test               # all 383 tests
+npm test               # all 385 tests
 npm run ui:build       # compile Vue → public/
 ```
 
@@ -202,7 +202,9 @@ A separate mode from Generate: **no workflows, no steps, no sessions, no review 
 (`data/projects/<id>.json` + `data/projects/<id>/{clips,refs,export}/`, `PROJECTS_DIR` override) pins a raw
 model entry (`cfg.models[modelId]`, must have `ARCH_META[arch].film` — minimaxh3 only today) and carries its own
 generation settings (`format { width, height, fps }`, reframable at any time — clips keep their size and export
-re-encodes mixed sizes; `modelId` locks once a take is approved; `gen { frames, steps, sampler, refImageSize }`). The film grows one **segment** at a time; each segment runs one ComfyUI job per **take**
+re-encodes mixed sizes; FilmSetup offers width×height as **presets** from `filmFormats(arch)` in `src/workflows/index.js`
+— `ARCH_META[arch].filmFormats` when declared (minimaxh3: landscape/portrait/square, short edge ≤ 768, /32), else standard
+aspects fitted to the arch's default budget and grid; served on `GET /api/sessions/architectures` for Film archs; `modelId` locks once a take is approved; `gen { frames, steps, sampler, refImageSize }`). The film grows one **segment** at a time; each segment runs one ComfyUI job per **take**
 and the user approves one take before moving on. Takes are downloaded into the project folder and their last
 frame extracted, so a film never depends on ComfyUI's `output/`.
 
@@ -554,7 +556,7 @@ data/
 ## Testing
 
 ```bash
-npm test               # all 383 tests
+npm test               # all 385 tests
 npm run test:unit      # unit tests only
 npm run test:int       # integration tests only
 ```

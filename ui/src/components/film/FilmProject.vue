@@ -3,7 +3,7 @@
     <!-- Header -->
     <div class="film-head">
       <input class="film-title" :value="project.title" placeholder="Title" @change="save({ title: $event.target.value.trim() })">
-      <span class="film-chip" :title="modelLabel">{{ project.format.width }}×{{ project.format.height }} · {{ project.format.fps }} fps · {{ modelLabel }}</span>
+      <span class="film-chip" :title="modelLabel">{{ formatLabel }} · {{ project.format.fps }} fps · {{ modelLabel }}</span>
       <span class="film-status" :class="{ 'is-error': filmState.status.startsWith('Error') }">{{ filmState.status }}</span>
       <button class="secondary small" @click="drawer = 'setup'">⚙ Setup</button>
       <button class="secondary small" @click="drawer = 'refs'">▦ References <span class="film-count">{{ project.refs.length }}</span></button>
@@ -70,6 +70,13 @@ const drawer    = ref(filmState.project?.segments?.length ? null : 'setup');
 const exporting = ref(false);
 
 const modelLabel    = computed(() => configState.config.models?.[project.value.modelId]?.label ?? project.value.modelId);
+// "16:9 · 1344×768" when the format matches one of the arch's presets, else plain pixels
+const formatLabel   = computed(() => {
+  const { width, height } = project.value.format;
+  const arch = configState.config.models?.[project.value.modelId]?.architecture;
+  const preset = (configState.archMeta[arch]?.filmFormats ?? []).find(f => f.width === width && f.height === height);
+  return preset ? `${preset.aspect} · ${width}×${height}` : `${width}×${height}`;
+});
 const canExport     = computed(() => project.value.segments.some(s => s.status === 'approved' && s.approvedTakeId));
 const inspectedTake = computed(() => segment.value?.takes?.find(t => t.id === filmState.preview.takeId) ?? null);
 

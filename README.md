@@ -511,7 +511,8 @@ access. Same query string as ComfyUI's `/view` endpoint (`filename`, `subfolder`
 ### Film projects
 
 The Film view builds a long video shot by shot from a MiniMax H3 model: a project pins a
-model entry and its own format/generation settings (no workflow), keeps a per-project
+model entry and its own format (a landscape / portrait / square preset the model type
+supports) and generation settings (no workflow), keeps a per-project
 reference bank (characters, locations, props, styles, voices), and grows a timeline one
 segment at a time. A scene can start from a still made in place with any image model
 (anima, SDXL, …) — "✨ Generate start image" on the segment — or from an uploaded / session

@@ -2,7 +2,7 @@
 
 const { test } = require('node:test');
 const assert   = require('node:assert/strict');
-const { archMeta, architectures } = require('../../../src/workflows');
+const { archMeta, architectures, filmFormats, getDefaults } = require('../../../src/workflows');
 
 test('every architecture declares boolean lora/adapter/controlNet capabilities', () => {
   for (const arch of architectures) {
@@ -63,4 +63,40 @@ test('minimaxh3 declares its Film / reference-media abilities; no other arch is 
   for (const arch of Object.keys(archMeta)) {
     if (arch !== 'minimaxh3') assert.equal(archMeta[arch].film, undefined, `${arch} must not declare film`);
   }
+});
+
+test('filmFormats(minimaxh3): explicit presets on the /32 grid, short edge ≤ 768, both orientations, native first', () => {
+  const list = filmFormats('minimaxh3');
+  assert.ok(list.length >= 6);
+  assert.deepEqual({ width: list[0].width, height: list[0].height, aspect: list[0].aspect }, { width: 1344, height: 768, aspect: '16:9' });
+  assert.equal(list[0].label, '16:9 · 1344×768 (native)');
+  for (const f of list) {
+    assert.equal(f.width % 32, 0, `${f.label} width on /32`);
+    assert.equal(f.height % 32, 0, `${f.label} height on /32`);
+    assert.ok(Math.min(f.width, f.height) <= 768, `${f.label} short edge within the 768p cap`);
+    assert.match(f.aspect, /^\d+:\d+$/);
+    assert.equal(f.orientation, f.width === f.height ? 'square' : f.width > f.height ? 'landscape' : 'portrait');
+  }
+  const orientations = new Set(list.map(f => f.orientation));
+  assert.ok(orientations.has('landscape') && orientations.has('portrait') && orientations.has('square'));
+  // the ROCm-clean size is offered in both orientations
+  assert.ok(list.some(f => f.width === 1024 && f.height === 576));
+  assert.ok(list.some(f => f.width === 576 && f.height === 1024));
+  // no duplicate sizes
+  assert.equal(new Set(list.map(f => `${f.width}x${f.height}`)).size, list.length);
+});
+
+test('filmFormats(): archs without an explicit list get standard aspects fitted to their default budget and grid', () => {
+  const list = filmFormats('wanvideo');
+  const d = getDefaults('wanvideo');
+  const mult = archMeta.wanvideo.dimMultiple;
+  assert.ok(list.length >= 6);
+  for (const f of list) {
+    assert.equal(f.width % mult, 0, `${f.label} width on /${mult}`);
+    assert.equal(f.height % mult, 0, `${f.label} height on /${mult}`);
+    assert.ok(Math.max(f.width, f.height) <= Math.max(d.width, d.height) + mult / 2, `${f.label} long edge capped`);
+    assert.ok(Math.min(f.width, f.height) <= Math.min(d.width, d.height) + mult / 2, `${f.label} short edge capped`);
+    assert.ok(f.label.startsWith(`${f.aspect} · ${f.width}×${f.height}`));
+  }
+  assert.ok(list.some(f => f.orientation === 'landscape') && list.some(f => f.orientation === 'portrait') && list.some(f => f.orientation === 'square'));
 });
