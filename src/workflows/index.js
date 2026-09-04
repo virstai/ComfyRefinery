@@ -101,29 +101,100 @@ const ARCH_META = {
     notes:       'Main model goes in models/diffusion_models/ (not checkpoints). Requires two text encoders: clip_l.safetensors and llava_llama3_fp8_scaled.safetensors — set CLIP to clip_l. Has native ComfyUI support (no custom nodes needed on recent ComfyUI).',
   },
   ltxvideo: {
-    label:        'LTX-Video',
+    label:        'LTX-Video 2.3',
     loadingMode:  'checkpoint',
-    capabilities: { lora: false, adapter: false, controlNet: false },
+    // LoRAs are DiT-only (LoraLoaderModelOnly) — video steps pass `loras`, Film segments `segment.loras`.
+    capabilities: { lora: true, adapter: false, controlNet: false },
     videoArch:    true,
-    dimMultiple:  32,
+    // The two-stage recipe samples at half size and doubles it, so output sizes are 2 × the /32 latent grid.
+    dimMultiple:  64,
     followInputAspect: true,
-    fields:       { checkpoint: true, clipName: 'always', distilledLoraName: 'lora', enableAudio: 'toggle', guidance: true },
-    fieldHints:   {
-      clipName:          'Text encoder — e.g. gemma_3_12B_it_fp4_mixed.safetensors (models/text_encoders/)',
-      distilledLoraName: 'Optional distilled guidance LoRA — e.g. ltx-2.3-22b-distilled-lora-384.safetensors',
-      enableAudio:       'Generate audio alongside video. No extra model download needed — audio VAE is embedded in the checkpoint.',
+    // Eligible as a Film project model (continue mode only — no reference-to-video).
+    film:         true,
+    filmFrames:   121,
+    // Output sizes (short edge ≤ 1088, /64 grid). 1024×576 matches the MiniMax H3
+    // "lighter" preset for side-by-side comparisons; 1920×1088 is the model's 1080p size.
+    filmFormats: [
+      { aspect: '16:9', width: 1024, height: 576,  note: 'default' },
+      { aspect: '16:9', width: 1280, height: 704,  note: '720p' },
+      { aspect: '16:9', width: 1920, height: 1088, note: '1080p, heavy' },
+      { aspect: '21:9', width: 1344, height: 576 },
+      { aspect: '4:3',  width: 1024, height: 768 },
+      { aspect: '9:16', width: 576,  height: 1024, note: 'default' },
+      { aspect: '9:16', width: 704,  height: 1280, note: '720p' },
+      { aspect: '9:16', width: 1088, height: 1920, note: '1080p, heavy' },
+      { aspect: '3:4',  width: 768,  height: 1024 },
+      { aspect: '1:1',  width: 768,  height: 768 },
+      { aspect: '1:1',  width: 1024, height: 1024 },
+    ],
+    fields:       {
+      checkpoint:        true,
+      clipName:          'always',
+      distilledLoraName: 'lora',
+      upscaleModel:      'latentUpscale',
+      samplingMode:      ['distilled', 'full'],
+      enableAudio:       'toggle',
+      vae:               true,
+      audioVaeName:      'always',
+      guidance:          true,
+      negativePrompt:    true,
     },
-    notes:       'Checkpoint goes in models/checkpoints/. Text encoder (Gemma 3 for LTX-2.3) goes in models/text_encoders/. Distilled guidance LoRA goes in models/loras/. Uses built-in ComfyUI nodes (LTXAVTextEncoderLoader, LTXVConditioning, etc.) — no custom node pack required.',
+    fieldHints:   {
+      vae:               'Optional standalone video VAE (models/vae/) instead of the one inside the checkpoint — extract it with `node scripts/extract-safetensors.js <checkpoint> models/vae/ltx-2.3-video-vae.safetensors --prefix vae.=`. Lets the device dropdown place decoding on another GPU so the 24 GB DiT can stay fully resident.',
+      audioVaeName:      'Optional standalone audio VAE + vocoder (models/vae/) — `node scripts/extract-safetensors.js <checkpoint> models/vae/ltx-2.3-audio-vae.safetensors --prefix audio_vae. --prefix vocoder.`. Blank = loaded from the checkpoint (same GPU as the DiT).',
+      checkpoint:        'Full LTX-2.3 checkpoint (models/checkpoints/) — the official ltx-2.3-22b-dev-fp8.safetensors or a fine-tune in the same layout such as Sulphur 2 (sulphur_dev_fp8mixed.safetensors). Video VAE, audio VAE and vocoder are inside the file.',
+      clipName:          'Gemma 3 12B text encoder (models/text_encoders/) — gemma_3_12B_it_fp4_mixed.safetensors, or gemma_3_12B_it_fp8_scaled.safetensors where fp4 is unsupported.',
+      distilledLoraName: 'Distilled LoRA (models/loras/) — e.g. ltx-2.3-22b-distilled-lora-1.1_fro90_ceil72_condsafe.safetensors (Sulphur 2 repo) or ltx-2.3-22b-distilled-lora-384-1.1.safetensors (Lightricks). Drives the distilled sampling mode and is required for the two-stage refine.',
+      upscaleModel:      'Spatial latent upscaler (models/latent_upscale_models/) — ltx-2.3-spatial-upscaler-x2-1.1.safetensors. When set, clips are sampled at half size and refined at full size (the official recipe; much lighter on VRAM). Needs the distilled LoRA.',
+      samplingMode:      'distilled: the distilled LoRA drives sampling (cfg 1, 8 steps — fast). full: the base model samples with CFG and the negative prompt (30+ steps, slower; the distilled LoRA is only used for the refine). Defaults to distilled when a LoRA is set.',
+      enableAudio:       'Generate audio alongside video. No extra model download needed — the audio VAE is embedded in the checkpoint.',
+    },
+    fieldLabels:  {
+      distilledLoraName: 'Distilled LoRA',
+      upscaleModel:      'Spatial upscaler (two-stage)',
+      samplingMode:      'Sampling mode',
+      audioVaeName:      'Audio VAE file (optional)',
+    },
+    notes:       'Native ComfyUI nodes only, no custom pack. Checkpoint in models/checkpoints/, Gemma 3 text encoder in models/text_encoders/, distilled LoRA in models/loras/, spatial upscaler in models/latent_upscale_models/. Graph follows the official LTX-2.3 templates: half-size sampling → ×2 latent upscale → short LCM refine, tiled decode, image-to-video via LTXVImgToVideoInplace. Frame counts snap to 8n+1 (121 ≈ 5 s at 24 fps). Negative prompt applies in full sampling mode (cfg > 1).',
   },
   minimaxh3: {
     label:           'MiniMax H3 (Hailuo 3)',
     loadingMode:     'split',
-    capabilities:    { lora: false, adapter: false, controlNet: false },
+    // LoRAs (DiT-only, LoraLoaderModelOnly) — workflow video steps via `loras`, Film segments per segment
+    capabilities:    { lora: true, adapter: false, controlNet: false },
     videoArch:       true,
     dimMultiple:  32,
     followInputAspect: true,
     referenceToVideo: true,
     maxReferences:    9,
+    // Ref2VA also takes short reference clips (<Video k>, with soundtrack) and
+    // standalone reference audio (<Audio j>) — see src/workflows/minimaxh3.js.
+    referenceVideos:  3,
+    referenceAudios:  3,
+    // MiniMaxH3ReferenceToVideo requires audio_vae, so R2V needs both files set.
+    referenceToVideoRequires: ['refUnetName', 'audioVaeName'],
+    // FL2VA accepts a last_frame (bridge to a target keyframe).
+    lastFrame:        true,
+    // Eligible as a Film project model (src/services/filmRunner.js).
+    film:             true,
+    filmFrames:       124,
+    // Film format presets (FilmSetup picks one; see filmFormats()). The open
+    // weights cap the short edge at 768 and want a /32 grid; the "lighter"
+    // 1024×576 pair is the resolution that decodes cleanly on ROCm and follows
+    // prompts better (docs/arch/minimaxh3.md).
+    filmFormats: [
+      { aspect: '16:9', width: 1344, height: 768,  note: 'native' },
+      { aspect: '16:9', width: 1024, height: 576,  note: 'lighter' },
+      { aspect: '21:9', width: 1344, height: 576 },
+      { aspect: '3:2',  width: 1152, height: 768 },
+      { aspect: '4:3',  width: 1024, height: 768 },
+      { aspect: '9:16', width: 768,  height: 1344, note: 'native' },
+      { aspect: '9:16', width: 576,  height: 1024, note: 'lighter' },
+      { aspect: '9:21', width: 576,  height: 1344 },
+      { aspect: '2:3',  width: 768,  height: 1152 },
+      { aspect: '3:4',  width: 768,  height: 1024 },
+      { aspect: '1:1',  width: 768,  height: 768 },
+    ],
     fields:      {
       unetName:             true,
       refUnetName:          true,
@@ -138,7 +209,7 @@ const ARCH_META = {
       refUnetName:          'Optional Ref2VA model (reference-to-video) — e.g. minimax_h3_ref2va_pruned_int8_convrot.safetensors. Uploaded reference images route to it automatically.',
       clipName:             'Qwen3-VL-32B text encoder (models/text_encoders/) — qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors on NVIDIA; on AMD/ROCm use qwen3vl_32b_minimax_h3_int8_convrot.safetensors, since the nvfp4 file yields NaN conditioning there (the prompt is ignored).',
       vaeName:              'Video VAE — minimax_h3_video_vae_fp16.safetensors',
-      audioVaeName:         'Audio VAE — minimax_h3_audio_vae_fp32.safetensors. Leave blank to skip audio generation.',
+      audioVaeName:         'Audio VAE — minimax_h3_audio_vae_fp32.safetensors. Required for reference-to-video and Film projects; leave blank to skip audio on T2V/I2V.',
       distilledLoraName:    'Optional 8-step turbo LoRA for FL2VA (~2× faster, small quality cost). Step count defaults to 8 automatically while active — clear this field for maximum quality at 20 steps.',
       refDistilledLoraName: 'Optional 4-step turbo LoRA for Ref2VA. Step count defaults to 4 automatically while active.',
     },
@@ -196,9 +267,52 @@ function getDefaults(architecture) {
   return { ...profile.defaults };
 }
 
+// Standard aspect ratios offered when an arch has no explicit filmFormats list:
+// each is fitted to the arch's default pixel budget, with the long edge capped
+// at the default long edge and the short edge at the default short edge, then
+// snapped to the arch's dimension grid.
+const FILM_ASPECTS = [
+  ['16:9', 16 / 9], ['21:9', 21 / 9], ['3:2', 3 / 2], ['4:3', 4 / 3],
+  ['9:16', 9 / 16], ['9:21', 9 / 21], ['2:3', 2 / 3], ['3:4', 3 / 4],
+  ['1:1', 1],
+];
+
+function orientationOf(width, height) {
+  return width === height ? 'square' : width > height ? 'landscape' : 'portrait';
+}
+
+// Film format presets for an architecture: [{ aspect, width, height, orientation, label, note? }].
+// Explicit per-arch lists (ARCH_META[arch].filmFormats) win; otherwise the list is
+// derived from the arch's defaults so any future Film-capable arch gets sensible options.
+function filmFormats(architecture) {
+  const meta = ARCH_META[architecture] ?? {};
+  let list = meta.filmFormats;
+  if (!list) {
+    const d = getDefaults(architecture);
+    const mult   = meta.dimMultiple ?? 16;
+    const budget = d.width * d.height;
+    const longMax  = Math.max(d.width, d.height);
+    const shortMax = Math.min(d.width, d.height);
+    const snap = v => Math.max(mult, Math.round(v / mult) * mult);
+    list = FILM_ASPECTS.map(([aspect, ratio]) => {
+      let h = Math.sqrt(budget / ratio);
+      let w = h * ratio;
+      const scale = Math.min(1, longMax / Math.max(w, h), shortMax / Math.min(w, h));
+      w *= scale; h *= scale;
+      return { aspect, width: snap(w), height: snap(h) };
+    });
+  }
+  return list.map(f => ({
+    ...f,
+    orientation: orientationOf(f.width, f.height),
+    label: `${f.aspect} · ${f.width}×${f.height}${f.note ? ` (${f.note})` : ''}`,
+  }));
+}
+
 module.exports = {
   buildWorkflow,
   getDefaults,
+  filmFormats,
   architectures: Object.keys(profiles),
   archMeta: ARCH_META,
 };

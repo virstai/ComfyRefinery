@@ -14,6 +14,8 @@ let appPort, appServer, comfyServer, tmpDir;
 before(async () => {
   tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ii-system-test-'));
   process.env.DATA_DIR     = tmpDir;
+  process.env.FFMPEG_PATH  = '/nonexistent/ffmpeg';
+  process.env.FFPROBE_PATH = '/nonexistent/ffprobe';
   process.env.SESSIONS_DIR = path.join(tmpDir, 'sessions');
   process.env.SKILLS_DIR   = path.join(tmpDir, 'skills');
 
@@ -67,6 +69,8 @@ test('system info reports ComfyUI, devices, packs, archs, files and an unreachab
   assert.ok(Array.isArray(info.files.checkpoints));
   assert.ok(info.architectures.includes('anima'));
   assert.deepEqual(info.fileArchTags, {});
+  assert.equal(info.tools.ffmpeg.available, false, 'FFMPEG_PATH points at nothing');
+  assert.match(info.tools.ffmpeg.error, /ffmpeg not found/);
 });
 
 test('file tags persist, merge, clear, and validate', async () => {

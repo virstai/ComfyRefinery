@@ -68,3 +68,21 @@ test('applyDevicePlacement is a no-op on graphs without loaders it knows', () =>
   applyDevicePlacement(wf, { devices: { unet: 'cuda:1' } });
   assert.equal(wf[1].class_type, 'HunyuanVideoModelLoader');
 });
+
+test('ltxvideo: external video + audio VAEs are placed under their own roles; the checkpoint stays put', () => {
+  const { buildWorkflow } = require('../../../src/workflows');
+  const model = {
+    id: 'ltx', architecture: 'ltxvideo', checkpoint: 'sulphur_dev_fp8mixed.safetensors', clipName: 'gemma.safetensors',
+    distilledLoraName: 'distilled.safetensors', upscaleModel: 'up.safetensors', enableAudio: true,
+    vae: 'ltx-2.3-video-vae.safetensors', audioVaeName: 'ltx-2.3-audio-vae.safetensors',
+    devices: { vae: 'cuda:1', audioVae: 'cuda:1' },
+  };
+  const { workflow } = buildWorkflow(model, { positivePrompt: 'x' });
+  const nodes = Object.values(workflow);
+  const placed = nodes.filter(n => n.class_type === 'VAELoaderMultiGPU');
+  assert.equal(placed.length, 2);
+  for (const n of placed) assert.equal(n.inputs.device, 'cuda:1');
+  assert.deepEqual(placed.map(n => n.inputs.vae_name).sort(), ['ltx-2.3-audio-vae.safetensors', 'ltx-2.3-video-vae.safetensors']);
+  assert.ok(!nodes.some(n => n.class_type === 'VAELoader'), 'no native VAELoader left');
+  assert.ok(nodes.some(n => n.class_type === 'CheckpointLoaderSimple'), 'checkpoint loader untouched without devices.unet');
+});

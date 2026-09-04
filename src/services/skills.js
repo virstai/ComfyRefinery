@@ -96,14 +96,26 @@ Address every region of the frame: plain areas (sky, water, solid backgrounds) s
 Match prompt length to clip duration — a 3-sentence prompt extended to 10 seconds causes looping or abrupt motion changes.
 Cinematography vocabulary: "wide establishing shot", "close-up", "tracking shot", "slow push in". Motion texture: "slow motion", "film grain", "lingering shot".`,
 
-  minimaxh3: `Write video prompts as structured natural-language direction — MiniMax H3 uses a Qwen3-VL-32B encoder that understands long, precise briefs. No tag lists, no weighting syntax.
+  minimaxh3: `Write MiniMax H3 prompts in the "production brief" format the model was trained on (MiniMaxAI/MiniMax-H3 docs/VIDEO_PROMPT_WRITING_GUIDE): plain English, no tag lists, no weighting syntax. The encoder is Qwen3-VL-32B and follows long, precise briefs.
 
-Structure: overall look/style first, then the action. For multi-beat clips use a timeline: "[0s-2s] ..., [2s-4s] ..." — H3 follows timestamped beats and hard cuts reliably.
-Always describe the soundtrack — H3 generates native stereo audio in the same pass. End with an "Audio:" line covering music, ambience, and effects, with timing when it matters ("a low drone joins at 3s").
-Dialogue is supported: quote exact lines and attribute them ("the man says: \\"...\\""); specify language and tone.
-On-screen text must be quoted exactly and kept short; add "all text clearly legible, do not misspell" when text matters.
-For reference-to-video, cite each reference as <Picture 1>…<Picture N> and give it an explicit role: identity ("the woman from <Picture 1>"), style, or object. Uncited references are used loosely.
-Camera direction works well in plain terms: "slow push in", "handheld tracking shot", "static wide". One move per beat.`,
+Layout, in this order:
+1. Alignment line — only when frames or references are given. Image-to-video: "How the reference pictures align with the target video — Picture 1 (from Shot 1) aligns with the 0.00-second mark of the target video." With an end frame add "; Picture 2 (from Shot 1) aligns with the 5.00-second mark of the target video." (use the clip's real duration). Text-to-video has no alignment line.
+2. "integrated_multimodal_description: [Shot 1] <style>, <what happens along the timeline: subjects, actions, the camera, who speaks and what they say, sounds tied to the action>". A 5-second clip is normally one shot; a further shot is "[Shot 2] At 00:03.500, the camera cuts to ...".
+3. "overall_soundscape: <1–4 sentences: ambience, the sounds of the physical action, non-verbal human sounds (breaths, moans, footsteps)>". "N/A" only for total silence.
+4. "non_diegetic_music: <1–3 sentences on instrumentation, tempo, rhythm, dynamics>" or "N/A" when no score is wanted.
+
+Camera — one decision per shot, written as a natural action inside the shot with the model's vocabulary: Static Shot, Zoom In/Out, Push In/Pull Out, Pan Left/Right, Truck Left/Right, Tilt Up/Down, Pedestal Up/Down, Arc Shot, Tracking Shot, Shake Slightly/Strongly, POV, Roll Clockwise/Counterclockwise. Add amplitude ("with small amplitude" / "with large amplitude") and speed ("at slow speed" / "at fast speed") only when they matter: "The camera pushes in with small amplitude at slow speed toward the letter in her hands." For a fixed camera write exactly "The camera holds a static shot" and mention no other camera motion at all — no handheld, shake, drift, reveal, pan or push. Never add camera movement that was not asked for; when unsure, keep the camera static.
+
+Image-to-video: do not re-describe the still — the first frame is Picture 1. Write the motion path that starts from it: "begins in the position and framing established by Picture 1", then what moves and how, ending on where things settle.
+Dialogue: stable speaker IDs and verbatim lines: "The woman (S1) says: <d>[English] Not tonight.</d>". Off-screen voice: "says in an off-screen voiceover" and note her lips remain closed. Never paraphrase dialogue.
+Reference-to-video: cite every reference with its role — "the woman from <Picture 1>", "the room in <Picture 2>"; <Video k> for motion or continuity ("continuing the movement seen in <Video 1>"), <Audio j> for a voice ("in the voice of <Audio 1>"). Uncited references are used loosely.
+Be concrete and physical (what part moves, how far, how fast, what it sounds like); avoid mood-only adjectives.
+
+Example (image-to-video, fixed camera):
+How the reference pictures align with the target video — Picture 1 (from Shot 1) aligns with the 0.00-second mark of the target video.
+integrated_multimodal_description: [Shot 1] Live-action, a rain-soaked cyclist begins in the position and framing established by Picture 1, holding a closed black umbrella beside a silver bicycle. The camera holds a static shot as she releases the handlebar, raises the umbrella above her shoulder and presses the runner upward until the canopy snaps open; water rolls off the expanding fabric while she steps beneath it and settles, the bicycle staying in frame at the left edge.
+overall_soundscape: Rain falls steadily on the pavement, followed by the metallic click of the umbrella runner and the soft snap of the canopy opening. Water drips from the bicycle frame as distant traffic passes.
+non_diegetic_music: N/A`,
 
   cogvideox: `Write video prompts as natural language narrative (50–100 words). No tag lists. English only — translate before prompting.
 

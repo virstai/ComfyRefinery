@@ -13,7 +13,8 @@ const BASE = {
 
 const R2V_BASE = {
   ...BASE,
-  refUnetName: 'minimax_h3_ref2va_pruned_int8_convrot.safetensors',
+  refUnetName:  'minimax_h3_ref2va_pruned_int8_convrot.safetensors',
+  audioVaeName: 'minimax_h3_audio_vae_fp32.safetensors',
   isR2V: true,
   referenceRefs: [
     { filename: 'ref1.png', subfolder: '', type: 'input' },
@@ -129,6 +130,22 @@ test('turbo LoRA loads via LoraLoaderModelOnly when set', () => {
   assert.deepEqual(findNode(wf, 'BasicGuider').inputs.model,    [loraId, 0]);
 });
 
+test('extra LoRAs chain after the turbo LoRA via LoraLoaderModelOnly', () => {
+  const wf = build({
+    ...BASE, distilledLoraName: 'turbo.safetensors',
+    loras: [{ name: 'scene_rain.safetensors', weight: 0.7 }, { name: '', weight: 1 }, { name: 'style.safetensors' }],
+  });
+  const chain = findNodes(wf, 'LoraLoaderModelOnly');
+  assert.deepEqual(chain.map(n => n.inputs.lora_name), ['turbo.safetensors', 'scene_rain.safetensors', 'style.safetensors'], 'blank entries skipped');
+  assert.equal(chain[1].inputs.strength_model, 0.7);
+  assert.equal(chain[2].inputs.strength_model, 1.0, 'weight defaults to 1');
+  const ids = Object.entries(wf).filter(([, n]) => n.class_type === 'LoraLoaderModelOnly').map(([k]) => k);
+  assert.deepEqual(chain[1].inputs.model, [ids[0], 0], 'chained off the turbo LoRA');
+  assert.deepEqual(findNode(wf, 'BasicGuider').inputs.model, [ids[2], 0], 'sampler uses the end of the chain');
+  assert.equal(findNode(wf, 'BasicScheduler').inputs.steps, 8, 'turbo step default still applies');
+  assert.equal(findNodes(build({ ...BASE, loras: [{ name: 'x.safetensors' }] }), 'LoraLoaderModelOnly').length, 1, 'works without a turbo LoRA');
+});
+
 test('R2V uses the Ref2VA UNet and MiniMaxH3ReferenceToVideo with one LoadImage per ref', () => {
   const wf = build(R2V_BASE);
   assert.equal(findNode(wf, 'UNETLoader').inputs.unet_name, R2V_BASE.refUnetName);
@@ -154,9 +171,72 @@ test('R2V picks the Ref2VA turbo LoRA, not the FL2VA one', () => {
   assert.equal(findNode(wf, 'LoraLoaderModelOnly').inputs.lora_name, 'ref2v_turbo.safetensors');
 });
 
-test('R2V passes audio_vae to the reference node when set', () => {
-  const wf = build({ ...R2V_BASE, audioVaeName: 'audio.safetensors' });
-  assert.ok(findNode(wf, 'MiniMaxH3ReferenceToVideo').inputs.audio_vae, 'audio_vae connected');
+test('R2V always wires audio_vae (a required input of the reference node)', () => {
+  const wf = build(R2V_BASE);
+  const h3 = findNode(wf, 'MiniMaxH3ReferenceToVideo');
+  assert.ok(Array.isArray(h3.inputs.audio_vae), 'audio_vae connected');
+  assert.equal(wf[h3.inputs.audio_vae[0]].inputs.vae_name, R2V_BASE.audioVaeName);
+});
+
+test('R2V without audioVaeName throws a clear error', () => {
+  assert.throws(() => build({ ...R2V_BASE, audioVaeName: undefined }), /Audio VAE/);
+});
+
+test('I2V wires last_frame through the same scaling chain as first_frame', () => {
+  const wf = build({
+    ...BASE, isI2V: true,
+    inputRef:     { filename: 'start.png', subfolder: '', type: 'input' },
+    lastFrameRef: { filename: 'end.png',   subfolder: '', type: 'input' },
+  });
+  const h3 = findNode(wf, 'MiniMaxH3ImageToVideo');
+  assert.ok(h3.inputs.first_frame, 'first_frame connected');
+  assert.ok(h3.inputs.last_frame,  'last_frame connected');
+  assert.equal(findNodes(wf, 'ImageScaleToTotalPixels').length, 2);
+  const lastScale = wf[h3.inputs.last_frame[0]];
+  assert.equal(lastScale.class_type, 'ImageScaleToTotalPixels');
+  assert.equal(wf[lastScale.inputs.image[0]].inputs.image, 'end.png');
+  // last_frame alone (no first frame) is allowed too
+  const only = findNode(build({ ...BASE, lastFrameRef: { filename: 'end.png', subfolder: '', type: 'input' } }), 'MiniMaxH3ImageToVideo');
+  assert.equal(only.inputs.first_frame, undefined);
+  assert.ok(only.inputs.last_frame);
+});
+
+test('R2V reference videos load via LoadVideo → GetVideoComponents with their soundtrack', () => {
+  const wf = build({
+    ...R2V_BASE,
+    referenceVideos: [
+      { filename: 'tail.mp4',   subfolder: '', type: 'input' },
+      { filename: 'silent.mp4', subfolder: '', type: 'input', audio: false },
+    ],
+  });
+  const h3   = findNode(wf, 'MiniMaxH3ReferenceToVideo');
+  const gvcs = findNodes(wf, 'GetVideoComponents');
+  assert.equal(findNodes(wf, 'LoadVideo').length, 2);
+  assert.equal(gvcs.length, 2);
+  assert.deepEqual(findNodes(wf, 'LoadVideo').map(n => n.inputs.file), ['tail.mp4', 'silent.mp4']);
+  const gvc0 = h3.inputs['ref_videos.ref_video_0'][0];
+  assert.equal(wf[gvc0].class_type, 'GetVideoComponents');
+  assert.deepEqual(h3.inputs['ref_video_audios.ref_video_audio_0'], [gvc0, 1], 'soundtrack is output 1 of the same node');
+  assert.ok(h3.inputs['ref_videos.ref_video_1']);
+  assert.equal(h3.inputs['ref_video_audios.ref_video_audio_1'], undefined, 'silent clip has no soundtrack input');
+});
+
+test('R2V reference audio loads via LoadAudio into ref_audios', () => {
+  const wf = build({ ...R2V_BASE, referenceRefs: [], referenceAudios: [{ filename: 'voice.wav', subfolder: 'film', type: 'input' }] });
+  const h3 = findNode(wf, 'MiniMaxH3ReferenceToVideo');
+  assert.ok(h3, 'R2V activates on audio-only references');
+  assert.equal(findNode(wf, 'UNETLoader').inputs.unet_name, R2V_BASE.refUnetName);
+  const la = wf[h3.inputs['ref_audios.ref_audio_0'][0]];
+  assert.equal(la.class_type, 'LoadAudio');
+  assert.equal(la.inputs.audio, 'film/voice.wav');
+  assert.equal(h3.inputs['ref_images.ref_image_0'], undefined);
+});
+
+test('R2V reference limits are enforced', () => {
+  const ref = i => ({ filename: `r${i}.png`, subfolder: '', type: 'input' });
+  assert.throws(() => build({ ...R2V_BASE, referenceRefs: Array.from({ length: 10 }, (_, i) => ref(i)) }), /at most 9 reference images/);
+  assert.throws(() => build({ ...R2V_BASE, referenceVideos: Array.from({ length: 4 }, (_, i) => ref(i)) }), /at most 3 reference videos/);
+  assert.throws(() => build({ ...R2V_BASE, referenceAudios: Array.from({ length: 4 }, (_, i) => ref(i)) }), /at most 3 reference audio/);
 });
 
 test('R2V without refUnetName throws a clear error', () => {

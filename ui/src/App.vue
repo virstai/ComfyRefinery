@@ -4,14 +4,15 @@
       :active-view="activeView"
       :active-workflow="configState.config.activeWorkflow"
       :workflows="configState.config.workflows ?? {}"
-      :running="genState.running"
-      :active-step-index="genState.activeStepIndex"
-      :total-steps="genState.totalSteps"
-      :active-step-label="genState.activeStepLabel"
-      :active-step-pct="genState.activeStepPct"
+      :running="liveStatus.running"
+      :active-step-index="liveStatus.activeStepIndex"
+      :total-steps="liveStatus.totalSteps"
+      :active-step-label="liveStatus.activeStepLabel"
+      :active-step-pct="liveStatus.activeStepPct"
+      :status-title="liveStatus.title"
       @navigate="activeView = $event"
       @set-active-workflow="setActiveWorkflow"
-      @stop="killGeneration"
+      @stop="onStop"
     />
 
     <div class="main-area">
@@ -39,6 +40,8 @@
           :running="genState.running"
         />
       </template>
+
+      <FilmPanel v-else-if="activeView === 'film'" />
 
       <WorkflowsPanel
         v-else-if="activeView === 'workflows'"
@@ -83,8 +86,9 @@
 </template>
 
 <script setup>
-import { ref, watch, onMounted } from 'vue';
+import { ref, computed, watch, onMounted } from 'vue';
 import Sidebar         from './components/Sidebar.vue';
+import FilmPanel       from './components/film/FilmPanel.vue';
 import GenerateSection from './components/GenerateSection.vue';
 import SystemPanel     from './components/SystemPanel.vue';
 import RunSection      from './components/RunSection.vue';
@@ -97,22 +101,53 @@ import QueuePanel      from './components/QueuePanel.vue';
 
 import { configState, loadConfig, loadAssets, setActiveWorkflow as storeSetActiveWorkflow } from './stores/config.js';
 import { genState, startGeneration, continueSession, loadSession, clearSession, killGeneration, connectToBroadcast, returnToLive } from './stores/generate.js';
+import { filmState, openProject, killRun } from './stores/film.js';
 
 // ── Routing: the URL hash mirrors the current view (and loaded session) so a
 // refresh lands back where you were — #/history, #/generate/<sessionId>, …
-const VIEWS = ['generate', 'queue', 'workflows', 'models', 'loras', 'history', 'system', 'settings'];
+const VIEWS = ['generate', 'film', 'queue', 'workflows', 'models', 'loras', 'history', 'system', 'settings'];
+// `param` is a session id under #/generate/… and a project id under #/film/…
 function parseHash() {
   const m = location.hash.match(/^#\/([a-z]+)(?:\/([^/?#]+))?/);
-  return { view: VIEWS.includes(m?.[1]) ? m[1] : 'generate', sessionId: m?.[2] ?? null };
+  return { view: VIEWS.includes(m?.[1]) ? m[1] : 'generate', param: m?.[2] ?? null };
 }
 const initialRoute = parseHash();
 const activeView   = ref(initialRoute.view);
 
-watch([activeView, () => genState.sessionId], ([view, sessionId]) => {
-  const target = view === 'generate' && sessionId ? `#/generate/${sessionId}` : `#/${view}`;
+watch([activeView, () => genState.sessionId, () => filmState.project?.id], ([view, sessionId, projectId]) => {
+  const target = view === 'generate' && sessionId ? `#/generate/${sessionId}`
+    : view === 'film' && projectId ? `#/film/${projectId}`
+    : `#/${view}`;
   if (location.hash !== target) history.replaceState(null, '', target);
 });  // not immediate: the URL is already right on load, and a session id must survive until restore runs
-window.addEventListener('hashchange', () => { activeView.value = parseHash().view; });
+window.addEventListener('hashchange', () => {
+  const route = parseHash();
+  activeView.value = route.view;
+  if (route.view === 'film' && route.param && route.param !== filmState.project?.id) {
+    openProject(route.param).catch(err => console.warn('Could not open project from URL:', err.message));
+  }
+});
+
+// Sidebar live-status block: a running Film take takes precedence over Generate.
+const liveStatus = computed(() => {
+  if (filmState.running) {
+    const seg = filmState.project?.segments?.find(s => s.id === filmState.runSegmentId);
+    return {
+      running: true, activeStepIndex: 0, totalSteps: 1,
+      title: 'Take running',
+      activeStepLabel: `${seg ? `Segment ${seg.index + 1}` : 'Film'} · ${filmState.status || filmState.phase || '…'}`,
+      activeStepPct: filmState.progress,
+    };
+  }
+  return {
+    running: genState.running, activeStepIndex: genState.activeStepIndex, totalSteps: genState.totalSteps,
+    title: '', activeStepLabel: genState.activeStepLabel, activeStepPct: genState.activeStepPct,
+  };
+});
+
+function onStop() {
+  if (filmState.running) killRun(); else killGeneration();
+}
 
 onMounted(async () => {
   connectToBroadcast();
@@ -124,9 +159,13 @@ onMounted(async () => {
   }
   // Restore the session that was open before the refresh (unless a live run
   // has already taken over the view).
-  if (initialRoute.sessionId && !genState.sessionId && !genState.liveRunning) {
-    try { await loadSession(initialRoute.sessionId); }
+  if (initialRoute.view === 'generate' && initialRoute.param && !genState.sessionId && !genState.liveRunning) {
+    try { await loadSession(initialRoute.param); }
     catch (err) { console.warn('Could not restore session from URL:', err.message); }
+  }
+  if (initialRoute.view === 'film' && initialRoute.param) {
+    try { await openProject(initialRoute.param); }
+    catch (err) { console.warn('Could not restore project from URL:', err.message); }
   }
 });
 

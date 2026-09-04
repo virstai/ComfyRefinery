@@ -13,6 +13,7 @@ const archHelpRoutes    = require('./src/routes/archHelp');
 const sdapiRoutes       = require('./src/routes/sdapi');
 const queueRoutes       = require('./src/routes/queue');
 const systemRoutes      = require('./src/routes/system');
+const projectsRoutes    = require('./src/routes/projects');
 
 const app = express();
 const server = createServer(app);
@@ -28,6 +29,7 @@ app.use('/api/references',  referencesRoutes);
 app.use('/api/arch-help',   archHelpRoutes);
 app.use('/api/system',      systemRoutes);
 app.use('/api/queue',       queueRoutes);
+app.use('/api/projects',    projectsRoutes);
 app.use('/sdapi/v1',        sdapiRoutes);
 
 // Proxy ComfyUI image output so the browser doesn't need direct access
@@ -84,6 +86,7 @@ if (require.main === module) {
     db.saveSession(s, { touch: false });
     console.warn(`[startup] session ${s.id.slice(0, 8)} was running at shutdown — marked as error`);
   }
+  projectsRoutes.recoverProjects();
 
   server.listen(PORT, () => {
     const cfg = config.load();

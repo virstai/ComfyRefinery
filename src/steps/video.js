@@ -22,14 +22,28 @@ function label(stepDef, cfg) {
 // `steering` is the workflow step's director's notes: free text the user wrote
 // to shape framing, camera, pacing, and sound — appended to the request so the
 // prompt follows it while still using this architecture's prompt format.
-function buildVideoMessages(userPrompt, architecture, { isI2V, refCount = 0, steering = '' }, context) {
-  const medium = refCount > 0 ? 'reference-to-video' : isI2V ? 'image-to-video' : 'text-to-video';
-  const refGuidance = refCount > 0
+function buildVideoMessages(userPrompt, architecture, { isI2V, refCount = 0, videoRefCount = 0, audioRefCount = 0, hasLastFrame = false, steering = '' }, context) {
+  const anyRefs = refCount + videoRefCount + audioRefCount > 0;
+  const medium = anyRefs ? 'reference-to-video' : isI2V ? 'image-to-video' : 'text-to-video';
+  const refGuidance = (refCount > 0
     ? `${refCount} reference image${refCount !== 1 ? 's are' : ' is'} provided. ` +
       `Cite each one in the prompt as <Picture 1>${refCount > 1 ? ` through <Picture ${refCount}>` : ''} ` +
       `and assign it an explicit role — identity (a person or character to keep consistent), style, or scene/object. ` +
       `Example: "The woman from <Picture 1> walks through the market, rendered in the painterly style of <Picture 2>." `
-    : '';
+    : '') +
+    (videoRefCount > 0
+      ? `${videoRefCount} short reference clip${videoRefCount !== 1 ? 's are' : ' is'} provided, with soundtrack, ` +
+        `cited as <Video 1>${videoRefCount > 1 ? ` through <Video ${videoRefCount}>` : ''}. ` +
+        `Cite a clip for motion, framing continuity, or a voice heard in it — e.g. "continuing directly from <Video 1>, the same woman turns toward the window". `
+      : '') +
+    (audioRefCount > 0
+      ? `${audioRefCount} reference audio clip${audioRefCount !== 1 ? 's are' : ' is'} provided, ` +
+        `cited as <Audio 1>${audioRefCount > 1 ? ` through <Audio ${audioRefCount}>` : ''}. ` +
+        `Cite one whenever a character speaks so the model reproduces that voice — e.g. "she says, in the voice of <Audio 1>: \"not tonight\"" — or for a sound to reproduce. `
+      : '') +
+    (hasLastFrame
+      ? `A target final frame is also given: the shot must end on it, so describe motion that arrives at that composition. `
+      : '');
   return [
     {
       role: 'system',
@@ -38,8 +52,14 @@ function buildVideoMessages(userPrompt, architecture, { isI2V, refCount = 0, ste
         `You are an expert at writing video generation prompts for ${architecture.toUpperCase()} models. ` +
         `This is a ${medium} generation. ` +
         refGuidance +
-        `Convert the user description into the most effective prompt for this video model. ` +
-        `Video prompts should describe motion, camera movement, and scene dynamics alongside visual content. ` +
+        (isI2V
+          ? `The model receives the start image as <Picture 1>${hasLastFrame ? ' and the end image as <Picture 2>' : ''} — do not re-describe it; write the motion that begins from it. `
+          : '') +
+        `Convert the user description into the most effective prompt for this video model, following the format notes below exactly. ` +
+        `Describe subject motion and sound concretely. The camera is a decision, not decoration: state it explicitly in the model's own vocabulary. ` +
+        `If the description or the director's notes ask for a fixed, static, still or unmoving camera, write that the camera holds a static shot and add no camera movement of any kind — no handheld, shake, drift, reveal, pan, push or zoom. ` +
+        `Never invent camera moves, shakes or cuts that were not asked for. ` +
+        `Every instruction about camera, framing, pacing or sound in the description or the director's notes is mandatory and overrides style defaults and earlier prompts. ` +
         `Output only the prompt text — no preamble, no explanation, no labels.` +
         (context ? `\n\n${context}` : ''),
     },
@@ -122,6 +142,14 @@ async function prepare(stepDef, ctx, _previousIterations, onToken) {
     isI2V    = true;
   } else if (ctx.references?.length) {
     if (archInfo.referenceToVideo && modelConfig.refUnetName) {
+      // Some reference nodes need more than the Ref2VA weights (minimaxh3's
+      // requires an audio VAE) — fail here, before the LLM call, naming the field.
+      for (const field of archInfo.referenceToVideoRequires ?? []) {
+        if (!modelConfig[field]) {
+          const label = archInfo.fieldLabels?.[field] ?? field;
+          throw new Error(`${architecture} reference-to-video needs "${label}" set on model "${modelConfig.label ?? modelConfig.id}"`);
+        }
+      }
       let refs = ctx.references;
       if (archInfo.maxReferences && refs.length > archInfo.maxReferences) {
         warnings.push(`${architecture} accepts at most ${archInfo.maxReferences} reference images — using the first ${archInfo.maxReferences} of ${refs.length}`);
@@ -169,17 +197,23 @@ async function prepare(stepDef, ctx, _previousIterations, onToken) {
     }
   }
 
-  let builtPrompt = userPrompt;
+  const builtPrompt = await refineVideoPrompt(cfg, messages, onToken, ctx.signal, userPrompt);
+
+  return { prompt: builtPrompt, inputRef, isI2V, referenceRefs, isR2V, autoSize, warnings };
+}
+
+// Stream the LLM's prompt rewrite. A failed LLM call falls back to `fallback`
+// (the raw description) with a warning; an abort (user stop) propagates.
+async function refineVideoPrompt(cfg, messages, onToken, signal, fallback) {
   try {
-    const result = await llm.chatStream(cfg, messages, token => onToken?.(token), { signal: ctx.signal });
+    const result = await llm.chatStream(cfg, messages, token => onToken?.(token), { signal });
     const text   = typeof result === 'string' ? result : result.text;
-    builtPrompt  = parsePromptResponse(text);
+    return parsePromptResponse(text);
   } catch (e) {
     if (e.name === 'AbortError') throw e;
     console.warn('[video] prompt build failed, falling back to raw prompt:', e.message);
+    return fallback;
   }
-
-  return { prompt: builtPrompt, inputRef, isI2V, referenceRefs, isR2V, autoSize, warnings };
 }
 
 function buildComfyWorkflow(stepDef, prepareResult, ctx) {
@@ -197,12 +231,16 @@ function buildComfyWorkflow(stepDef, prepareResult, ctx) {
     ...modelConfig,
     ...(prepareResult.autoSize ?? {}),
     ...(stepDef.params ?? {}),
+    ...(stepDef.loras?.length ? { loras: stepDef.loras } : {}),   // always-on LoRAs (archs with capabilities.lora)
     ...(prepareResult.params ?? {}),   // e.g. the seed picked by runVideoStep
     positivePrompt: prepareResult.prompt ?? ctx.userPrompt ?? '',
-    inputRef:       prepareResult.inputRef,
-    isI2V:          prepareResult.isI2V,
-    referenceRefs:  prepareResult.referenceRefs ?? [],
-    isR2V:          prepareResult.isR2V ?? false,
+    inputRef:        prepareResult.inputRef,
+    isI2V:           prepareResult.isI2V,
+    lastFrameRef:    prepareResult.lastFrameRef ?? null,
+    referenceRefs:   prepareResult.referenceRefs ?? [],
+    referenceVideos: prepareResult.referenceVideos ?? [],
+    referenceAudios: prepareResult.referenceAudios ?? [],
+    isR2V:           prepareResult.isR2V ?? false,
   };
 
   const { workflow } = buildWorkflow(modelConfig, params);
@@ -216,4 +254,4 @@ function pickPrimaryVideo(videos) {
   return videos.find(v => !/_noaudio/.test(v.filename ?? '')) ?? videos[0];
 }
 
-module.exports = { label, prepare, buildComfyWorkflow, pickPrimaryVideo, buildVideoMessages };
+module.exports = { label, prepare, buildComfyWorkflow, pickPrimaryVideo, buildVideoMessages, refineVideoPrompt };

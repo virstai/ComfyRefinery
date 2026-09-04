@@ -24,6 +24,8 @@ as a pure ComfyUI frontend with structured workflows — no LLM server required.
 - **An OpenAI-compatible LLM** with vision support *(optional)* — Ollama (`gemma4:31b`,
   `llava:13b`), LM Studio, OpenAI, vLLM, or any server that speaks
   `/v1/chat/completions`. Required only when one or more LLM features are enabled.
+- **ffmpeg + ffprobe** *(for the Film view)* — nothing to install: `npm install` bundles
+  them via `ffmpeg-static` / `ffprobe-static`. See [Film](#optional--film-long-video).
 
 ## ComfyUI custom nodes and models
 
@@ -41,7 +43,7 @@ what you need for the archs you actually use.
 | **comfyui-anima-ipadapter** | [Wenaka2004/comfyui-anima-ipadapter](https://github.com/Wenaka2004/comfyui-anima-ipadapter) | Adapter reference mode on Anima *(weights not yet publicly released)* | Anima |
 | **RES4LYF** | [ClownsharkBatwing/RES4LYF](https://github.com/ClownsharkBatwing/RES4LYF) | `er_sde` sampler for Anima *(may already be in your ComfyUI build — check samplers list first)* | Anima |
 | **ComfyUI-CogVideoXWrapper** | [kijai/ComfyUI-CogVideoXWrapper](https://github.com/kijai/ComfyUI-CogVideoXWrapper) | CogVideoX — required, auto-downloads models on first use; also needs `diffusers>=0.30.1` | CogVideoX |
-| **ComfyUI-LTXVideo** | [Lightricks/ComfyUI-LTXVideo](https://github.com/Lightricks/ComfyUI-LTXVideo) | LTX-Video advanced features (`LTXVAddGuide` for I2V, `LTX2LoraLoaderAdvanced` for distilled LoRA) — all nodes used by ComfyRefinery are built into recent ComfyUI builds; install this pack only if nodes are missing | LTX-Video |
+| **ComfyUI-LTXVideo** | [Lightricks/ComfyUI-LTXVideo](https://github.com/Lightricks/ComfyUI-LTXVideo) | Not needed — every LTX-2.3 node ComfyRefinery uses (`LTXVImgToVideoInplace`, `LTXVLatentUpsampler`, `LTXVScheduler`, the audio nodes) is in ComfyUI core ≥ 0.31 | LTX-Video |
 | **ComfyUI-GGUF** | [city96/ComfyUI-GGUF](https://github.com/city96/ComfyUI-GGUF) | Quantised GGUF model variants for LTX-Video | LTX-Video |
 | **ComfyUI-HunyuanVideoWrapper** | [kijai/ComfyUI-HunyuanVideoWrapper](https://github.com/kijai/ComfyUI-HunyuanVideoWrapper) | HunyuanVideo on older ComfyUI builds — native support is built-in on current ComfyUI | HunyuanVideo |
 
@@ -207,6 +209,20 @@ For user-uploaded references, the same modes are available, plus an LLM vision g
 checkbox (sends reference images to the LLM for prompt building — requires the Vision
 guidance & LoRA selection feature to be enabled).
 
+### Optional — Film (long video)
+
+The **Film** view builds a long video shot by shot from a MiniMax H3 model (see
+`docs/arch/minimaxh3.md`). It uses `ffmpeg` and `ffprobe` on the ComfyRefinery host for
+last-frame capture, reference captures and stitching. **No extra setup is needed**: the
+regular `npm install` also installs `ffmpeg-static` and `ffprobe-static`, which bundle a
+static binary for your platform (Linux x64/arm64, macOS, Windows), and ComfyRefinery uses
+those automatically. The **System** page shows the binary in use and its version.
+
+Overrides, only if you want them: set `FFMPEG_PATH` / `FFPROBE_PATH` to use specific
+binaries (they take precedence over the bundled ones), or install a system ffmpeg
+(`apt install ffmpeg`, `brew install ffmpeg`, …) which is used when the bundled package
+is unavailable for your platform.
+
 ### Step 4 — Generate
 
 Type a prompt and click **Generate**. With default settings the LLM builds the prompt,
@@ -239,6 +255,29 @@ to override the HTTP listen port.
 | LLM base URL | `http://127.0.0.1:11434/v1` | OpenAI-compatible endpoint; unused when all LLM features are off |
 | API key | *(blank)* | Leave blank for Ollama / local servers |
 | LLM model | *(blank)* | Model name as your server exposes it; must support vision if image review or vision guidance is enabled |
+| Unload the LLM before video jobs | off | Opt-in, for setups where the LLM server and ComfyUI share a GPU. ComfyRefinery makes the configured HTTP call (URL, GET/POST, optional JSON body with `{model}`) right before every video job — workflow video steps and Film takes — which run for minutes and never need the LLM; the server reloads on its next request. Leave off when the LLM runs on another machine or GPU. See [Sharing a GPU between the LLM and ComfyUI](#sharing-a-gpu-between-the-llm-and-comfyui) |
+
+### Sharing a GPU between the LLM and ComfyUI
+
+ComfyUI only sees its own allocations: on a card that also hosts the LLM server, its idea
+of "free VRAM" ignores the LLM, and an oversubscribed card can produce corrupt output
+silently (a decoder that runs out of memory partway through a clip, for instance) rather
+than an error. Two settings make the pair behave:
+
+- **In the LLM server**, let idle models unload. llama-swap: set `globalTTL` (or a per-model
+  `ttl`) to a few minutes, so a model that has not been used since the prompt was written
+  is gone by the time the decoder needs the memory. Ollama: `OLLAMA_KEEP_ALIVE`.
+- **In ComfyRefinery**, tick **Unload the LLM before video jobs** (Settings → LLM) and
+  describe your server's unload call. The OpenAI-compatible API has no such call, so this
+  is per server: llama-swap → `GET http://host:11434/unload`; Ollama → `POST
+  http://host:11434/api/generate` with body `{"model":"{model}","keep_alive":0}`. Before
+  each video job the server is asked to release its memory immediately instead of waiting
+  for the TTL; the model reloads on the next prompt-writing or review call (seconds from
+  page cache). Nothing in ComfyRefinery assumes a particular server, GPU layout, or that
+  the two services even share a machine — leave the box off and nothing is called.
+
+With both in place, components placed on the LLM's card (a text encoder or VAE via device
+placement) get the whole card during the job, and the LLM gets it back afterwards.
 
 ### Review
 
@@ -323,11 +362,11 @@ so a portrait generate step chains into a portrait video.
 |---|---|---|---|
 | `wanvideo` | WanVideo (Wan 2.2) | Split (UNet × 2 + CLIP/T5 + VAE) | — |
 | `hunyuanvideo` | HunyuanVideo | Split (UNet + CLIP/T5 + VAE) | — |
-| `ltxvideo` | LTX-Video / LTX-Video 2.3 AV | Checkpoint (`LTXAVTextEncoderLoader` for 2.3 AV: Gemma 3 12B + T5 from checkpoint) | ✓ ¹ |
+| `ltxvideo` | LTX-Video 2.3 AV (incl. the Sulphur 2 fine-tune) | Checkpoint (DiT + video/audio VAEs + vocoder) + Gemma 3 12B via `LTXAVTextEncoderLoader`; optional distilled LoRA + spatial upscaler for the official two-stage recipe | ✓ ¹ |
 | `cogvideox` | CogVideoX | Checkpoint + VAE + CLIP | — |
 | `minimaxh3` | MiniMax H3 (Hailuo 3) | Split (UNet + Qwen3-VL-32B + video/audio VAEs) | ✓ ² |
 
-¹ LTX-Video 2.3 AV (`ltx-2.3-22b-dev-fp8.safetensors`) embeds an audio VAE in the same checkpoint — no additional download needed. Enable the **Generate audio** toggle in model settings. Output is a single MP4 with the audio track embedded. Requires a Gemma 3 12B text encoder (`gemma_3_12B_it_fp4_mixed.safetensors`) in `models/text_encoders/`; earlier LTX-Video models use a standard T5-XXL CLIP loader instead.
+¹ LTX-Video 2.3 AV (`ltx-2.3-22b-dev-fp8.safetensors`, or a same-layout fine-tune such as Sulphur 2's `sulphur_dev_fp8mixed.safetensors`) embeds the audio VAE in the checkpoint — no additional download needed. Enable the **Generate audio** toggle in model settings; output is a single MP4 with the audio track embedded. Requires a Gemma 3 12B text encoder (`gemma_3_12B_it_fp4_mixed.safetensors`) in `models/text_encoders/`. Set the **spatial upscaler** and **distilled LoRA** on the model to run the official two-stage recipe (half-size sampling → ×2 latent upscale → short refine), which is both the quality path and the VRAM-friendly one; **sampling mode** picks the distilled (fast, cfg 1) or full (CFG + negative prompt) recipe. On a single ~30 GB card the DiT leaves no room for the in-checkpoint VAEs: split them out with `node scripts/extract-safetensors.js` and place them on a second GPU via the model's device dropdowns. See `docs/arch/ltxvideo.md`.
 
 ² MiniMax H3 generates native stereo audio in the same sampling pass — set the **Audio VAE file** in model settings (leave blank to skip audio). It is also the first architecture with reference-to-video: configure the optional **Ref2VA UNet file** and uploaded references route to `MiniMaxH3ReferenceToVideo` automatically, cited in the prompt as `<Picture 1>…<Picture N>`. Guidance-free (no negative prompt / CFG); optional 8-step (FL2VA) and 4-step (Ref2VA) turbo LoRAs. Requires ComfyUI ≥ 0.30.0 — see [docs/arch/minimaxh3.md](docs/arch/minimaxh3.md).
 
@@ -469,6 +508,38 @@ access. Same query string as ComfyUI's `/view` endpoint (`filename`, `subfolder`
 
 **`GET /api/audio`** — proxies ComfyUI audio output (used when audio is embedded separately). Same query string as `/api/video`.
 
+### Film projects
+
+The Film view builds a long video shot by shot from a MiniMax H3 or LTX-2.3 model (LTX in
+continue mode only — it has no reference-to-video checkpoint): a project pins a
+model entry and its own format (a landscape / portrait / square preset the model type
+supports) and generation settings (no workflow), keeps a per-project
+reference bank (characters, locations, props, styles, voices), and grows a timeline one
+segment at a time. A scene can start from a still made in place with any image model
+(anima, SDXL, …) — "✨ Generate start image" on the segment — or from an uploaded / session
+image; each segment runs one ~5 s take per attempt; approving a take captures its last
+frame for the next segment and adds a beat to the running script.
+Requires ffmpeg on the host. See `docs/arch/minimaxh3.md` for the continue / cut modes.
+
+| Method | Path | Notes |
+|---|---|---|
+| `GET` | `/api/projects` | `{ projects: [summary] }` |
+| `GET` | `/api/projects/capabilities` | `{ ffmpeg: { available, version, path, ffprobe, error } }` |
+| `POST` | `/api/projects` | `{ title, modelId, logline? }` |
+| `GET` / `PUT` / `DELETE` | `/api/projects/:id` | `PUT`: `title`, `logline`, `gen`, `format` (reframe any time; export re-encodes mixed sizes), `modelId` (until a take is approved) |
+| `POST` / `PUT` / `DELETE` | `/api/projects/:id/refs[/:rid]` | Reference bank entries `{ kind, name, description, pinned, media? }` |
+| `POST` / `DELETE` | `/api/projects/:id/refs/:rid/media[/:mid]` | `{ type: 'image'\|'audio', source: { type: 'upload'\|'session' }, name?, data? (base64), imageUrl? }` |
+| `POST` | `/api/projects/:id/images/prompt` | SSE — write an image prompt in the model's own language from a plain description: `{ modelId, intent, steering?, segmentId? }` (`token`, `prompt`, `done`) |
+| `POST` | `/api/projects/:id/images/generate` | SSE — render a still with any image model into the bank: `{ modelId, prompt, seed?, width?, height?, refId? \| newRef?, segmentId? }`; with `segmentId` it becomes that segment's start frame (`image_start`, `phase`, `progress`, `preview`, `image`, `done`) |
+| `POST` | `/api/projects/:id/takes/:tid/capture` | `{ refId? \| newRef?, frame?: t }` or `{ …, audio?: [from, to] }` → frame PNG / WAV into the bank |
+| `POST` / `PUT` / `DELETE` | `/api/projects/:id/segments[/:sid]` | `{ intent, steering, start: { mode: 'continue'\|'cut', startImage?, includePrevTail? }, refIds, frames, seed, loras: [{ name, weight }] }` |
+| `POST` | `/api/projects/:id/segments/:sid/prompt` | SSE — LLM prompt preview (`phase`, `token`, `prompt`, `done`) |
+| `POST` | `/api/projects/:id/segments/:sid/run` | SSE — one take: `take_start`, `phase`, `token`, `prompt`, `progress`, `warning`, `video`, `take_complete`, `done` / `stopped` / `error`. Body `{ prompt?, seed?, intent?, steering? }` |
+| `POST` | `/api/projects/:id/segments/:sid/takes/:tid/verdict` | `{ verdict: 'approved'\|'rejected', note? }` → `{ project, staled, beat, nextSegment }`. A rejection note steers the next take's prompt |
+| `POST` | `/api/projects/:id/export` | Stitches approved takes → `{ url, file, durationSec, clips }` |
+| `POST` | `/api/projects/:id/kill` | Stops the running take |
+| `GET` | `/api/projects/:id/media/<path>` | Local clips, last frames, reference files, export |
+
 ### Config, models, workflows
 
 ```
@@ -577,6 +648,7 @@ data/
   config.json       global settings, model registry, workflow registry
   sessions/         one JSON file per session
   skills/           one JSON file per workflow id (skill + notes + outcomes)
+  projects/         one JSON file per Film project + <id>/{clips,refs,export}/ media
 ```
 
 Each `skills/<workflowId>.json` contains:
