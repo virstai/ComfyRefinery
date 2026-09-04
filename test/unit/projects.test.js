@@ -19,6 +19,7 @@ const CFG = {
   models: {
     h3:  { id: 'h3', label: 'H3', architecture: 'minimaxh3', unetName: 'fl.safetensors', clipName: 'c', vaeName: 'v' },
     wan: { id: 'wan', label: 'Wan', architecture: 'wanvideo', unetName: 'w', clipName: 'c', vaeName: 'v' },
+    ltx: { id: 'ltx', label: 'LTX', architecture: 'ltxvideo', checkpoint: 'l.safetensors', clipName: 'g' },
   },
 };
 
@@ -27,7 +28,7 @@ test('newProject seeds format/gen from the arch and refuses non-film models', ()
   assert.equal(p.title, 'Rain');
   assert.deepEqual(p.format, { width: 1344, height: 768, fps: 24 });
   assert.equal(p.gen.frames, 124);
-  assert.equal(p.gen.sampler, 'res_multistep');
+  assert.equal(p.gen.sampler, null, 'sampler left to the arch builder');
   assert.deepEqual(p.refs, []); assert.deepEqual(p.segments, []); assert.deepEqual(p.script, []);
   assert.throws(() => projects.newProject({ title: 'x', modelId: 'wan' }, CFG), /cannot drive a Film project/);
   assert.throws(() => projects.newProject({ title: 'x', modelId: 'nope' }, CFG), /not found/);
@@ -164,4 +165,19 @@ test('resetRunning returns running segments to draft', () => {
   assert.equal(projects.resetRunning(p), true);
   assert.equal(s.status, 'draft');
   assert.equal(projects.resetRunning(p), false);
+});
+
+test('ltxvideo projects: arch format/frames defaults, and new segments always continue (no cut mode)', () => {
+  const p = projects.newProject({ title: 'LTX', modelId: 'ltx' }, CFG);
+  assert.deepEqual(p.format, { width: 1024, height: 576, fps: 24 });
+  assert.equal(p.gen.frames, 121);
+  const s1 = projects.addSegment(p, {}, CFG);
+  assert.equal(s1.start.mode, 'continue');
+  // H3 keeps its cut default for a first segment
+  const h = projects.newProject({ title: 'H3', modelId: 'h3' }, CFG);
+  assert.equal(projects.addSegment(h, {}, CFG).start.mode, 'cut');
+  assert.equal(projects.addSegment(h).start.mode, 'cut', 'without cfg the arch is unknown → cut stays the default');
+  // format snaps to the /64 grid for ltxvideo
+  projects.updateProject(p, { format: { width: 1000, height: 700 } }, CFG);
+  assert.deepEqual(p.format, { width: 1024, height: 704, fps: 24 });
 });

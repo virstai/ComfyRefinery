@@ -178,7 +178,7 @@ router.post('/:id/takes/:tid/capture', withProject(async (req, res, project) => 
 // ── Segments ──────────────────────────────────────────────────────────────────
 
 router.post('/:id/segments', withProject((req, res, project) => {
-  const segment = projects.addSegment(project, req.body ?? {});
+  const segment = projects.addSegment(project, req.body ?? {}, config.load());
   projects.saveProject(project);
   res.status(201).json({ project, segment });
 }, { mutating: true }));

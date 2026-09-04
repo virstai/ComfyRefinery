@@ -43,7 +43,7 @@ what you need for the archs you actually use.
 | **comfyui-anima-ipadapter** | [Wenaka2004/comfyui-anima-ipadapter](https://github.com/Wenaka2004/comfyui-anima-ipadapter) | Adapter reference mode on Anima *(weights not yet publicly released)* | Anima |
 | **RES4LYF** | [ClownsharkBatwing/RES4LYF](https://github.com/ClownsharkBatwing/RES4LYF) | `er_sde` sampler for Anima *(may already be in your ComfyUI build — check samplers list first)* | Anima |
 | **ComfyUI-CogVideoXWrapper** | [kijai/ComfyUI-CogVideoXWrapper](https://github.com/kijai/ComfyUI-CogVideoXWrapper) | CogVideoX — required, auto-downloads models on first use; also needs `diffusers>=0.30.1` | CogVideoX |
-| **ComfyUI-LTXVideo** | [Lightricks/ComfyUI-LTXVideo](https://github.com/Lightricks/ComfyUI-LTXVideo) | LTX-Video advanced features (`LTXVAddGuide` for I2V, `LTX2LoraLoaderAdvanced` for distilled LoRA) — all nodes used by ComfyRefinery are built into recent ComfyUI builds; install this pack only if nodes are missing | LTX-Video |
+| **ComfyUI-LTXVideo** | [Lightricks/ComfyUI-LTXVideo](https://github.com/Lightricks/ComfyUI-LTXVideo) | Not needed — every LTX-2.3 node ComfyRefinery uses (`LTXVImgToVideoInplace`, `LTXVLatentUpsampler`, `LTXVScheduler`, the audio nodes) is in ComfyUI core ≥ 0.31 | LTX-Video |
 | **ComfyUI-GGUF** | [city96/ComfyUI-GGUF](https://github.com/city96/ComfyUI-GGUF) | Quantised GGUF model variants for LTX-Video | LTX-Video |
 | **ComfyUI-HunyuanVideoWrapper** | [kijai/ComfyUI-HunyuanVideoWrapper](https://github.com/kijai/ComfyUI-HunyuanVideoWrapper) | HunyuanVideo on older ComfyUI builds — native support is built-in on current ComfyUI | HunyuanVideo |
 
@@ -362,11 +362,11 @@ so a portrait generate step chains into a portrait video.
 |---|---|---|---|
 | `wanvideo` | WanVideo (Wan 2.2) | Split (UNet × 2 + CLIP/T5 + VAE) | — |
 | `hunyuanvideo` | HunyuanVideo | Split (UNet + CLIP/T5 + VAE) | — |
-| `ltxvideo` | LTX-Video / LTX-Video 2.3 AV | Checkpoint (`LTXAVTextEncoderLoader` for 2.3 AV: Gemma 3 12B + T5 from checkpoint) | ✓ ¹ |
+| `ltxvideo` | LTX-Video 2.3 AV (incl. the Sulphur 2 fine-tune) | Checkpoint (DiT + video/audio VAEs + vocoder) + Gemma 3 12B via `LTXAVTextEncoderLoader`; optional distilled LoRA + spatial upscaler for the official two-stage recipe | ✓ ¹ |
 | `cogvideox` | CogVideoX | Checkpoint + VAE + CLIP | — |
 | `minimaxh3` | MiniMax H3 (Hailuo 3) | Split (UNet + Qwen3-VL-32B + video/audio VAEs) | ✓ ² |
 
-¹ LTX-Video 2.3 AV (`ltx-2.3-22b-dev-fp8.safetensors`) embeds an audio VAE in the same checkpoint — no additional download needed. Enable the **Generate audio** toggle in model settings. Output is a single MP4 with the audio track embedded. Requires a Gemma 3 12B text encoder (`gemma_3_12B_it_fp4_mixed.safetensors`) in `models/text_encoders/`; earlier LTX-Video models use a standard T5-XXL CLIP loader instead.
+¹ LTX-Video 2.3 AV (`ltx-2.3-22b-dev-fp8.safetensors`, or a same-layout fine-tune such as Sulphur 2's `sulphur_dev_fp8mixed.safetensors`) embeds the audio VAE in the checkpoint — no additional download needed. Enable the **Generate audio** toggle in model settings; output is a single MP4 with the audio track embedded. Requires a Gemma 3 12B text encoder (`gemma_3_12B_it_fp4_mixed.safetensors`) in `models/text_encoders/`. Set the **spatial upscaler** and **distilled LoRA** on the model to run the official two-stage recipe (half-size sampling → ×2 latent upscale → short refine), which is both the quality path and the VRAM-friendly one; **sampling mode** picks the distilled (fast, cfg 1) or full (CFG + negative prompt) recipe. On a single ~30 GB card the DiT leaves no room for the in-checkpoint VAEs: split them out with `node scripts/extract-safetensors.js` and place them on a second GPU via the model's device dropdowns. See `docs/arch/ltxvideo.md`.
 
 ² MiniMax H3 generates native stereo audio in the same sampling pass — set the **Audio VAE file** in model settings (leave blank to skip audio). It is also the first architecture with reference-to-video: configure the optional **Ref2VA UNet file** and uploaded references route to `MiniMaxH3ReferenceToVideo` automatically, cited in the prompt as `<Picture 1>…<Picture N>`. Guidance-free (no negative prompt / CFG); optional 8-step (FL2VA) and 4-step (Ref2VA) turbo LoRAs. Requires ComfyUI ≥ 0.30.0 — see [docs/arch/minimaxh3.md](docs/arch/minimaxh3.md).
 
@@ -510,7 +510,8 @@ access. Same query string as ComfyUI's `/view` endpoint (`filename`, `subfolder`
 
 ### Film projects
 
-The Film view builds a long video shot by shot from a MiniMax H3 model: a project pins a
+The Film view builds a long video shot by shot from a MiniMax H3 or LTX-2.3 model (LTX in
+continue mode only — it has no reference-to-video checkpoint): a project pins a
 model entry and its own format (a landscape / portrait / square preset the model type
 supports) and generation settings (no workflow), keeps a per-project
 reference bank (characters, locations, props, styles, voices), and grows a timeline one

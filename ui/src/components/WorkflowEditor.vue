@@ -260,6 +260,9 @@
             <input type="number" v-model.number="step.cfgScale" step="0.5" :placeholder="archDefault(si, 'cfgScale')">
           </label>
         </div>
+        <label v-if="showNegative(si)">Negative prompt <span class="hint">(blank = the model's default)</span>
+          <textarea v-model="step.negativePrompt" rows="2" :placeholder="archDefault(si, 'negativePrompt')"></textarea>
+        </label>
         <p class="hint">
           Video step is always last — no review loop; use ↻ Redo on the run view to roll extra takes.
           Leave width/height blank to match the input image's aspect ratio (fitted to the model's
@@ -358,7 +361,7 @@ function blankUpscaleStep() {
 function blankVideoStep() {
   return {
     type: 'video',
-    modelId: '', width: '', height: '', duration: '', fps: '', steps: '', guidance: '', cfgScale: '',
+    modelId: '', width: '', height: '', duration: '', fps: '', steps: '', guidance: '', cfgScale: '', negativePrompt: '',
   };
 }
 
@@ -414,6 +417,7 @@ function stepFromDef(s) {
       steps:    s.params?.steps        ?? '',
       guidance: s.params?.guidance     ?? '',
       cfgScale: s.params?.cfgScale     ?? '',
+      negativePrompt: s.params?.negativePrompt ?? '',
     };
   }
   // Unified image mode: chain strategy takes priority over reference strategy
@@ -586,6 +590,7 @@ async function save() {
           ...(s.steps    !== '' && { steps:    Number(s.steps) }),
           ...(s.guidance !== '' && { guidance: Number(s.guidance) }),
           ...(s.cfgScale !== '' && { cfgScale: Number(s.cfgScale) }),
+          ...(s.negativePrompt?.trim() && { negativePrompt: s.negativePrompt.trim() }),
         },
       };
     }

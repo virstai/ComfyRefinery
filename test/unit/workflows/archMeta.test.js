@@ -18,9 +18,11 @@ test('image archs support lora; video archs support nothing', () => {
   for (const arch of ['sd15', 'sdxl', 'flux', 'flux2', 'sd3', 'chroma', 'anima', 'zimage', 'krea2']) {
     assert.equal(archMeta[arch].capabilities.lora, true, `${arch} lora`);
   }
-  for (const arch of ['wanvideo', 'hunyuanvideo', 'ltxvideo', 'cogvideox']) {
+  for (const arch of ['wanvideo', 'hunyuanvideo', 'cogvideox']) {
     assert.deepEqual(archMeta[arch].capabilities, { lora: false, adapter: false, controlNet: false }, arch);
   }
+  // LTX-2.3 takes DiT-only LoRAs (the distilled LoRA is one; Sulphur 2 ships as one too)
+  assert.deepEqual(archMeta.ltxvideo.capabilities, { lora: true, adapter: false, controlNet: false });
 });
 
 test('adapter: enabled for sd15/sdxl/flux/flux2, disabled for sd3/chroma and anima (weights unreleased)', () => {
@@ -60,9 +62,29 @@ test('minimaxh3 declares its Film / reference-media abilities; no other arch is 
   assert.equal(h3.referenceAudios, 3);
   assert.deepEqual(h3.referenceToVideoRequires, ['refUnetName', 'audioVaeName']);
   assert.equal(h3.film, true);
+  assert.equal(h3.filmFrames, 124);
   for (const arch of Object.keys(archMeta)) {
-    if (arch !== 'minimaxh3') assert.equal(archMeta[arch].film, undefined, `${arch} must not declare film`);
+    if (!['minimaxh3', 'ltxvideo'].includes(arch)) assert.equal(archMeta[arch].film, undefined, `${arch} must not declare film`);
   }
+});
+
+test('ltxvideo: Film-eligible (continue only), /64 grid, distilled/full sampling, negative prompt, latent upscaler field', () => {
+  const ltx = archMeta.ltxvideo;
+  assert.equal(ltx.film, true);
+  assert.equal(ltx.filmFrames, 121);
+  assert.equal(ltx.referenceToVideo, undefined, 'no cut mode');
+  assert.equal(ltx.dimMultiple, 64);
+  assert.equal(ltx.fields.negativePrompt, true);
+  assert.equal(ltx.fields.upscaleModel, 'latentUpscale');
+  assert.deepEqual(ltx.fields.samplingMode, ['distilled', 'full']);
+  const list = filmFormats('ltxvideo');
+  assert.deepEqual({ width: list[0].width, height: list[0].height }, { width: 1024, height: 576 });
+  for (const f of list) {
+    assert.equal(f.width % 64, 0, `${f.label} width on /64`);
+    assert.equal(f.height % 64, 0, `${f.label} height on /64`);
+  }
+  for (const o of ['landscape', 'portrait', 'square']) assert.ok(list.some(f => f.orientation === o), o);
+  assert.equal(new Set(list.map(f => `${f.width}x${f.height}`)).size, list.length);
 });
 
 test('filmFormats(minimaxh3): explicit presets on the /32 grid, short edge ≤ 768, both orientations, native first', () => {

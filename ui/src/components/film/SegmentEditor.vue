@@ -15,7 +15,7 @@
       <div class="seg-label">Start</div>
       <div class="seg-modes">
         <label class="checkbox-label"><input type="radio" value="continue" :checked="mode === 'continue'" :disabled="isRunning" @change="setMode('continue')"> Continue</label>
-        <label class="checkbox-label"><input type="radio" value="cut" :checked="mode === 'cut'" :disabled="isRunning" @change="setMode('cut')"> Cut</label>
+        <label class="checkbox-label" :title="canCut ? '' : `${archLabel} has no reference-to-video mode — every segment continues from a frame`"><input type="radio" value="cut" :checked="mode === 'cut'" :disabled="isRunning || !canCut" @change="setMode('cut')"> Cut</label>
       </div>
       <p class="hint">
         <template v-if="mode === 'continue'">Pixel-continuous: the clip starts on a given frame — the previous approved take's last frame, or an image you pick or generate (e.g. an anima still for a new scene). Image references only inform the prompt; voices reset each clip.</template>
@@ -147,6 +147,9 @@ onMounted(async () => {
 const arch      = computed(() => configState.config?.models?.[props.project.modelId]?.architecture);
 const archCaps  = computed(() => configState.archMeta?.[arch.value]?.capabilities ?? {});
 const archLabel = computed(() => configState.archMeta?.[arch.value]?.label ?? arch.value ?? 'this architecture');
+// Cut segments need a reference-to-video checkpoint (MiniMax H3's Ref2VA); other
+// video archs only continue from a frame.
+const canCut    = computed(() => !!configState.archMeta?.[arch.value]?.referenceToVideo);
 const allLoraFiles = computed(() => configState.assets?.comfyui?.loras ?? []);
 // Tagged for this architecture on either page: the LoRAs registry (architecture
 // field) or the System page's file → arch tags ("loras:<file>").
@@ -188,6 +191,7 @@ const lastCheckpoint = computed(() => {
   return takes.sort((a, b) => (b.createdAt ?? '').localeCompare(a.createdAt ?? ''))[0]?.checkpoint ?? null;
 });
 const swapHint = computed(() => {
+  if (!canCut.value) return '';
   const want = mode.value === 'cut' ? 'ref2va' : 'fl2va';
   return lastCheckpoint.value && lastCheckpoint.value !== want
     ? `Model swap: the last take used the ${lastCheckpoint.value.toUpperCase()} checkpoint; this mode loads ${want.toUpperCase()} (slower first run).`

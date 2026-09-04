@@ -318,7 +318,7 @@ async function getAssets() {
   // POST /api/models/refresh exists in ComfyUI 0.3+; silently ignored on older builds.
   await fetch(`${baseUrl()}/api/models/refresh`, { method: 'POST' }).catch(() => {});
 
-  const [checkpoints, vaes, clips, unets, upscaleModels, ipAdapterModels, clipVisionModels, reduxModels, loras, controlNets, devices, multiGpu] = await Promise.allSettled([
+  const [checkpoints, vaes, clips, unets, upscaleModels, ipAdapterModels, clipVisionModels, reduxModels, loras, controlNets, latentUpscaleModels, devices, multiGpu] = await Promise.allSettled([
     fetchInputList('CheckpointLoaderSimple', 'ckpt_name'),
     fetchInputList('VAELoader',              'vae_name'),
     fetchInputList('CLIPLoader',             'clip_name'),
@@ -329,11 +329,12 @@ async function getAssets() {
     fetchInputList('StyleModelLoader',       'style_model_name'),
     fetchInputList('LoraLoader',             'lora_name'),
     fetchInputList('ControlNetLoader',       'control_net_name'),
+    fetchInputList('LatentUpscaleModelLoader', 'model_name'),   // LTX spatial upscalers
       getDevices(),
     hasNode(PROBE_NODE),
   ]);
 
-  const all = [checkpoints, vaes, clips, unets, upscaleModels, ipAdapterModels, clipVisionModels, reduxModels, loras, controlNets];
+  const all = [checkpoints, vaes, clips, unets, upscaleModels, ipAdapterModels, clipVisionModels, reduxModels, loras, controlNets, latentUpscaleModels];
   return {
     checkpoints:      checkpoints.status      === 'fulfilled' ? checkpoints.value      : [],
     vaes:             vaes.status             === 'fulfilled' ? vaes.value             : [],
@@ -345,6 +346,7 @@ async function getAssets() {
     reduxModels:      reduxModels.status      === 'fulfilled' ? reduxModels.value      : [],
     loras:            loras.status            === 'fulfilled' ? loras.value            : [],
     controlNets:      controlNets.status      === 'fulfilled' ? controlNets.value      : [],
+    latentUpscaleModels: latentUpscaleModels.status === 'fulfilled' ? latentUpscaleModels.value : [],
     devices:          devices.status          === 'fulfilled' ? devices.value          : [],
     multiGpu:         multiGpu.status         === 'fulfilled' ? !!multiGpu.value       : false,
     errors: all.filter(r => r.status === 'rejected').map(r => r.reason.message),

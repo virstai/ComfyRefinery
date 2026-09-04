@@ -67,8 +67,11 @@ async function resolveInputs({ project, segment, cfg, modelConfig, ffmpeg = ffmp
   const { images, audios } = refMediaOf(project, segment);
   const tag = `film-${project.id.slice(0, 8)}-${segment.id}-${shortId()}`;
 
+  // `checkpoint` names which weights a take used: H3 swaps between FL2VA and Ref2VA
+  // per mode; single-checkpoint archs (LTX-2.3) always report 'base'.
+  const baseCheckpoint = archInfo.referenceToVideo ? 'fl2va' : 'base';
   const out = {
-    mode, checkpoint: 'fl2va', inputRef: null, isI2V: false, lastFrameRef: null,
+    mode, checkpoint: baseCheckpoint, inputRef: null, isI2V: false, lastFrameRef: null,
     referenceRefs: [], referenceVideos: [], referenceAudios: [], isR2V: false,
     pictures: [], audios: [], videos: [], otherImages: [], visionImages: [], warnings,
     inputs: { firstFrame: null, refImages: [], refVideos: [], refAudios: [] },
@@ -147,7 +150,7 @@ async function resolveInputs({ project, segment, cfg, modelConfig, ffmpeg = ffmp
   const anyRefs = out.referenceRefs.length + out.referenceVideos.length + out.referenceAudios.length > 0;
   if (!anyRefs) {
     warnings.push('No references selected — this cut runs as plain text-to-video');
-    out.checkpoint = 'fl2va';
+    out.checkpoint = baseCheckpoint;
     return out;
   }
   if (!archInfo.referenceToVideo) throw httpError(`${arch} has no reference-to-video mode — use continue`);
@@ -355,7 +358,7 @@ async function approveTake({ project, segment, take, cfg, note = '' }) {
   const { beat, warning } = await summarizeBeat(cfg, segment, take);
   projects.setBeat(project, segment.id, beat);
   let nextSegment = null;
-  if (segment.index === project.segments.length - 1) nextSegment = projects.addSegment(project);
+  if (segment.index === project.segments.length - 1) nextSegment = projects.addSegment(project, {}, cfg);
   return { staled, beat, warning, nextSegment };
 }
 

@@ -101,19 +101,61 @@ const ARCH_META = {
     notes:       'Main model goes in models/diffusion_models/ (not checkpoints). Requires two text encoders: clip_l.safetensors and llava_llama3_fp8_scaled.safetensors — set CLIP to clip_l. Has native ComfyUI support (no custom nodes needed on recent ComfyUI).',
   },
   ltxvideo: {
-    label:        'LTX-Video',
+    label:        'LTX-Video 2.3',
     loadingMode:  'checkpoint',
-    capabilities: { lora: false, adapter: false, controlNet: false },
+    // LoRAs are DiT-only (LoraLoaderModelOnly) — video steps pass `loras`, Film segments `segment.loras`.
+    capabilities: { lora: true, adapter: false, controlNet: false },
     videoArch:    true,
-    dimMultiple:  32,
+    // The two-stage recipe samples at half size and doubles it, so output sizes are 2 × the /32 latent grid.
+    dimMultiple:  64,
     followInputAspect: true,
-    fields:       { checkpoint: true, clipName: 'always', distilledLoraName: 'lora', enableAudio: 'toggle', guidance: true },
-    fieldHints:   {
-      clipName:          'Text encoder — e.g. gemma_3_12B_it_fp4_mixed.safetensors (models/text_encoders/)',
-      distilledLoraName: 'Optional distilled guidance LoRA — e.g. ltx-2.3-22b-distilled-lora-384.safetensors',
-      enableAudio:       'Generate audio alongside video. No extra model download needed — audio VAE is embedded in the checkpoint.',
+    // Eligible as a Film project model (continue mode only — no reference-to-video).
+    film:         true,
+    filmFrames:   121,
+    // Output sizes (short edge ≤ 1088, /64 grid). 1024×576 matches the MiniMax H3
+    // "lighter" preset for side-by-side comparisons; 1920×1088 is the model's 1080p size.
+    filmFormats: [
+      { aspect: '16:9', width: 1024, height: 576,  note: 'default' },
+      { aspect: '16:9', width: 1280, height: 704,  note: '720p' },
+      { aspect: '16:9', width: 1920, height: 1088, note: '1080p, heavy' },
+      { aspect: '21:9', width: 1344, height: 576 },
+      { aspect: '4:3',  width: 1024, height: 768 },
+      { aspect: '9:16', width: 576,  height: 1024, note: 'default' },
+      { aspect: '9:16', width: 704,  height: 1280, note: '720p' },
+      { aspect: '9:16', width: 1088, height: 1920, note: '1080p, heavy' },
+      { aspect: '3:4',  width: 768,  height: 1024 },
+      { aspect: '1:1',  width: 768,  height: 768 },
+      { aspect: '1:1',  width: 1024, height: 1024 },
+    ],
+    fields:       {
+      checkpoint:        true,
+      clipName:          'always',
+      distilledLoraName: 'lora',
+      upscaleModel:      'latentUpscale',
+      samplingMode:      ['distilled', 'full'],
+      enableAudio:       'toggle',
+      vae:               true,
+      audioVaeName:      'always',
+      guidance:          true,
+      negativePrompt:    true,
     },
-    notes:       'Checkpoint goes in models/checkpoints/. Text encoder (Gemma 3 for LTX-2.3) goes in models/text_encoders/. Distilled guidance LoRA goes in models/loras/. Uses built-in ComfyUI nodes (LTXAVTextEncoderLoader, LTXVConditioning, etc.) — no custom node pack required.',
+    fieldHints:   {
+      vae:               'Optional standalone video VAE (models/vae/) instead of the one inside the checkpoint — extract it with `node scripts/extract-safetensors.js <checkpoint> models/vae/ltx-2.3-video-vae.safetensors --prefix vae.=`. Lets the device dropdown place decoding on another GPU so the 24 GB DiT can stay fully resident.',
+      audioVaeName:      'Optional standalone audio VAE + vocoder (models/vae/) — `node scripts/extract-safetensors.js <checkpoint> models/vae/ltx-2.3-audio-vae.safetensors --prefix audio_vae. --prefix vocoder.`. Blank = loaded from the checkpoint (same GPU as the DiT).',
+      checkpoint:        'Full LTX-2.3 checkpoint (models/checkpoints/) — the official ltx-2.3-22b-dev-fp8.safetensors or a fine-tune in the same layout such as Sulphur 2 (sulphur_dev_fp8mixed.safetensors). Video VAE, audio VAE and vocoder are inside the file.',
+      clipName:          'Gemma 3 12B text encoder (models/text_encoders/) — gemma_3_12B_it_fp4_mixed.safetensors, or gemma_3_12B_it_fp8_scaled.safetensors where fp4 is unsupported.',
+      distilledLoraName: 'Distilled LoRA (models/loras/) — e.g. ltx-2.3-22b-distilled-lora-1.1_fro90_ceil72_condsafe.safetensors (Sulphur 2 repo) or ltx-2.3-22b-distilled-lora-384-1.1.safetensors (Lightricks). Drives the distilled sampling mode and is required for the two-stage refine.',
+      upscaleModel:      'Spatial latent upscaler (models/latent_upscale_models/) — ltx-2.3-spatial-upscaler-x2-1.1.safetensors. When set, clips are sampled at half size and refined at full size (the official recipe; much lighter on VRAM). Needs the distilled LoRA.',
+      samplingMode:      'distilled: the distilled LoRA drives sampling (cfg 1, 8 steps — fast). full: the base model samples with CFG and the negative prompt (30+ steps, slower; the distilled LoRA is only used for the refine). Defaults to distilled when a LoRA is set.',
+      enableAudio:       'Generate audio alongside video. No extra model download needed — the audio VAE is embedded in the checkpoint.',
+    },
+    fieldLabels:  {
+      distilledLoraName: 'Distilled LoRA',
+      upscaleModel:      'Spatial upscaler (two-stage)',
+      samplingMode:      'Sampling mode',
+      audioVaeName:      'Audio VAE file (optional)',
+    },
+    notes:       'Native ComfyUI nodes only, no custom pack. Checkpoint in models/checkpoints/, Gemma 3 text encoder in models/text_encoders/, distilled LoRA in models/loras/, spatial upscaler in models/latent_upscale_models/. Graph follows the official LTX-2.3 templates: half-size sampling → ×2 latent upscale → short LCM refine, tiled decode, image-to-video via LTXVImgToVideoInplace. Frame counts snap to 8n+1 (121 ≈ 5 s at 24 fps). Negative prompt applies in full sampling mode (cfg > 1).',
   },
   minimaxh3: {
     label:           'MiniMax H3 (Hailuo 3)',
@@ -135,6 +177,7 @@ const ARCH_META = {
     lastFrame:        true,
     // Eligible as a Film project model (src/services/filmRunner.js).
     film:             true,
+    filmFrames:       124,
     // Film format presets (FilmSetup picks one; see filmFormats()). The open
     // weights cap the short edge at 768 and want a /32 grid; the "lighter"
     // 1024×576 pair is the resolution that decodes cleanly on ROCm and follows

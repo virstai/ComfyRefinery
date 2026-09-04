@@ -42,6 +42,7 @@ const MODEL_LOADER_FIELDS = new Set([
   'clipName', 'vaeName', 'vae', 'useRefiner', 'refinerCheckpoint',
   'adapterModel', 'clipVisionModel', 'adapterWeight', 'controlNetModel', 'tileControlNetModel', 'structuralControlNetModel', 'structuralControlNetPreprocessor',
   'distilledLoraName', 'enableAudio',
+  'upscaleModel', 'samplingMode',   // ltxvideo: spatial latent upscaler (two-stage) + distilled/full recipe
   'refUnetName', 'audioVaeName', 'refDistilledLoraName',
   'devices',   // per-component placement (ComfyUI-MultiGPU) — see workflows/lib/devicePlacement.js
 ]);

@@ -143,6 +143,25 @@
     </label>
     <p v-if="hasField('distilledLoraName') && fieldHint('distilledLoraName')" class="hint">{{ fieldHint('distilledLoraName') }}</p>
 
+    <!-- Spatial latent upscaler → two-stage sampling (LTX-2.3) -->
+    <label v-if="hasField('upscaleModel')">{{ fieldLabel('upscaleModel') || 'Latent upscaler' }} <span class="hint">(optional)</span>
+      <select v-model="form.upscaleModel">
+        <option value="">— none (single stage at full size) —</option>
+        <option v-for="u in assets.comfyui?.latentUpscaleModels ?? []" :key="u" :value="u">{{ u }}</option>
+      </select>
+      <span v-if="!(assets.comfyui?.latentUpscaleModels ?? []).length" class="hint">No latent upscalers found in ComfyUI (models/latent_upscale_models/).</span>
+    </label>
+    <p v-if="hasField('upscaleModel') && fieldHint('upscaleModel')" class="hint">{{ fieldHint('upscaleModel') }}</p>
+
+    <!-- Sampling recipe (LTX-2.3: distilled vs full) -->
+    <label v-if="fieldOptions('samplingMode')">{{ fieldLabel('samplingMode') || 'Sampling mode' }}
+      <select v-model="form.samplingMode">
+        <option value="">— automatic —</option>
+        <option v-for="opt in fieldOptions('samplingMode')" :key="opt" :value="opt">{{ opt }}</option>
+      </select>
+    </label>
+    <p v-if="fieldOptions('samplingMode') && fieldHint('samplingMode')" class="hint">{{ fieldHint('samplingMode') }}</p>
+
     <!-- Reference-mode turbo LoRA (MiniMax H3 Ref2VA) -->
     <label v-if="hasField('refDistilledLoraName')">{{ fieldLabel('refDistilledLoraName') || 'Reference turbo LoRA' }} <span class="hint">(optional)</span>
       <select v-model="form.refDistilledLoraName">
@@ -174,11 +193,11 @@
     </label>
     <p v-if="showSplitField && hasField('vaeName') && fieldHint('vaeName')" class="hint">{{ fieldHint('vaeName') }}</p>
 
-    <!-- Audio VAE (MiniMax H3) -->
-    <label v-if="showSplitField && hasField('audioVaeName')">{{ fieldLabel('audioVaeName') || 'Audio VAE file' }} <span class="hint">(optional)</span>
+    <!-- Audio VAE (MiniMax H3: split archs; LTX-2.3: 'always', optional external file) -->
+    <label v-if="(showSplitField || hasFieldAlways('audioVaeName')) && hasField('audioVaeName')">{{ fieldLabel('audioVaeName') || 'Audio VAE file' }} <span class="hint">(optional)</span>
       <div class="loader-row">
         <select v-model="form.audioVaeName">
-          <option value="">— none (no audio) —</option>
+          <option value="">— none —</option>
           <option v-for="v in files('vaes')" :key="v" :value="v">{{ v }}</option>
         </select>
         <select v-if="multiGpu" v-model="form.devices.audioVae" class="device-select" title="Device this component loads on (needs ComfyUI-MultiGPU)">
@@ -186,7 +205,7 @@
         </select>
       </div>
     </label>
-    <p v-if="showSplitField && hasField('audioVaeName') && fieldHint('audioVaeName')" class="hint">{{ fieldHint('audioVaeName') }}</p>
+    <p v-if="(showSplitField || hasFieldAlways('audioVaeName')) && hasField('audioVaeName') && fieldHint('audioVaeName')" class="hint">{{ fieldHint('audioVaeName') }}</p>
 
     <!-- VAE precision enum (e.g. WanVideo) -->
     <label v-if="showSplitField && fieldOptions('vaePrecision')">{{ fieldLabel('vaePrecision') || 'VAE precision' }}
@@ -197,6 +216,7 @@
     </label>
 
     <!-- External VAE override (checkpoint archs) -->
+    <p v-if="showCheckpoint && hasField('vae') && fieldHint('vae')" class="hint" style="margin-bottom:2px">{{ fieldHint('vae') }}</p>
     <label v-if="showCheckpoint && hasField('vae')">External VAE <span class="hint">(optional — overrides baked-in)</span>
       <div class="loader-row">
         <select v-model="form.vae">
@@ -589,7 +609,7 @@ const form = reactive({
   vae: '', useRefiner: false, refinerCheckpoint: '',
   adapterModel: '', clipVisionModel: '', adapterWeight: '', controlNetModel: '', tileControlNetModel: '', structuralControlNetModel: '', structuralControlNetPreprocessor: 'depth',
   modelQuantization: '', vaePrecision: '',
-  distilledLoraName: '', enableAudio: false,
+  distilledLoraName: '', enableAudio: false, upscaleModel: '', samplingMode: '',
   refUnetName: '', audioVaeName: '', refDistilledLoraName: '',
   devices: blankDevices(),
 });
@@ -639,6 +659,8 @@ watch(() => props.model, m => {
   form.clipName          = m.clipName          ?? '';
   form.vaeName           = m.vaeName           ?? '';
   form.vae               = m.vae               ?? '';
+  form.upscaleModel      = m.upscaleModel      ?? '';
+  form.samplingMode      = m.samplingMode      ?? '';
   form.useRefiner        = !!m.refinerCheckpoint;
   form.refinerCheckpoint = m.refinerCheckpoint ?? '';
   form.adapterModel              = m.adapterModel              ?? '';
@@ -715,8 +737,10 @@ async function save() {
     clipName:          ((isSplit.value || hasFieldAlways('clipName')) && form.clipName) ? form.clipName : null,
     distilledLoraName: hasField('distilledLoraName') ? (form.distilledLoraName || null) : null,
     enableAudio:       hasField('enableAudio') ? form.enableAudio : null,
+    upscaleModel:      hasField('upscaleModel') ? (form.upscaleModel || null) : null,
+    samplingMode:      fieldOptions('samplingMode') ? (form.samplingMode || null) : null,
     refUnetName:          (isSplit.value && hasField('refUnetName'))  ? (form.refUnetName  || null) : null,
-    audioVaeName:         (isSplit.value && hasField('audioVaeName')) ? (form.audioVaeName || null) : null,
+    audioVaeName:         ((isSplit.value || hasFieldAlways('audioVaeName')) && hasField('audioVaeName')) ? (form.audioVaeName || null) : null,
     refDistilledLoraName: hasField('refDistilledLoraName') ? (form.refDistilledLoraName || null) : null,
     devices:              { ...form.devices },   // server drops 'auto' entries
     vae:               form.vae              || null,

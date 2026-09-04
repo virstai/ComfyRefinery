@@ -25,7 +25,7 @@
       <label>Default frames<input type="number" :value="project.gen?.frames" :placeholder="String(defaults.frames ?? '')" @change="saveGen('frames', $event.target.value)"></label>
       <label>Steps<input type="number" :value="project.gen?.steps ?? ''" :placeholder="`${defaults.steps ?? 'arch default'}`" @change="saveGen('steps', $event.target.value)"></label>
       <label>Sampler<input :value="project.gen?.sampler ?? ''" :placeholder="defaults.sampler ?? ''" @change="saveGen('sampler', $event.target.value)"></label>
-      <label>Reference image size
+      <label v-if="archMeta.referenceToVideo">Reference image size
         <select :value="project.gen?.refImageSize ?? 'match'" @change="saveGen('refImageSize', $event.target.value)">
           <option value="match">match (faster)</option>
           <option value="max">max (sharper refs, slower)</option>

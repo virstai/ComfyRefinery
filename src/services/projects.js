@@ -55,9 +55,12 @@ function filmModel(cfg, modelId) {
   return model;
 }
 
+// Per-take generation settings. `null` means "the arch builder's default" — the
+// sampler in particular stays unset so recipe-dependent defaults (ltxvideo's
+// distilled vs full sampler) still apply. `filmFrames` is the arch's ~5 s take.
 function defaultGen(arch) {
   const d = getDefaults(arch);
-  return { frames: 124, steps: null, sampler: d.sampler ?? null, refImageSize: 'match' };
+  return { frames: archMeta[arch]?.filmFrames ?? d.frames ?? 124, steps: null, sampler: null, refImageSize: 'match' };
 }
 
 function defaultFormat(arch) {
@@ -164,12 +167,17 @@ function previousApprovedTake(p, index) {
   return null;
 }
 
-function addSegment(p, fields = {}) {
+// A new segment continues from the previous approved take when there is one.
+// Otherwise it defaults to a cut (fresh shot from references) on archs that
+// have reference-to-video; single-mode archs (LTX-2.3) always continue.
+function addSegment(p, fields = {}, cfg = null) {
   const index = p.segments.length;
   const prev  = previousApprovedTake(p, index);
+  const arch  = cfg?.models?.[p.modelId]?.architecture;
+  const canCut = arch ? !!archMeta[arch]?.referenceToVideo : true;
   const seg = {
     id: shortId(), index, status: 'draft',
-    start: { mode: prev ? 'continue' : 'cut', startImage: null, includePrevTail: false },
+    start: { mode: prev || !canCut ? 'continue' : 'cut', startImage: null, includePrevTail: false },
     refIds: p.refs.filter(r => r.pinned).map(r => r.id),
     intent: '', steering: '', frames: p.gen.frames ?? 124, seed: null,
     loras: [],                       // [{ name, weight }] — per-segment LoRAs (scene / style / motion)
